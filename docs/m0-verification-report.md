@@ -31,7 +31,7 @@
 | ③ | 全部依赖在 android / ios / jvm 可解析 | **通过（超出预期）** | 四 target 均编译出产物（详见 3.1） |
 | ④ | 官方 Expressive 组件三端截图一致 | **部分通过** | desktop 已出真实渲染图；iOS / Android 截图待 macOS / 真机 |
 | ⑤a | ZoomImage 无 OOM | **未执行** | 需构造长图用例与真机 |
-| ⑤b | KCEF 可初始化 | **阻塞** | jogamp 依赖源不可达，见 4.2 |
+| ⑤b | KCEF 可初始化 | **移出范围** | 桌面不内嵌浏览器，见 ADR-009 与 3.6；`offlineDesktopRuntime` 转正为正式配置 |
 | ⑤c | PDF 平台矩阵确认 | **仅依赖层** | 三端 variant 齐备（编译通过），渲染未验 |
 
 ---
@@ -155,28 +155,66 @@ TLSException: Received alert during handshake. Level: FATAL, code: ProtocolVersi
 
 ---
 
+## 3.6 桌面 WebView 替代方案验证（ADR-009）
+
+**命题**：`account.loginWithWebview` 在源契约里的唯一作用是「在真实浏览器里完成登录，把结果 Cookie 写进 CookieJar」。源判断登录态读的是 `Network.getCookies`，而不是 WebView 本身。若成立，桌面端只要提供其它写入 CookieJar 的入口，就不需要内嵌任何浏览器引擎。
+
+**样本选择**：`mycomic.js`——它同时声明了 `loginWithWebview`（Cloudflare 盾）与 `loginWithCookies`（`fields: ["cf_clearance"]`），是替代性最强的反例。
+
+**实验**：同一份源、同一调用路径，只改变 CookieJar 初值。
+
+| 指标 | A 空 CookieJar | B 注入 `cf_clearance` |
+|---|---|---|
+| `Network.getCookies` 返回 | 0 条 | 1 条 `cf_clearance=spike-fake-value` |
+| 源的登录警告 | 1 条 `No cf_clearance cookie found` | **0 条** |
+| `hasCookieLogin` | true | true |
+
+**第三组（`--live`）**：带注入 Cookie 发真实请求，验证 Cookie 是否落到 HTTP 头：
+
+```
+[host] GET https://mycomic.com/cn/comics?q=test -> 403 (3229 chars) [cookie: 29 chars]
+search error: Cloudflare 验证拦截：请在漫画源设置中点击「登录」，通过内置浏览器完成一次 Cloudflare 验证后即可正常使用。
+```
+
+403 说明请求真实到达站点（假 Cookie 被 Cloudflare 拒绝），而 `[cookie: 29 chars]` 证明注入链路生效。
+
+**结论**：替代方案在**契约层等价**。同时暴露一个 UX 问题——源的错误文案硬编码了「通过内置浏览器」，桌面端若不改写这句提示，用户会去找一个不存在的入口。ADR-009 要求桌面 `AccountPage` 覆写该文案并给出 DevTools 取 Cookie 的三步指引。
+
+**源侧支撑数据**（`venera-app/venera-configs` 全量 36 个源）：
+
+| 项 | 数量 |
+|---|---|
+| 声明 `loginWithWebview` | 5（13.9%） |
+| 同时声明 `loginWithCookies` | 4 |
+| 完全不需要登录 | 29 |
+
+用途分布：Cookie 登录（nhentai / e-hentai / ccc）、Cloudflare 盾（mycomic）、论坛区登录（manga_dex，非阅读主链路）。
+
+---
+
 ## 4. 本轮暴露的问题
 
 ### 4.1 `SpikeApp()` 零调用点（已修）
 
 原工程只有 `Main.kt` 跑 CLI，没有任何 Compose 入口，所以 UI 从未渲染过一次。已新增 `Screenshot.kt` 补上离屏渲染路径。**建议后续加一个真正的 `application { Window { SpikeApp() } }` 入口**，否则开发者 clone 下来依然看不到界面。
 
-### 4.2 jogamp 依赖源不可达 → desktop 运行时类路径解析失败
+### 4.2 jogamp 依赖源不可达 → desktop 运行时类路径解析失败（已定位，结论已修订）
 
 ```
 Could not download gluegen-rt-2.5.0.jar (org.jogamp.gluegen:gluegen-rt:2.5.0)
   > Network is unreachable  (https://jogamp.org/deployment/maven)
 ```
 
-实测 Maven Central、腾讯云、阿里云镜像均 **404**，确认 `feasibility.md:80` 的判断成立且比预期更严重：**不只是"缺仓库无法解析"，而是该仓库在很多网络环境下根本不可达**，导致 `desktopRuntimeClasspath` 整体失败，任何 `JavaExec` 任务（包括 `runDesktopSpike`）都无法启动。
+Maven Central、Google Maven、腾讯云、阿里云镜像均 **404**，`feasibility.md:80` 的判断成立：`desktopRuntimeClasspath` 整体失败，任何 `JavaExec` 任务（包括 `runDesktopSpike`）都无法启动。
 
-处置：新增 `offlineDesktopRuntime` configuration，排除 `org.jogamp.gluegen`、`org.jogamp.jogl`、`io.github.kevinnzou`，供不涉及桌面 WebView 的运行任务使用。**这是权宜之计**，KCEF 真要在桌面端跑起来，仍需解决：
+**但后续深挖修正了两个关键事实**：
 
-- 方案 A：把 `gluegen-rt` / `jogl-all` 2.5.0 上传到自建 Maven 或可访问的镜像；
-- 方案 B：桌面端 WebView 降级为「系统浏览器 + deeplink」（`architecture.md:7.4` 已有此降级路径）；
-- 方案 C：换一个不依赖 jogamp 的桌面 WebView 实现。
+1. **jogamp 缺失不是死局**。`maven.scijava.org/content/groups/public` 有完整的 2.5.0 构件，已实际下载校验（`gluegen-rt` 388 KB、`jogl-all` 909 KB，均为合法 JAR）。也就是说加一行镜像仓库即可解析——代价是依赖一个非官方镜像。
+2. **jogamp 位于 runtime scope**。完整链条 `compose-webview-multiplatform-desktop → dev.datlag:kcef → dev.datlag:jcef → org.jogamp.*`，jogamp 只出现在最底层且为 `runtime`，所以 `compileKotlinDesktop` 能通过、只有运行期才炸。这解释了为什么"编译全绿但程序起不来"。
 
-建议 M0 就把这条定下来，否则 M6 平台层会返工。
+处置：新增 `offlineDesktopRuntime` configuration，排除 `org.jogamp.gluegen`、`org.jogamp.jogl`、`io.github.kevinnzou`，供不涉及桌面 WebView 的运行任务使用。
+
+**决策已在 ADR-009 落地：桌面端不内嵌浏览器**，因此 `offlineDesktopRuntime` 从权宜之计转为正式配置（`desktopRuntimeClasspath` 本就不该包含 KCEF）。
 
 ### 4.3 全局 `~/.gradle/init.gradle` 语法错误
 
@@ -222,7 +260,7 @@ xcrun simctl boot "iPhone 16"
 
 - **Gate ①**：挑一个真实 `venera-configs` 漫画源，在三端跑同一 fixture，比对 JSON。这是整个架构的地基，建议优先级最高。
 - **Gate ⑤a**：构造 8000×20000 长图用例，验证 ZoomImage Subsampling 不 OOM。
-- **Gate ⑤b**：按 4.2 的结论先决定桌面 WebView 策略，再谈 KCEF 初始化。
+- **Gate ⑤b**：已由 ADR-009 关闭——桌面不内嵌浏览器，KCEF 无需验证。
 
 ---
 
@@ -238,7 +276,10 @@ xcrun simctl boot "iPhone 16"
 | `shared/src/commonMain/kotlin/spike/VeneraSourceRunner.kt` | 新增真实源加载器 + 契约 polyfill，网络经 `SourceHttp` 接口注入 | 新增 |
 | `shared/src/desktopMain/kotlin/spike/JdkSourceHttp.kt` | JDK HttpClient 实现（CIO TLS 握手失败后的替代） | 新增 |
 | `shared/src/desktopMain/kotlin/spike/SourceMain.kt` | `sourceSpike` 入口 | 新增 |
-| `shared/build.gradle.kts` | 另新增 `sourceSpike` 任务 | 修改 |
+| `shared/src/desktopMain/kotlin/spike/AccountMain.kt` | 桌面 WebView 替代方案对照实验入口（ADR-009 验证） | 新增 |
+| `shared/src/commonMain/kotlin/spike/VeneraSourceRunner.kt` | 补 CookieJar：`Network.getCookies/setCookies/deleteCookies`、请求头注入、`probeOnly` 模式、宿主日志回填 | 修改 |
+| `shared/build.gradle.kts` | 新增 `accountSpike` 任务 | 修改 |
+| `docs/architecture.md` | 新增 ADR-009；同步 1.2 能力表、ADR-006、3.2 模块树、7.4、10.3、风险表 R12/R21、依赖矩阵 | 修改 |
 | `docs/screenshots/spike-desktop.png` | 渲染产物 | 新增 |
 | `docs/baseline/mangadex-search-one.json` | 真实源基准样本，供三端一致性对比 | 新增 |
 
@@ -248,7 +289,7 @@ xcrun simctl boot "iPhone 16"
 
 ## 7. 建议的下一步
 
-1. **先补 Gate ①**（真实源三端 JSON 一致）——它会一次性暴露 Ksoup / Ktor / Promise 调度 / Unicode 的几乎所有平台差异，比继续扩依赖矩阵收益高得多。
-2. **定桌面 WebView 策略**（4.2），这关系到 M6 是否需要返工。
-3. **在 Mac 上跑 5 节的三条命令**，补齐 iOS 侧证据；同时把 `simulator tests require macOS` 这类警告在 CI 里显式区分「跳过」与「失败」。
-4. 把本报告的结论回写进 `feasibility.md` 第 4 节，特别是「iOS klib 可在 Linux 交叉编译」与「jogamp 不可达」这两条，它们会改变 CI 设计。
+1. **补 Gate ①的三端对比**——基准样本 `docs/baseline/mangadex-search-one.json` 已就绪，Android 侧可立即对比；iOS 侧待 macOS。它会一次性暴露 Ksoup / Ktor / Promise 调度 / Unicode 的平台差异。
+2. **在 Mac 上跑第 5 节的三条命令**，补齐 iOS 证据；同时把 `simulator tests require macOS` 这类警告在 CI 里显式区分「跳过」与「失败」。
+3. **把 `:core:platform` 的 `WebViewLoginHost` 接口定稿**（ADR-009 的落地前置），桌面 `actual` 返回 `Unsupported`，Android/iOS 分别接 `WebChromeClient` / `WKNavigationDelegate`，并把 Cookie 回写进共用的 `CookieStore`。
+4. **把本报告结论回写 `feasibility.md` 第 4 节**，需要修订的有三条：「iOS klib 可在 Linux 交叉编译」（改变 CI 设计）、「jogamp 不可达」（实为 Maven Central 缺失但 SciJava 有镜像）、「KCEF 可初始化」已移出范围。

@@ -140,3 +140,16 @@ tasks.register<JavaExec>("sourceSpike") {
     )
     mainClass.set("spike.SourceMainKt")
 }
+
+// 桌面 WebView 替代方案验证：./gradlew :shared:accountSpike --args="<source.js>"
+// 对照「空 CookieJar」与「注入 Cookie」两种情况下源的登录态判定。
+tasks.register<JavaExec>("accountSpike") {
+    group = "verification"
+    description = "Verify that loginWithWebview can be replaced by cookie injection"
+    dependsOn("compileKotlinDesktop")
+    classpath = files(
+        configurations.getByName("offlineDesktopRuntime"),
+        layout.buildDirectory.dir("classes/kotlin/desktop/main"),
+    )
+    mainClass.set("spike.AccountMainKt")
+}

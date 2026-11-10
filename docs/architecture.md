@@ -49,7 +49,7 @@
 | 在线源仓库订阅         | 完整          | 完整（侧载分发）               | 完整            |
 | 本地文件导入          | SAF         | Files / DocumentPicker | 任意路径 + 拖放     |
 | 后台下载            | WorkManager | BGTaskScheduler（受限）    | 常驻协程          |
-| WebView 登录      | WebView     | WKWebView              | KCEF 或系统浏览器回调 |
+| WebView 登录      | WebView     | WKWebView              | 无内嵌浏览器：Cookie 导入 + 系统浏览器 loopback（ADR-009） |
 | 原生 dex / jar 扩展 | 可选增强        | 不支持                    | 可选增强          |
 
 ### 1.3 硬约束
@@ -138,14 +138,14 @@ Zipline 输入为 Kotlin/JS 编译产物、桥为 `ZiplineService`、不提供�
   | `Crypto` 放 expect/actual       | **Cryptography-Kotlin / KotlinCrypto hash+MACs / korlibs-crypto**，全在 commonMain | Crypto            |
   | 自研下载队列                         | **Ketch**（并行、暂停续传、队列、限速，Android/iOS/JVM）                                        | Network           |
   | 自研重试 / 限流 / 熔断                 | **kmp-resilient**                                                               | Asynchronous      |
-  | 自研 `WebViewLogin`              | **Compose WebView Multiplatform**（Android/iOS/Desktop + KCEF）                   | Compose UI        |
+  | 自研 `WebViewLogin`              | **Compose WebView Multiplatform**（仅 Android/iOS，桌面按 ADR-009 不引入）              | Compose UI        |
   | `PdfRenderer` 三端适配             | **ComposePdfReader**（`dev.nucleusframework:pdfium`，KMP）；M0 已验证覆盖 JVM/Android/iOS，不再保留三端 actual 兜底          | Compose UI        |
   | `ImageRegionDecoder` + tile 自研 | **ZoomImage Subsampling**（五平台）                                                  | Compose UI        |
   | 自研文件选择器                        | **FileKit** + **AppDirs** + **kotlinx-io / okio**                               | File / Storage    |
   | 自研 KMP logger                  | **Napier / Kermit**（文件轮转自行补一层）                                                  | Log               |
   | 自研 `SecureStorage`             | **KVault / KSafe**（Android/iOS），桌面加密文件                                          | Storage           |
 - **结果**：平台层仅剩 3 类（见第 7 章），均为桌面端专属补齐。**三端行为一致性由库保证，而不是靠人工同步三份 `actual`**。
-- **代价**：引入约 30 个第三方依赖，需要版本目录集中锁定与依赖升级回归；四 target 可解析性已在 M0 验证完成（结论见 `feasibility.md` 第 4 节），仍待验证的是行为一致性（例如 Compose WebView 的 KCEF 配置、`RequestInterceptor` 仅 Android/iOS）。
+- **代价**：引入约 30 个第三方依赖，需要版本目录集中锁定与依赖升级回归；四 target 可解析性已在 M0 验证完成（结论见 `feasibility.md` 第 4 节），仍待验证的是行为一致性（例如 Compose WebView 的桌面端缺失、`RequestInterceptor` 仅 Android/iOS，见 ADR-009）。
 - **治理规则**：每个模块在 README 中声明能力来源类别（纯 Kotlin / KMP 库 / 平台 actual）；CI 检查 `:core:model`、`:core:reader`、`:source:hostapi` 不得出现平台 API 依赖。
 
 ### ADR-007 · 阅读器拆为「外层状态机」与「单页渲染器」
@@ -173,6 +173,42 @@ Zipline 输入为 Kotlin/JS 编译产物、桥为 `ZiplineService`、不提供�
   - Navigation3 相对年轻（CMP 侧从 1.10 起），`SceneStrategy` 与 `TypeMap` API 仍在演进，需在 `libs.versions.toml` 锁定版本并在 M0 做自适应 spike（手机单窗格 / 平板双窗格 / Desktop 三窗格 + 后退 + 状态恢复）；
   - ViewModel 作用域与 DI（Koin）集成需在 `:app:shared-ui` 统一工厂，禁止各 feature 自建 scope。
 - **被否决**：Decompose + Essenty（不引入）。
+
+---
+
+### ADR-009 · 桌面端不内嵌浏览器，WebView 能力仅落地 Android / iOS
+
+- **背景（M0 实测数据）**：
+  - **真实源的依赖率极低**：`venera-app/venera-configs` 全量 36 个源中，声明 `account.loginWithWebview` 的仅 5 个（13.9%），其中 4 个同时声明 `loginWithCookies`。使用场景集中在三类：Cookie 登录（nhentai / e-hentai / ccc）、Cloudflare 盾（mycomic）、论坛区登录（manga_dex，非阅读主链路）。
+  - **源的登录态判定不依赖 WebView**：`nhentai.js:318` 的 `persistAuthFromCookies()` 从 `Network.getCookies()` 取 token；`mycomic.js:187` 的 `init()` 直接扫描 `cf_clearance`。源只认 CookieJar，WebView 只是「把 Cookie 写进 CookieJar 的一种手段」。
+  - **KCEF 依赖链比文档记录的更深**：`compose-webview-multiplatform-desktop:2.0.1` → `dev.datlag:kcef:2024.04.20.3` → `dev.datlag:jcef:2024.04.20.3` → `org.jogamp.gluegen:gluegen-rt:2.5.0` + `org.jogamp.jogl:jogl-all:2.5.0`，两者均为 **runtime scope**（编译期不需要，故 `compileKotlinDesktop` 能过、任何 `JavaExec` 起不来）。
+  - **jogamp 缺失是单点而非死局**：Maven Central / Google Maven / 阿里云 / 腾讯云均 404；`jogamp.org` 时通时断；**SciJava 镜像 `maven.scijava.org/content/groups/public` 有完整 2.5.0 构件**（gluegen-rt 388 KB、jogl-all 909 KB，已下载校验）。即：依赖可解，但依赖一个非官方镜像。
+  - **CEF 原生二进制需运行时另取**：`dev.datlag:jcef` 无 natives 分类构件，Chromium 内核须首次启动时下载（压缩包约 80–120 MB，解压 200 MB 量级），是用户可见的启动成本与失败点。
+  - **能力不对等**：`RequestInterceptor` 仅 Android/iOS；HTML 外部资源桌面未支持；headless CI 无法验证 CEF 渲染。
+- **决策**：
+  1. **桌面端不引入 KCEF / JCEF / 任何内嵌 Chromium**，`desktopRuntimeClasspath` 保持干净（这也是 M0 里 `offlineDesktopRuntime` 配置的由来）。
+  2. `compose-webview-multiplatform` **只进 `androidMain` / `iosMain`，不进 `commonMain`**；WebView 登录通过 `:core:platform` 的 `WebViewLoginHost` 接口暴露，桌面 `actual` 返回 `Unsupported`，由 UI 层切换为下述路径。
+  3. `loginWithWebview` 在桌面映射为两条降级路径：
+     - **主路径 · Cookie 导入**：读源声明的 `loginWithCookies.fields` 自动生成表单；源未声明 fields 时提供「整串 Cookie 粘贴」输入框，由宿主解析成 `name=value` 列表写入 CookieJar。
+     - **辅路径 · 系统浏览器 + loopback 回调**（RFC 8252）：仅适用于 OAuth 型源，**不能**替代 Cookie 场景——deep link 回传的是 code/token，拿不到 `cf_clearance` 这类 Cookie。
+  4. 桌面端 `AccountPage` 对 `loginWithWebview` 的呈现改为「本平台无内置浏览器，请按以下方式导入 Cookie」，并给出从浏览器 DevTools 复制的三步指引；**不得**原样展示源的「点击登录唤起内置浏览器」文案（实测 `mycomic` 的错误提示正是这样误导用户的）。
+- **理由**：
+  - 替代方案在**契约层等价**：M0 的 `accountSpike` 对照实验证明，同一份 `mycomic.js`，空 CookieJar 时源发出 `No cf_clearance cookie found` 警告，注入 `cf_clearance` 后警告消失、`Network.getCookies` 返回该值；带 Cookie 发真实请求时请求头确实携带（`[cookie: 29 chars]`），站点返回 403 说明请求真实到达。
+  - 成本收益极不对称：为 13.9% 的源引入 200 MB Chromium 内核 + 一条非官方 Maven 依赖 + 三平台各自的注入配置，且桌面端本就是次要平台。
+  - 与桌面端的其余限制（后台任务、托盘、PDF）性质一致，都属于「桌面用等价能力替代而非对齐」，不破坏 1.2 的能力对等原则。
+- **代价**：
+  - 桌面用户多一步手工操作，首次配置体验低于 Android/iOS。这是**明确接受的取舍**，需在设置页用清晰文案补偿。
+  - 源若只声明 `loginWithWebview` 而未声明 `loginWithCookies`（如 nhentai），宿主无法自动推断字段名，只能退化为「整串粘贴」；后续可在源审计阶段标注此类源。
+  - Android/iOS 侧 WebView 登录后仍需把 Cookie 同步进 Ktor `CookieJar`，这条链路与桌面共用同一套 `CookieStore`，反向降低了平台差异。
+- **被否决**：
+  | 方案 | 否决理由 |
+  |---|---|
+  | 三端统一 KCEF | 依赖非官方镜像单点；200 MB 内核；无 GUI 环境不可测；`RequestInterceptor` 能力缺失 |
+  | 仅「系统浏览器 + deep link」 | 只能处理 OAuth 回传，拿不到普通 Cookie，对 Cloudflare 类源完全无效 |
+  | 桌面自行封装 WebKitGTK / WebView2 / WKWebView | 三套 JNI 封装、三份维护成本，收益与 KCEF 相同 |
+  | JxBrowser | 商业授权，与开源分发目标冲突 |
+  | 桌面直接不支持需登录的源 | 会砍掉 5 个源，且云盾类站点在桌面彻底不可用 |
+- **验证**：`./gradlew :shared:accountSpike --args="<source.js> [--live]"`，输出空 CookieJar / 注入 Cookie 的对照表；`--live` 追加真实请求以确认 Cookie 进入请求头。
 
 ---
 
@@ -274,7 +310,7 @@ reader/
 | `commonMain`               | 全部                | 绝大多数业务与 UI 代码                                                   |
 | `jvmMain`                  | Android + Desktop | OkHttp/CIO 共用配置、kotlinx-io                                      |
 | `androidMain`              | Android           | `WorkManager` 绑定、SAF 补充说明、可选独立 `:source` 进程                     |
-| `desktopMain`              | JVM Desktop       | KCEF 初始化、托盘/窗口/快捷键/拖放                                           |
+| `desktopMain`              | JVM Desktop       | 托盘/窗口/快捷键/拖放、Cookie 导入（无内嵌浏览器，见 ADR-009）                        |
 | `nativeMain` / `appleMain` | iOS + macOS       | Darwin engine、平台崩溃上报                                            |
 | `iosMain`                  | iOS               | Keychain、BGTaskScheduler、WKWebView 细节、`ComposeUIViewController` |
 
@@ -739,7 +775,7 @@ QuickJS 引擎与三端链接由 `quickjs-kt` 依赖提供，归入 ②，无需
 
 ### 7.4 桌面端已知限制（必须进 M0 验证）
 
-- **Compose WebView Multiplatform**：Desktop 从 1.7.0 起改用 KCEF，需在 `dependencyResolutionManagement` 增加 `maven("https://jogamp.org/deployment/maven")`——KCEF 传递依赖 `gluegen-rt:2.5.0` / `jogl-all:2.5.0` 不在 Google Maven / Maven Central，缺该仓库连 `desktopRuntimeClasspath` 都无法解析（M0 实测）；`RequestInterceptor` 仅 Android/iOS；HTML 外部资源 Desktop 尚未支持。→ 桌面 WebView 登录降级为「系统浏览器 + deep link 回调」。
+- **Compose WebView Multiplatform**：Desktop 从 1.7.0 起改用 KCEF，依赖链 `kcef → dev.datlag:jcef → org.jogamp.gluegen:gluegen-rt:2.5.0 / org.jogamp.jogl:jogl-all:2.5.0`（**runtime scope**）。jogamp 在 Maven Central / Google Maven / 阿里云 / 腾讯云均 404，仅 `jogamp.org`（时通时断）与 **SciJava 镜像 `maven.scijava.org/content/groups/public`** 有完整构件（M0 已下载校验）；`dev.datlag:jcef` 无 natives 分类构件，Chromium 内核需运行时下载（200 MB 量级）。**按 ADR-009，桌面端不引入内嵌浏览器，WebView 只进 `androidMain` / `iosMain`**，`loginWithWebview` 在桌面降级为「Cookie 导入（主）+ 系统浏览器 loopback 回调（辅，仅 OAuth 型源）」。`RequestInterceptor` 仅 Android/iOS。
 - **ComposePdfReader**：坐标 `dev.nucleusframework:pdfium:159.0.8138.0`，构建时自动拉取 pdfium 二进制；M0 已确认 JVM / Android / iOS 三端 variant 齐备且 `PdfReaderState` 冒烟通过，不再保留 `PdfRenderer / PDFKit / PDFBox` 三端兜底。`PdfDocument` 为 internal，不在业务代码引用。
 - **KMP WorkManager** 仅覆盖 Android/iOS；桌面后台由 `PlatformRuntime` 的常驻协程承担。
 - **ZoomImage** 与外层 `LazyColumn` 在长图连续滚动下的手势竞争需压测；必要时单页模式用 ZoomImage、连续模式自绘。
@@ -883,7 +919,7 @@ NavDisplay(entryProvider) + SceneStrategy
 | 封面图片       | **Coil 3.6.3**                                                                            | 常规加载；网络组件现名 `coil-network-ktor3`（`coil-network-ktor` 停在 3.0.0-alpha08）                                       |
 | 阅读器图片      | **Sketch 4.7.0** 或 Coil 3 + **ZoomImage 1.7.0 Subsampling**                             | 五平台超大图分块、长图 Read Mode、Scroll Bar（ADR-007）；三者均绑定 skiko 0.150.1，与 CMP 的 0.156.1 不一致，见风险表 R20 |
 | PDF        | **ComposePdfReader**（`dev.nucleusframework:pdfium:159.0.8138.0`）                       | 覆盖 JVM / Android / iOS / Web，三 target variant 齐备且 `PdfReaderState` 冒烟通过，**无需启用「降级三端 actual」**；`PdfDocument` 为 internal，不直接引用 |
-| WebView 登录 | **Compose WebView Multiplatform**（`io.github.kevinnzou:compose-webview-multiplatform:2.0.1`） | `pageTitle` / `lastLoadedUrl` / `evaluateJavaScript` / Cookie；desktop / iosArm64 / iosSimulatorArm64 / iosX64 / release variants 齐备；桌面需 KCEF |
+| WebView 登录 | **Compose WebView Multiplatform**（`io.github.kevinnzou:compose-webview-multiplatform:2.0.1`） | `pageTitle` / `lastLoadedUrl` / `evaluateJavaScript` / Cookie；**只依赖 android / iosArm64 / iosSimulatorArm64 / iosX64 变体，桌面不引入**（ADR-009：桌面改 Cookie 导入 + loopback） |
 | 拖放         | **Compose DND**                                                                          | 桌面本地导入                                                                                                                                                                                                  |
 | 富文本        | **Multiplatform Markdown Renderer** / **Compose Rich Editor**                            | 小说 markdown 正文、笔记编辑                                                                                                                                                                                     |
 
@@ -965,7 +1001,7 @@ NavDisplay(entryProvider) + SceneStrategy
 
 | 阶段              | 交付物                                                                         | 验收门槛（Gate）                                                                                                                                                                                                                                 |
 | --------------- | --------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| **M0 技术验证**     | quickjs-kt 三端集成 spike、官方 Expressive 组件三端渲染验证、Promise 桥、Ksoup 契约对齐、依赖可解析性矩阵、一致性测试夹具 | ① 一个真实 Venera 漫画源在三端产出**完全一致**的 JSON；② `memoryLimit = 32 MB` 生效、`withTimeout` 能中断 `while(true)`、16KB 镜像下 so 加载、iOS 无 JIT entitlement；③ 全部依赖在 android/ios/jvm 三 target 可解析；④ 官方 Expressive 组件三端截图一致；⑤ ZoomImage 无 OOM、KCEF 可初始化、PDF 平台矩阵确认 |
+| **M0 技术验证**     | quickjs-kt 三端集成 spike、官方 Expressive 组件三端渲染验证、Promise 桥、Ksoup 契约对齐、依赖可解析性矩阵、一致性测试夹具 | ① 一个真实 Venera 漫画源在三端产出**完全一致**的 JSON；② `memoryLimit = 32 MB` 生效、`withTimeout` 能中断 `while(true)`、16KB 镜像下 so 加载、iOS 无 JIT entitlement；③ 全部依赖在 android/ios/jvm 三 target 可解析；④ 官方 Expressive 组件三端截图一致；⑤ ZoomImage 无 OOM、PDF 平台矩阵确认（KCEF 已由 ADR-009 移出范围） |
 | **M1 契约冻结**     | `:source-contract`、`.d.ts`、JSON Schema、示例源、契约文档                             | 契约评审通过；漫画 + 小说各一个源跑通；此后契约变更需走版本化流程                                                                                                                                                                                                         |
 | **M2 数据层**      | Domain 模型、SQLDelight schema、仓库、源管理与安装流程                                     | 断网书架可用；迁移测试通过；签名/权限校验生效                                                                                                                                                                                                                    |
 | **M3 漫画阅读器**    | ReaderStateMachine、解码层、分页/长条/预加载、下载队列                                       | 超大图不 OOM、翻页无白屏、进度不丢                                                                                                                                                                                                                        |
@@ -994,7 +1030,7 @@ NavDisplay(entryProvider) + SceneStrategy
 | R9  | 源站点改版导致大面积失效                                   | 中  | 高  | 源版本化与回滚、错误日志、源更新检查、社区仓库机制                                                                                                     |
 | R10 | 版权与内容合规                                        | 高  | 低  | 不预置源、不托管内容、仅用户自配置；文档明确工具定位                                                                                                    |
 | R11 | 误把 quickjs-kt 的隔离 context 当成安全沙箱               | 高  | 中  | ADR-003 明确隔离 context ≠ 沙箱；能力白名单在 Host API 出口强制；Android 可选独立 `:source` 进程                                                      |
-| R12 | 第三方库在 Desktop target 缺 artifact 或能力降级          | 中  | 中  | M0 依赖可解析性矩阵；7.4 逐项列出降级路径（WebView → 系统浏览器、PDF → 三端兜底、后台 → 常驻协程）                                                                |
+| R12 | 第三方库在 Desktop target 缺 artifact 或能力降级          | 中  | 中  | M0 依赖可解析性矩阵；7.4 逐项列出降级路径（WebView → Cookie 导入，ADR-009；PDF → 三端兜底；后台 → 常驻协程）                                                                |
 | R13 | ZoomImage 与连续滚动手势冲突、自定义 `ImageSource` 不足       | 中  | 中  | M0 压测；保留 `expect/actual` 解码兜底与自绘连续模式                                                                                          |
 | R14 | 多模块导致 iOS framework 导出爆炸 / Swift API 难用        | 中  | 中  | 单一 umbrella `:app:shared-ui` + 显式 `export()`；SKIE / KMP-NativeCoroutines；CI 检查导出面（Navigation3 不新增导出面，route key 留在 commonMain） |
 | R17 | Navigation3 在 CMP 侧仍年轻，Scene/TypeMap API 演进    | 中  | 中  | 随 CMP 1.12.2 矩阵锁 `navigation3-ui:1.2.0`；M0 先跑自适应 spike（单/双/三窗格 + 后退 + 状态恢复）；`SceneStrategy` 薄适配 |
@@ -1003,7 +1039,7 @@ NavDisplay(entryProvider) + SceneStrategy
 | R18 | quickjs-kt 为单人维护的第三方库，Kotlin 版本跟随可能滞后          | 中  | 中  | 锁 1.0.18；保留 WASM 沙箱备选；M0 验证 2.4.21 klib 可链接；每次升级重跑一致性夹具                                                                       |
 | R19 | CMP 稳定线与其它 KMP 库编译时 Kotlin 版本不一致          | 中  | 中  | 已完成 M0 四 target 依赖可解析性矩阵；Version Catalog 单点锁；必要时 `disableNativeCache` 临时规避                                     |
 | R20 | UI 库绑定 skiko 0.150.1 与 CMP 版本不一致（已关闭）       | 低  | 低  | CMP 1.12.2 用 skiko 0.150.2，仅差一个补丁号；M0 四 target 编译**未出现任何 Skiko 警告**。升级 CMP 时重新检查该矩阵                          |
-| R21 | WebView / PDF / Koin / ZoomImage 基于旧 Compose（1.8.0~1.12.0）编译                | 中  | 中  | 1.12.2 稳定线与这些库的版本距离较 beta 线更近；Gradle 取最高版本后四 target 编译通过，实际渲染前不可判定二进制兼容，M1 首个页面即跑三端截图基线 |
+| R21 | WebView / PDF / Koin / ZoomImage 基于旧 Compose（1.8.0~1.12.0）编译                | 中  | 中  | 1.12.2 稳定线与这些库的版本距离较 beta 线更近；Gradle 取最高版本后四 target 编译通过，实际渲染前不可判定二进制兼容，M1 首个页面即跑三端截图基线；桌面端已按 ADR-009 移出，风险面收窄到 android/ios |
 
 ---
 
@@ -1044,7 +1080,7 @@ NavDisplay(entryProvider) + SceneStrategy
 | P0 | SQLDelight（Room 小表并行对照）                                                            | ✅ 三 driver 编译；migration 未验     | 同一 `.sq` 增删改查一致                                                                                                                   | Room 备选                                |
 | P0 | ZoomImage + Sketch/Coil3                                                           | ✅ 可解析 + 冒烟通过                  | 超大图无 OOM、长图 Read Mode、手势不冲突                                                                                                       | 自绘连续模式兜底                               |
 | P0 | ComposePdfReader                                                                   | ✅ 三端 variant 齐备                  | 渐进渲染 + 文本选择                                                                                                                       | 无需降级（已覆盖三端）                        |
-| P0 | Compose WebView（KCEF）                                                              | ✅ 三端 variant 齐备；KCEF 未验       | `pageTitle/lastLoadedUrl/evaluateJavaScript`                                                                                      | 桌面系统浏览器 + deeplink                     |
+| P0 | Compose WebView（Android/iOS）                                                        | ✅ android/ios variant 齐备           | `pageTitle/lastLoadedUrl/evaluateJavaScript`                                                                                      | 桌面不引入，改 Cookie 导入（ADR-009）          |
 | P0 | Koin（ViewModel 工厂）                                                             | ✅ 四 target 编译通过                 | 同一 ViewModel 三端创建                                                                                                                 | —                                      |
 | P1 | Ketch                                                                              | JVM artifact + Android/iOS       | 暂停/续传/重启 + `download_task`                                                                                                        | DIY-Ktor 兜底                            |
 | P1 | FileKit/AppDirs/io                                                                 | 三 target                         | 选择/保存 + 根路径往返                                                                                                                     | iOS `Application Support` actual       |
@@ -1052,7 +1088,7 @@ NavDisplay(entryProvider) + SceneStrategy
 | P1 | KMP WorkManager                                                                    | Android/iOS                      | 语义文档化（iOS≠WorkManager）                                                                                                            | 桌面常驻协程                                 |
 | P2 | MaterialKolor/kmPalette/Calf/Haze/Rinku/paging/DND/Markdown/RichEditor/Kim/cache4k | 逐个三 target                       | 缺 desktop 即降级，不阻主链                                                                                                                | 按 7.4 降级                               |
 
-判绿标准：M0 Gate ①真实 Venera 源三端 JSON 一致 ②iOS 无 JIT + 内存/中断/16KB 镜像三项通过 ③上表 P0 全绿（P1/P2 允许降级有主）④官方 Expressive 组件三端截图一致 ⑤ZoomImage 无 OOM ⑥KCEF + PDF 矩阵确认。
+判绿标准：M0 Gate ①真实 Venera 源三端 JSON 一致 ②iOS 无 JIT + 内存/中断/16KB 镜像三项通过 ③上表 P0 全绿（P1/P2 允许降级有主）④官方 Expressive 组件三端截图一致 ⑤ZoomImage 无 OOM ⑥PDF 平台矩阵确认（KCEF 按 ADR-009 移出范围）。
 
 **回退顺序**：quickjs-kt 不达标 → 先试 1.0.x 其它补丁版，再考虑 WASM 沙箱或自研绑定；material3 官方 alpha 线出现阻塞性回归 → 锁到 1.12.2 矩阵的其它补丁版或等待官方更新，**不自行改用 `1.9.0`**（会丢失官方 Expressive 组件）。
 

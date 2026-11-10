@@ -5,6 +5,7 @@ import com.dokar.quickjs.binding.define
 import com.dokar.quickjs.binding.function
 import com.dokar.quickjs.quickJs
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
@@ -37,11 +38,86 @@ fun interface SourceHttp {
  * 因此 Host API 统一收一个 JSON 载荷字符串（与 architecture.md 4.6.2 的
  * `__hostCall(method, payload)` 形状一致），不用多参数重载。
  */
-class VeneraSourceRunner(private val http: SourceHttp) {
+class VeneraSourceRunner(
+    private val http: SourceHttp,
+    /**
+     * 预置 Cookie（host -> name -> value）。
+     *
+     * 这是桌面端「手工导入 Cookie」方案的验证入口：如果宿主能把用户从系统浏览器
+     * 复制的 Cookie 写进 CookieJar，且源的 `Network.getCookies` 与后续请求都能看到它，
+     * 那么 `loginWithWebview` 在语义上就完全可被替代——因为源判断登录态本来就读 Cookie。
+     */
+    seedCookies: Map<String, Map<String, String>> = emptyMap(),
+) {
 
     private val kv = mutableMapOf<String, String>()
 
-    suspend fun run(sourceCode: String, keyword: String): String {
+    /** 宿主侧请求日志，回填进结果 JSON，便于做「有无 Cookie」的对照观察。 */
+    private val hostLogs = mutableListOf<String>()
+
+    /** host -> (cookie name -> value)，对应真实架构里的 `cookie` 表。 */
+    private val cookieJar: MutableMap<String, MutableMap<String, String>> =
+        seedCookies.mapValues { it.value.toMutableMap() }.toMutableMap()
+
+    private fun hostOf(url: String): String =
+        url.substringAfter("://", "").substringBefore('/').substringBefore(':').lowercase()
+
+    /** 简化版域匹配：精确命中，或 cookie host 作为父域后缀命中。 */
+    private fun cookiesFor(url: String): Map<String, String> {
+        val host = hostOf(url)
+        val out = linkedMapOf<String, String>()
+        cookieJar.forEach { (cookieHost, jar) ->
+            val h = cookieHost.removePrefix(".").lowercase()
+            if (host == h || host.endsWith(".$h")) out.putAll(jar)
+        }
+        return out
+    }
+
+    private fun cookieHeaderFor(url: String): String? =
+        cookiesFor(url).takeIf { it.isNotEmpty() }
+            ?.entries?.joinToString("; ") { "${it.key}=${it.value}" }
+
+    private fun handleCookieOp(payload: String): String {
+        val obj = runCatching { Json.parseToJsonElement(payload).jsonObject }.getOrNull()
+            ?: return "[]"
+        val url = obj["url"]?.jsonPrimitive?.contentOrNull ?: return "[]"
+        val host = hostOf(url)
+        return when (obj["op"]?.jsonPrimitive?.contentOrNull) {
+            "set" -> {
+                val jar = cookieJar.getOrPut(host) { mutableMapOf() }
+                (obj["list"] as? kotlinx.serialization.json.JsonArray)?.forEach { el ->
+                    val o = runCatching { el.jsonObject }.getOrNull() ?: return@forEach
+                    val name = o["name"]?.jsonPrimitive?.contentOrNull ?: return@forEach
+                    jar[name] = o["value"]?.jsonPrimitive?.contentOrNull ?: ""
+                }
+                println("[host] cookie set -> $host (${jar.size} 条)")
+                "[]"
+            }
+            "delete" -> {
+                val removed = cookieJar.remove(host)?.size ?: 0
+                println("[host] cookie delete -> $host (清除 $removed 条)")
+                "[]"
+            }
+            else -> buildJsonObject {
+                put("cookies", kotlinx.serialization.json.buildJsonArray {
+                    cookiesFor(url).forEach { (k, v) ->
+                        add(buildJsonObject {
+                            put("name", k)
+                            put("value", v)
+                            put("domain", host)
+                        })
+                    }
+                })
+            }.let { it["cookies"].toString() }
+        }
+    }
+
+    suspend fun run(
+        sourceCode: String,
+        keyword: String,
+        /** 只跑元数据 / init / account 诊断，跳过 search 与 detail（用于登录态对照实验）。 */
+        probeOnly: Boolean = false,
+    ): String {
         val className = Regex("""class\s+(\w+)\s+extends\s+ComicSource""")
             .find(sourceCode)?.groupValues?.get(1)
             ?: error("未找到 `class X extends ComicSource` 定义")
@@ -58,13 +134,20 @@ class VeneraSourceRunner(private val http: SourceHttp) {
                 asyncFunction("request") { payload: String -> handleRequest(payload) }
                 // 同步桥：源私有 KV（load / save 合一，保持单参数）
                 function("kv") { payload: String -> handleKv(payload) }
+                // 同步桥：Cookie 管理（getCookies / setCookies / deleteCookies）
+                function("cookieOp") { payload: String -> handleCookieOp(payload) }
                 function("log") { msg: String ->
                     println("[source] $msg")
                     msg.length
                 }
             }
 
-            evaluate<String>(POLYFILL + "\n" + sourceCode + "\n" + driver(className, kw))
+            evaluate<String>(POLYFILL + "\n" + sourceCode + "\n" + driver(className, kw, probeOnly))
+        }.let { raw ->
+            val obj = runCatching { Json.parseToJsonElement(raw).jsonObject }.getOrNull()
+            if (obj == null) raw else JsonObject(
+                obj + ("hostLogs" to JsonArray(hostLogs.map { JsonPrimitive(it) }))
+            ).toString()
         }
     }
 
@@ -81,14 +164,24 @@ class VeneraSourceRunner(private val http: SourceHttp) {
         }.getOrDefault(emptyMap())
         val body = req["body"]?.jsonPrimitive?.contentOrNull
 
+        // 宿主负责 Cookie 注入（源不显式传 Cookie 头），这是与 Venera 行为一致的关键点
+        val injected = cookieHeaderFor(url)
+        val finalHeaders = if (injected != null) headers + ("Cookie" to injected) else headers
+
         val resp = try {
-            http.fetch(method, url, headers, body?.takeIf { it != "null" })
+            http.fetch(method, url, finalHeaders, body?.takeIf { it != "null" })
         } catch (e: Exception) {
-            println("[host] ERROR $method $url -> ${e::class.simpleName}: ${e.message}")
+            val mark = if (injected != null) " (cookie=yes)" else " (cookie=none)"
+            val line = "[host] ERROR $method $url$mark -> ${e::class.simpleName}: ${e.message}"
+            hostLogs += line
+            println(line)
             return errorJson("HOST_ERROR: ${e::class.simpleName}: ${e.message}")
         }
 
-        println("[host] $method $url -> ${resp.status} (${resp.body.length} chars)")
+        val cookieMark = if (injected != null) " [cookie: ${injected.length} chars]" else " [cookie: none]"
+        val line = "[host] $method $url -> ${resp.status} (${resp.body.length} chars)$cookieMark"
+        hostLogs += line
+        println(line)
         return buildJsonObject {
             put("status", resp.status)
             // 控制跨桥体积，避免 32 MB 内存上限被大响应撞穿
@@ -113,7 +206,8 @@ class VeneraSourceRunner(private val http: SourceHttp) {
         put("body", message)
     }.toString()
 
-    private fun driver(className: String, keywordJson: String) = """
+    private fun driver(className: String, keywordJson: String, probeOnly: Boolean) = """
+        const __probeOnly = $probeOnly;
         const __inst = new $className();
         const __meta = {
           name: __inst.name,
@@ -131,11 +225,22 @@ class VeneraSourceRunner(private val http: SourceHttp) {
         };
         let __search = null;
         let __err = null;
+        const __account = __inst.account ? {
+          hasWebview: !!__inst.account.loginWithWebview,
+          hasCookieLogin: !!__inst.account.loginWithCookies,
+          cookieFields: (__inst.account.loginWithCookies && __inst.account.loginWithCookies.fields) || null,
+          webviewUrl: (__inst.account.loginWithWebview && __inst.account.loginWithWebview.url) || null
+        } : null;
+        let __cookies = null;
         try {
           if (typeof __inst.init === 'function') {
             try { await __inst.init(); } catch (e) { __host.log('init failed: ' + e); }
           }
-          if (__inst.search && __inst.search.load) {
+          try {
+            const __probeUrl = __inst.baseUrl || (__account && __account.webviewUrl) || '';
+            __cookies = __probeUrl ? Network.getCookies(__probeUrl) : [];
+          } catch (e) { __cookies = 'ERR: ' + e; }
+          if (!__probeOnly && __inst.search && __inst.search.load) {
             // 真实宿主按源声明的 optionList 生成默认选项，取每项第一个的 value 段
             const __opts = (__inst.search.optionList || []).map(function (o) {
               const list = o.options || [];
@@ -174,7 +279,8 @@ class VeneraSourceRunner(private val http: SourceHttp) {
           __detailErr = String(e && e.message ? e : e);
         }
         JSON.stringify(
-          { meta: __meta, searchSample: __search, detailSample: __detail, detailError: __detailErr, error: __err },
+          { meta: __meta, account: __account, cookiesSeen: __cookies, logs: __logs,
+            searchSample: __search, detailSample: __detail, detailError: __detailErr, error: __err },
           function (k, v) { return v instanceof Map ? Object.fromEntries(v) : v; }
         );
     """.trimIndent()
@@ -185,6 +291,7 @@ class VeneraSourceRunner(private val http: SourceHttp) {
          * 形状对齐 architecture.md 4.5，只实现最小集。
          */
         private val POLYFILL = """
+            const __logs = [];
             const APP = { locale: 'zh_CN', version: '1.6.5', platform: 'desktop' };
             class ComicSource {
               constructor() {}
@@ -198,6 +305,7 @@ class VeneraSourceRunner(private val http: SourceHttp) {
             class Comic { constructor(o) { Object.assign(this, o || {}); } }
             class ComicDetails { constructor(o) { Object.assign(this, o || {}); } }
             class Novel { constructor(o) { Object.assign(this, o || {}); } }
+            class Cookie { constructor(o) { Object.assign(this, o || {}); } }
             const Network = {
               get: async function (url, headers) {
                 const r = await __host.request(JSON.stringify({
@@ -211,6 +319,15 @@ class VeneraSourceRunner(private val http: SourceHttp) {
                   body: data === undefined ? null : data
                 }));
                 return JSON.parse(r);
+              },
+              getCookies: function (url) {
+                return JSON.parse(__host.cookieOp(JSON.stringify({ op: 'list', url: url })));
+              },
+              setCookies: function (url, list) {
+                return __host.cookieOp(JSON.stringify({ op: 'set', url: url, list: list || [] })) && true;
+              },
+              deleteCookies: function (url) {
+                return __host.cookieOp(JSON.stringify({ op: 'delete', url: url })) && true;
               }
             };
             // 浏览器形状的 fetch：MangaDex 等源直接用它，不走 Network.*
@@ -234,7 +351,9 @@ class VeneraSourceRunner(private val http: SourceHttp) {
             function randomInt(a, b) { return a + Math.floor(Math.random() * (b - a + 1)); }
             function randomDouble(a, b) { return a + Math.random() * (b - a); }
             const console = { log: function () {
-              __host.log(Array.prototype.slice.call(arguments).map(String).join(' '));
+              const s = Array.prototype.slice.call(arguments).map(String).join(' ');
+              __logs.push(s);
+              __host.log(s);
             } };
             async function compute(script, buffer) { return buffer; }
         """.trimIndent()
