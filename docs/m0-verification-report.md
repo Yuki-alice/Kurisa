@@ -23,7 +23,7 @@
 
 | # | Gate（`architecture.md:968`） | 状态 | 证据 |
 |---|---|---|---|
-| ① | 真实 Venera 源三端 JSON 一致 | **未执行** | 需要真实源脚本 + 目标站点可达 + 三端运行环境，本轮不具备 |
+| ① | 真实 Venera 源三端 JSON 一致 | **desktop 侧通过** | 真实 `manga_dex.js` 跑通 search + loadInfo，详见第 3.5 节；三端对比待 macOS |
 | ②a | `memoryLimit = 32 MB` 生效 | **通过** | `MEMORY_LIMIT=33554432` |
 | ②b | `withTimeout` 中断 `while(true)` | **通过** | `INTERRUPT=OK QuickJsInterruptedException` |
 | ②c | 16 KB page size 下 so 加载 | **Android 侧通过** | 四 ABI `p_align = 0x4000`（详见 3.3） |
@@ -96,6 +96,62 @@ INTERRUPT=OK QuickJsInterruptedException
 4. 自绘补缺口层 `ExpressiveFloatingToolbar` 与官方组件视觉协调。
 
 这条把 `feasibility.md` 里"四 target 编译通过"升级为**桌面端视觉验证通过**。
+
+---
+
+## 3.5 真实 Venera 源验证（Gate ①，desktop 侧）
+
+从 `venera-app/venera-configs`（36 个源）取真实源，用最小 Host API 在 quickjs-kt 上加载。
+新增 `VeneraSourceRunner`（`commonMain`）+ `SourceHttp` 平台注入点，运行：
+
+```bash
+./gradlew :shared:sourceSpike --args="<source.js> <keyword>"
+```
+
+### 结果
+
+| 源 | 站点可达性 | 结果 |
+|---|---|---|
+| `manga_dex.js`（MangaDex） | `api.mangadex.org` 200 | **完整通过** |
+| `comic_walker.js`（カドコミ） | 403（限制非日本 IP，连匿名 token 接口也拒） | 脚本加载通过，网络调用被站点拒绝 |
+
+MangaDex 的实测输出（`docs/baseline/mangadex-search-one.json`）：
+
+```
+[host] GET .../manga?...&title=one        -> 200 (163427 chars)
+[host] GET .../manga/{id}?...             -> 200 (5898 chars)
+[host] GET .../manga/{id}/feed?...        -> 200 (77465 chars)
+[host] GET .../statistics/manga/{id}      -> 200 (317 chars)
+
+meta:    {"name":"MangaDex","key":"manga_dex","version":"1.2.0","minAppVersion":"1.6.0"}
+search:  returned=20, maxPage=55, error=null（含《海贼王》a1c7c817-...）
+detail:  {"title":"お前じゃん","chapterCount":9,
+          "tagNamespaces":["Tags","Status","Authors","Artists"]}
+```
+
+这条链路覆盖了契约层最关键的部分：**类发现 → 实例化 → 字段/能力读取 → `optionList` 默认值生成 → 异步 search → `new Comic()` 构造 → `ComicDetails` + `Map chapters` 跨桥序列化**。`loadInfo` 内部还串了 3 个额外请求（详情 / 章节 feed / 统计），说明源里的多段 `await` 组合也能正常驱动。
+
+### 为此补齐的契约缺口
+
+真实源暴露了 `feasibility.md` 未列出的 5 个缺口，全部是**契约层**问题，不是引擎问题：
+
+| # | 缺口 | 说明 |
+|---|---|---|
+| 1 | **全局 `fetch`** | MangaDex 直接用 `await fetch(url)` + `res.ok/json()`，不走 `Network.get`。必须提供浏览器形状的 Response |
+| 2 | **`APP` 全局对象** | 源用 `APP.locale` 决定标题语言，`APP` 缺失直接 `TypeError` |
+| 3 | **`optionList` 默认值** | `search.load(keyword, options, page)` 假设 `options` 是数组，宿主须按源声明的 `optionList` 取每项首个值（`"any-Any"` → `any`）后传入，传 `null` 会崩 |
+| 4 | **`init()` 生命周期** | 部分源在 `init()` 里换 token / 拉版本号，宿主加载后必须先调 |
+| 5 | **typed `asyncFunction` 只收单参数** | quickjs-kt 的多参数重载不可用，Host API 必须收单个 JSON 载荷（恰好与 `architecture.md` 4.6.2 的 `__hostCall(method, payload)` 设计一致） |
+
+### 一个环境坑（非契约问题）
+
+Ktor CIO 与 `api.mangadex.org` 握手失败：
+
+```
+TLSException: Received alert during handshake. Level: FATAL, code: ProtocolVersion
+```
+
+换 JDK 原生 `HttpClient` 后正常。**这说明 `architecture.md` 里「desktop 用 CIO」的选择存在风险**，M1 前应实测 CIO 对目标站点的兼容性，或为 desktop 保留 OkHttp / JDK 两条路径。
 
 ---
 
@@ -179,7 +235,12 @@ xcrun simctl boot "iPhone 16"
 | `local.properties` | 新增（已被 `.gitignore` 忽略） | 本地配置 |
 | `shared/build.gradle.kts` | ① desktopMain 加 `compose.desktop.currentOs`（Skiko 运行时）<br>② 新增 `offlineDesktopRuntime`（排除 jogamp / KCEF）<br>③ 两个运行任务改用该 classpath<br>④ 新增 `screenshotSpike` 任务 | 修改 |
 | `shared/src/desktopMain/kotlin/spike/Screenshot.kt` | 新增离屏渲染入口 | 新增 |
+| `shared/src/commonMain/kotlin/spike/VeneraSourceRunner.kt` | 新增真实源加载器 + 契约 polyfill，网络经 `SourceHttp` 接口注入 | 新增 |
+| `shared/src/desktopMain/kotlin/spike/JdkSourceHttp.kt` | JDK HttpClient 实现（CIO TLS 握手失败后的替代） | 新增 |
+| `shared/src/desktopMain/kotlin/spike/SourceMain.kt` | `sourceSpike` 入口 | 新增 |
+| `shared/build.gradle.kts` | 另新增 `sourceSpike` 任务 | 修改 |
 | `docs/screenshots/spike-desktop.png` | 渲染产物 | 新增 |
+| `docs/baseline/mangadex-search-one.json` | 真实源基准样本，供三端一致性对比 | 新增 |
 
 回滚方式：删除 wrapper 与 `Screenshot.kt`，`gradle.properties` 恢复原行，`build.gradle.kts` 去掉 `offlineDesktopRuntime` 与 `screenshotSpike` 即可，不影响原有 `runDesktopSpike`。
 

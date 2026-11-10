@@ -128,3 +128,15 @@ tasks.register<JavaExec>("screenshotSpike") {
     environment("DISPLAY", "")
     args(layout.buildDirectory.file("screenshots/spike-desktop.png").get().asFile.absolutePath)
 }
+
+// 真实 Venera 源加载：./gradlew :shared:sourceSpike --args="<source.js> [keyword]"
+tasks.register<JavaExec>("sourceSpike") {
+    group = "verification"
+    description = "Load a real Venera .js source through the minimal Host API"
+    dependsOn("compileKotlinDesktop")
+    classpath = files(
+        configurations.getByName("offlineDesktopRuntime"),
+        layout.buildDirectory.dir("classes/kotlin/desktop/main"),
+    )
+    mainClass.set("spike.SourceMainKt")
+}

@@ -1,0 +1,104 @@
+{
+  "source_key": "manga_dex",
+  "source_name": "MangaDex",
+  "source_version": "1.2.0",
+  "keyword": "one",
+  "page": 1,
+  "error": null,
+  "detail_error": null,
+  "result": {
+    "returned": 20,
+    "maxPage": 55,
+    "sample_first_5": [
+      {
+        "id": "b23c9bb1-870e-483d-a496-0c55021c1bed",
+        "title": "お前じゃん",
+        "tags": [
+          "Romance",
+          "Comedy",
+          "Web Comic"
+        ],
+        "status": "completed",
+        "authors": [
+          "Suzumoto Kou"
+        ]
+      },
+      {
+        "id": "0ad38f9a-4b6b-45b2-ad13-5bf39918ab1c",
+        "title": "一夜沉婚",
+        "tags": [
+          "Long Strip",
+          "Romance",
+          "Drama",
+          "Web Comic",
+          "Full Color"
+        ],
+        "status": "cancelled",
+        "authors": [
+          "Bao Qing Manhua (暴青漫画)",
+          "堇颜"
+        ]
+      },
+      {
+        "id": "81eaaace-c7c4-491c-95cd-f931268dca7c",
+        "title": "顔の良いボーイッシュお姉さん",
+        "tags": [
+          "Romance",
+          "Self-Published",
+          "Web Comic",
+          "Slice of Life"
+        ],
+        "status": "ongoing",
+        "authors": [
+          "Kitada Ryouma"
+        ]
+      },
+      {
+        "id": "a1c7c817-4e59-43b7-9365-09675a149a6f",
+        "title": "海贼王",
+        "tags": [
+          "Award Winning",
+          "Sci-Fi",
+          "Monsters",
+          "Action",
+          "Animals",
+          "Comedy",
+          "Adventure",
+          "Gore",
+          "Drama",
+          "Fantasy"
+        ],
+        "status": "ongoing",
+        "authors": [
+          "Oda Eiichirou (尾田栄一郎)"
+        ]
+      },
+      {
+        "id": "7f6ee9cf-c706-4f74-80bd-2467fd02aeab",
+        "title": "オレの一途を邪魔するアイツ",
+        "tags": [
+          "Loli",
+          "Romance",
+          "Comedy",
+          "School Life",
+          "Shota"
+        ],
+        "status": "ongoing",
+        "authors": [
+          "Toriburi"
+        ]
+      }
+    ],
+    "detail_first": {
+      "title": "お前じゃん",
+      "subtitle": "Suzumoto Kou",
+      "chapterCount": 9,
+      "tagNamespaces": [
+        "Tags",
+        "Status",
+        "Authors",
+        "Artists"
+      ]
+    }
+  }
+}
