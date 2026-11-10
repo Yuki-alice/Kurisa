@@ -187,6 +187,7 @@ Zipline 输入为 Kotlin/JS 编译产物、桥为 `ZiplineService`、不提供�
   - **能力不对等**：`RequestInterceptor` 仅 Android/iOS；HTML 外部资源桌面未支持；headless CI 无法验证 CEF 渲染。
 - **决策**：
   1. **桌面端不引入 KCEF / JCEF / 任何内嵌 Chromium**，`desktopRuntimeClasspath` 保持干净（这也是 M0 里 `offlineDesktopRuntime` 配置的由来）。
+     这是**成本选择，不是能力判断**——Venera 桌面端实际内嵌了 WebView（`AppWebview` / `DesktopWebview` 双实现），证明技术上可行；本决策否决的是「为此付出 200 MB 内核 + 非官方镜像」的代价。
   2. `compose-webview-multiplatform` **只进 `androidMain` / `iosMain`，不进 `commonMain`**；WebView 登录通过 `:core:platform` 的 `WebViewLoginHost` 接口暴露，桌面 `actual` 返回 `Unsupported`，由 UI 层切换为下述路径。
   3. `loginWithWebview` 在桌面映射为两条降级路径：
      - **主路径 · Cookie 导入**：读源声明的 `loginWithCookies.fields` 自动生成表单；源未声明 fields 时提供「整串 Cookie 粘贴」输入框，由宿主解析成 `name=value` 列表写入 CookieJar。
@@ -208,8 +209,13 @@ Zipline 输入为 Kotlin/JS 编译产物、桥为 `ZiplineService`、不提供�
   | 桌面自行封装 WebKitGTK / WebView2 / WKWebView | 三套 JNI 封装、三份维护成本，收益与 KCEF 相同 |
   | JxBrowser | 商业授权，与开源分发目标冲突 |
   | 桌面直接不支持需登录的源 | 会砍掉 5 个源，且云盾类站点在桌面彻底不可用 |
+- **社区对照（2026-11 调研）**：
+  - **L1（本 ADR 的 Android/iOS 路径）已是行业主流**：Mihon 的 `CloudflareInterceptor` 用隐藏 WebView 过盾 + `AndroidCookieJar` 同步，检测判据同为 `cf-mitigated`；其 host 锁、12s 超时、isolated world、Sec-CH-UA 同步四项工程细节优于本项目现状，需对齐。
+  - **L2（请求交由 WebView 的 `fetch()` 发出）已被验证可解 TLS 指纹问题**：keiyoushi `WebViewFetchInterceptor`（PR #11886）与 Litho 的 WebView 网关是两套独立实现，后者给出同网络下 `fetch()` 200 / `URLSession` 403 的对照。因图片可直接由原生加载器发出，L2 只需覆盖 JSON API，成本可控。
+  - **L3（改 TLS 栈）平台覆盖不全**：Android 可用 `org.chromium.net:cronet-embedded`（Google Maven 实测有 `143.7445.0`，JA3 与 Chrome 同源）；iOS 系统栈不可改，只能走 L2；JVM 桌面三条路全堵（`ktor-client-curl` 无 `-jvm` 变体、`ktor-impersonate` 未发布、curl-impersonate 需自编 `.so`）。
+  - 完整证据与链接：`docs/community-solutions.md`。
 - **验证**：`./gradlew :shared:accountSpike --args="<source.js> [--live]"`，输出空 CookieJar / 注入 Cookie 的对照表；`--live` 追加真实请求以确认 Cookie 进入请求头。
-- **落地细节**：Cloudflare 三类拦截（托管挑战 / WAF 阻断 / 限流）的区分、Cookie 与 UA 的绑定存储、粘贴解析的 5 种格式、失效检测策略，见 `docs/cookie-cloudflare.md`；代码在 `m0-spike/.../CookieStore.kt`，24 项断言由 `./gradlew :shared:cookieSpike` 执行。
+- **落地细节**：Cloudflare 三类拦截（托管挑战 / WAF 阻断 / 限流）的区分、Cookie 与 UA 的绑定存储、粘贴解析的 5 种格式、失效检测策略，见 `docs/cookie-cloudflare.md`；代码在 `m0-spike/.../CookieStore.kt`，24 项断言由 `./gradlew :shared:cookieSpike` 执行。分级降级策略（L1 WebView 过盾 → L2 WebView fetch → L3 换 TLS 栈）的社区方案对照见 `docs/community-solutions.md`。
 
 ---
 
