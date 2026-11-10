@@ -84,8 +84,22 @@ kotlin {
         getByName("desktopMain").dependencies {
             implementation(libs.ktor.client.cio)
             implementation(libs.sqldelight.sqlite.driver)
+            // Skiko 运行时（含 linux-x64 原生库），离屏渲染与桌面窗口都需要
+            implementation(compose.desktop.currentOs)
         }
     }
+}
+
+// gluegen-rt / jogl-all 2.5.0 只发布在 jogamp.org（Maven Central 与国内镜像均 404），
+// 容器 / CI 常无法访问该站点，会让整个 desktopRuntimeClasspath 解析失败。
+// 此 configuration 排除 KCEF 相关依赖，供不涉及桌面 WebView 的运行任务使用。
+val offlineDesktopRuntime by configurations.creating {
+    isCanBeConsumed = false
+    isCanBeResolved = true
+    extendsFrom(configurations.getByName("desktopRuntimeClasspath"))
+    exclude(group = "org.jogamp.gluegen")
+    exclude(group = "org.jogamp.jogl")
+    exclude(group = "io.github.kevinnzou")
 }
 
 tasks.register<JavaExec>("runDesktopSpike") {
@@ -93,8 +107,24 @@ tasks.register<JavaExec>("runDesktopSpike") {
     description = "M0 behaviour spike: JS promise chain, memory limit, interruption"
     dependsOn("compileKotlinDesktop")
     classpath = files(
-        configurations.getByName("desktopRuntimeClasspath"),
+        configurations.getByName("offlineDesktopRuntime"),
         layout.buildDirectory.dir("classes/kotlin/desktop/main"),
     )
     mainClass.set("spike.MainKt")
+}
+
+// M0 渲染验证：离屏渲染 SpikeApp -> PNG（headless 可跑，不需要窗口系统）
+tasks.register<JavaExec>("screenshotSpike") {
+    group = "verification"
+    description = "M0 render check: offscreen-render SpikeApp to PNG"
+    dependsOn("compileKotlinDesktop")
+    classpath = files(
+        configurations.getByName("offlineDesktopRuntime"),
+        layout.buildDirectory.dir("classes/kotlin/desktop/main"),
+    )
+    mainClass.set("spike.ScreenshotKt")
+    // 容器 / CI 里 DISPLAY 可能指向不存在的 X server，强制 AWT headless
+    jvmArgs("-Djava.awt.headless=true")
+    environment("DISPLAY", "")
+    args(layout.buildDirectory.file("screenshots/spike-desktop.png").get().asFile.absolutePath)
 }
