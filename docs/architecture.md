@@ -49,7 +49,7 @@
 | 在线源仓库订阅         | 完整          | 完整（侧载分发）               | 完整            |
 | 本地文件导入          | SAF         | Files / DocumentPicker | 任意路径 + 拖放     |
 | 后台下载            | WorkManager | BGTaskScheduler（受限）    | 常驻协程          |
-| WebView 登录      | WebView     | WKWebView              | 无内嵌浏览器：Cookie 导入 + 系统浏览器 loopback（ADR-009） |
+| WebView 登录      | WebView     | WKWebView              | 系统 WebView（helper 进程，ADR-010）；能力缺失时回落 Cookie 导入 |
 | 原生 dex / jar 扩展 | 可选增强        | 不支持                    | 可选增强          |
 
 ### 1.3 硬约束
@@ -178,6 +178,9 @@ Zipline 输入为 Kotlin/JS 编译产物、桥为 `ZiplineService`、不提供�
 
 ### ADR-009 · 桌面端不内嵌浏览器，WebView 能力仅落地 Android / iOS
 
+> 2026-11 修订：桌面 WebView 路径已由 **ADR-010** 改为「系统内核 + 独立 helper 进程」；
+> 本条决策 3 的 Cookie 导入降级为能力缺失时的兜底，其余（不引入 KCEF/JCEF）继续有效。
+
 - **背景（M0 实测数据）**：
   - **真实源的依赖率极低**：`venera-app/venera-configs` 全量 36 个源中，声明 `account.loginWithWebview` 的仅 5 个（13.9%），其中 4 个同时声明 `loginWithCookies`。使用场景集中在三类：Cookie 登录（nhentai / e-hentai / ccc）、Cloudflare 盾（mycomic）、论坛区登录（manga_dex，非阅读主链路）。
   - **源的登录态判定不依赖 WebView**：`nhentai.js:318` 的 `persistAuthFromCookies()` 从 `Network.getCookies()` 取 token；`mycomic.js:187` 的 `init()` 直接扫描 `cf_clearance`。源只认 CookieJar，WebView 只是「把 Cookie 写进 CookieJar 的一种手段」。
@@ -216,6 +219,42 @@ Zipline 输入为 Kotlin/JS 编译产物、桥为 `ZiplineService`、不提供�
   - 完整证据与链接：`docs/community-solutions.md`。
 - **验证**：`./gradlew :shared:accountSpike --args="<source.js> [--live]"`，输出空 CookieJar / 注入 Cookie 的对照表；`--live` 追加真实请求以确认 Cookie 进入请求头。
 - **落地细节**：Cloudflare 三类拦截（托管挑战 / WAF 阻断 / 限流）的区分、Cookie 与 UA 的绑定存储、粘贴解析的 5 种格式、失效检测策略，见 `docs/cookie-cloudflare.md`；代码在 `m0-spike/.../CookieStore.kt`，24 项断言由 `./gradlew :shared:cookieSpike` 执行。分级降级策略（L1 WebView 过盾 → L2 WebView fetch → L3 换 TLS 栈）的社区方案对照见 `docs/community-solutions.md`。
+
+### ADR-010 · 桌面 WebView 改为「系统内核 + 独立 helper 进程」
+
+> 本条修订 ADR-009 的决策 1 与被否决项「桌面自行封装 WebKitGTK / WebView2 / WKWebView」。
+> ADR-009 的 Cookie 导入不再是被唯一路径，降级为**能力缺失时的兜底**。
+
+- **背景（M0 实测）**：
+  - **体积对比被低估**：ADR-009 把「自行封装」与「KCEF」按同一收益否定，但两者体积差三个数量级——KCEF 需 150–200 MB Chromium（`libcef` + 资源 + locales），系统内核方案在 Linux 上实测产物 **33 KB**（动态链接 `webkit2gtk-4.1`）。
+  - **现成 Java 封装全部不可用**：`avaje-webview`、`webview_java`、`webviewko`、`weblite webviewjar` 都只是 `webview/webview` 的绑定，而上游 `core/include/webview/api.h` **没有任何 Cookie API**。`cf_clearance` / `__cf_bm` 是 HttpOnly，`document.cookie` 读不到，因此这些库对本项目**零价值**。
+  - **Venera 的参考实现已验证可行**：`desktop_webview_window`（MIT）就是三平台原生封装，Linux 用 `webkit_cookie_manager_get_cookies`，Windows 用 `ICoreWebView2CookieManager::GetCookies`。M0 按其思路重写 Linux 版，500 行跑通。
+  - **主线程冲突是进程模型的硬约束**：macOS 的 WKWebView 必须在 AppKit 主线程，Compose Desktop 的 AWT 已占用；Linux 的 GTK 主循环与 AWT 同进程共存也不稳定。子进程是目前唯一干净的解法。
+- **决策**：
+  1. 桌面端引入 `kurisa-webview-host`：**独立可执行进程**，只负责「开一个系统内核窗口 + 导出 Cookie」，不参与主界面渲染。
+  2. 三平台共用一套 **NDJSON over stdin/stdout** 协议；**不使用本地端口**（Windows 监听端口会触发防火墙弹窗）。
+  3. 内核一律用系统自带：Linux `webkit2gtk-4.1`、Windows WebView2 Runtime、macOS WKWebView。**不打包、不下载任何浏览器内核**。
+  4. 主进程侧只暴露 `WebviewHost` 一个类（`m0-spike/shared/src/desktopMain/.../WebviewHost.kt`），返回的 `StoredCookie` 自动带 `pairedUserAgent`——`cf_clearance` 与 UA/IP 绑定，换 UA 复用会重新挑战。
+  5. **能力探测优先**：缺 `webkit2gtk-4.1` 或 WebView2 Runtime 时，回落 ADR-009 的 Cookie 导入，并给出明确提示，不得直接崩溃。
+  6. 实现顺序：Linux（已完成）→ Windows（WebView2，COM + 消息泵）→ macOS（WKWebView，helper 内自建 NSApplication）。
+- **理由**：
+  - **成本结构变了**：三平台差异被压缩在 host 内部（Linux 约 500 行），协议与客户端共用；相比「为 13.9% 的源引入 200 MB 内核」的旧账，现在是「<1 MB 换回完整的过盾与登录能力」。
+  - **故障域隔离**：WebView2/WebKit 崩溃只损失一个认证窗口；进程内嵌方案会把整个阅读器拖下水。
+  - **可测**：协议是纯文本，可在 CI 里对 host 做无 GUI 断言（Linux 已用 Xvfb + 12 项断言验证）。
+- **代价**：
+  - 三份原生实现 + 三平台 CI；Windows/macOS 目前未实现，是本 ADR 的最大未完成项。
+  - 发行版依赖：Linux 需 `webkit2gtk-4.1`（deb/rpm 声明依赖）；Windows 老机器需装 WebView2 Runtime；macOS helper 需签名与公证。
+  - 打包链路变复杂：helper 需按平台随包分发，首次启动解压到可执行目录（macOS 必须放 bundle 内并签名）。
+  - UA 随内核版本漂移，Cookie 必须与「产生它的 UA」成对存储，不可硬编码 UA。
+- **被否决**：
+  | 方案 | 否决理由 |
+  |---|---|
+  | 进程内嵌 WebView（JCEF / KCEF） | 150–200 MB 内核；jogamp 依赖非官方镜像；macOS 主线程冲突 |
+  | 现成 Java/Kotlin webview 封装 | 上游无 Cookie API，拿不到 HttpOnly 的 `cf_clearance`，等于没解决问题 |
+  | 本地 HTTP/WebSocket 端口通信 | Windows 防火墙弹窗；端口冲突；多一层鉴权面 |
+  | 只保留 Cookie 导入 | 用户拿不到 `cf_clearance` 的场景（mycomic 等云盾站）在桌面彻底不可用 |
+- **验证**：`desktop-webview-host/build-linux.sh` + `xvfb-run -a ./gradlew :shared:webviewHostSpike [--args="<url>"]`；12 项断言（含「JS 看不到 HttpOnly / 原生读到 / 自动配对 UA」）与真实站点（mangadex）截图，详见 `docs/m0-webview-host-linux.md`。
+- **遗留**：Windows / macOS 实现、代理注入、发行版依赖探测、打包与签名、三平台 CI。
 
 ---
 

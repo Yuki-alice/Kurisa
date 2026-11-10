@@ -165,3 +165,19 @@ tasks.register<JavaExec>("cookieSpike") {
     )
     mainClass.set("spike.CookieSpikeKt")
 }
+
+// 系统 WebView 方案验证：先跑 desktop-webview-host/build-linux.sh，再
+//   xvfb-run -a ./gradlew :shared:webviewHostSpike [--args="https://mangadex.org/"]
+// 不打包浏览器内核，调用系统 WebKitGTK / WebView2 / WKWebView。
+tasks.register<JavaExec>("webviewHostSpike") {
+    group = "verification"
+    description = "Spawn the native webview host and verify HttpOnly cookie extraction"
+    dependsOn("compileKotlinDesktop")
+    classpath = files(
+        configurations.getByName("offlineDesktopRuntime"),
+        layout.buildDirectory.dir("classes/kotlin/desktop/main"),
+    )
+    mainClass.set("spike.WebviewHostMainKt")
+    // 容器 / CI 默认关闭 WebKit 的 user-namespace 沙箱
+    environment("KURISA_WEBVIEW_NO_SANDBOX", "1")
+}
