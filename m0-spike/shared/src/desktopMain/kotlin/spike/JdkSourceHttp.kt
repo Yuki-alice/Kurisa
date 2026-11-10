@@ -47,6 +47,10 @@ class JdkSourceHttp : SourceHttp {
         builder.method(method.uppercase(), publisher)
 
         val resp = client.send(builder.build(), HttpResponse.BodyHandlers.ofString())
-        SourceHttpResponse(resp.statusCode(), resp.body() ?: "")
+        // 保留响应头：Cloudflare 的 `cf-mitigated` 是判定 challenge 的关键信号
+        val respHeaders = resp.headers().map().entries.associate { (k, v) ->
+            k.lowercase() to v.joinToString(", ")
+        }
+        SourceHttpResponse(resp.statusCode(), resp.body() ?: "", respHeaders)
     }
 }

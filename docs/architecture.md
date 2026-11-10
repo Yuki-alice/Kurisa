@@ -209,6 +209,7 @@ Zipline 输入为 Kotlin/JS 编译产物、桥为 `ZiplineService`、不提供�
   | JxBrowser | 商业授权，与开源分发目标冲突 |
   | 桌面直接不支持需登录的源 | 会砍掉 5 个源，且云盾类站点在桌面彻底不可用 |
 - **验证**：`./gradlew :shared:accountSpike --args="<source.js> [--live]"`，输出空 CookieJar / 注入 Cookie 的对照表；`--live` 追加真实请求以确认 Cookie 进入请求头。
+- **落地细节**：Cloudflare 三类拦截（托管挑战 / WAF 阻断 / 限流）的区分、Cookie 与 UA 的绑定存储、粘贴解析的 5 种格式、失效检测策略，见 `docs/cookie-cloudflare.md`；代码在 `m0-spike/.../CookieStore.kt`，24 项断言由 `./gradlew :shared:cookieSpike` 执行。
 
 ---
 

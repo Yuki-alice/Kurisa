@@ -14,8 +14,12 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 
-/** 响应数据，跨平台最小契约。 */
-data class SourceHttpResponse(val status: Int, val body: String)
+/** 响应数据，跨平台最小契约。headers 参与 Cloudflare 拦截识别（`cf-mitigated`）。 */
+data class SourceHttpResponse(
+    val status: Int,
+    val body: String,
+    val headers: Map<String, String> = emptyMap(),
+)
 
 /** 平台网络能力注入点（对应 architecture.md 7.x 的平台适配层）。 */
 fun interface SourceHttp {
@@ -55,56 +59,53 @@ class VeneraSourceRunner(
     /** 宿主侧请求日志，回填进结果 JSON，便于做「有无 Cookie」的对照观察。 */
     private val hostLogs = mutableListOf<String>()
 
-    /** host -> (cookie name -> value)，对应真实架构里的 `cookie` 表。 */
-    private val cookieJar: MutableMap<String, MutableMap<String, String>> =
-        seedCookies.mapValues { it.value.toMutableMap() }.toMutableMap()
-
-    private fun hostOf(url: String): String =
-        url.substringAfter("://", "").substringBefore('/').substringBefore(':').lowercase()
-
-    /** 简化版域匹配：精确命中，或 cookie host 作为父域后缀命中。 */
-    private fun cookiesFor(url: String): Map<String, String> {
-        val host = hostOf(url)
-        val out = linkedMapOf<String, String>()
-        cookieJar.forEach { (cookieHost, jar) ->
-            val h = cookieHost.removePrefix(".").lowercase()
-            if (host == h || host.endsWith(".$h")) out.putAll(jar)
+    /** Cookie 仓库：域/路径/过期/失效判定统一由 CookieStore 承担。 */
+    private val cookieStore = CookieStore().apply {
+        seedCookies.forEach { (host, jar) ->
+            jar.forEach { (name, value) ->
+                put(StoredCookie(domain = host, name = name, value = value, source = CookieSource.SEED))
+            }
         }
-        return out
     }
 
-    private fun cookieHeaderFor(url: String): String? =
-        cookiesFor(url).takeIf { it.isNotEmpty() }
-            ?.entries?.joinToString("; ") { "${it.key}=${it.value}" }
+    private fun nowMs(): Long = kotlin.time.Clock.System.now().toEpochMilliseconds()
+
+    private fun cookieHeaderFor(url: String): String? = cookieStore.headerFor(url, nowMs())
 
     private fun handleCookieOp(payload: String): String {
         val obj = runCatching { Json.parseToJsonElement(payload).jsonObject }.getOrNull()
             ?: return "[]"
         val url = obj["url"]?.jsonPrimitive?.contentOrNull ?: return "[]"
-        val host = hostOf(url)
+        val host = CookieStore.hostOf(url)
         return when (obj["op"]?.jsonPrimitive?.contentOrNull) {
             "set" -> {
-                val jar = cookieJar.getOrPut(host) { mutableMapOf() }
-                (obj["list"] as? kotlinx.serialization.json.JsonArray)?.forEach { el ->
-                    val o = runCatching { el.jsonObject }.getOrNull() ?: return@forEach
-                    val name = o["name"]?.jsonPrimitive?.contentOrNull ?: return@forEach
-                    jar[name] = o["value"]?.jsonPrimitive?.contentOrNull ?: ""
-                }
-                println("[host] cookie set -> $host (${jar.size} 条)")
+                val list = (obj["list"] as? kotlinx.serialization.json.JsonArray)?.mapNotNull { el ->
+                    val o = runCatching { el.jsonObject }.getOrNull() ?: return@mapNotNull null
+                    val name = o["name"]?.jsonPrimitive?.contentOrNull ?: return@mapNotNull null
+                    StoredCookie(
+                        domain = host,
+                        name = name,
+                        value = o["value"]?.jsonPrimitive?.contentOrNull ?: "",
+                        obtainedAtEpochMs = nowMs(),
+                        source = CookieSource.WEBVIEW,
+                    )
+                }.orEmpty()
+                cookieStore.putAll(list)
+                println("[host] cookie set -> $host (${cookieStore.matching(url, nowMs()).size} 条)")
                 "[]"
             }
             "delete" -> {
-                val removed = cookieJar.remove(host)?.size ?: 0
+                val removed = cookieStore.remove(host)
                 println("[host] cookie delete -> $host (清除 $removed 条)")
                 "[]"
             }
             else -> buildJsonObject {
                 put("cookies", kotlinx.serialization.json.buildJsonArray {
-                    cookiesFor(url).forEach { (k, v) ->
+                    cookieStore.matching(url, nowMs()).forEach { c ->
                         add(buildJsonObject {
-                            put("name", k)
-                            put("value", v)
-                            put("domain", host)
+                            put("name", c.name)
+                            put("value", c.value)
+                            put("domain", c.domain)
                         })
                     }
                 })
@@ -166,7 +167,13 @@ class VeneraSourceRunner(
 
         // 宿主负责 Cookie 注入（源不显式传 Cookie 头），这是与 Venera 行为一致的关键点
         val injected = cookieHeaderFor(url)
-        val finalHeaders = if (injected != null) headers + ("Cookie" to injected) else headers
+        var finalHeaders = if (injected != null) headers + ("Cookie" to injected) else headers
+
+        // cf_clearance 与产生它的浏览器 UA 绑定：换 UA 发同一份 Cookie 会被判为重放。
+        // 因此只要该域存在带配对 UA 的 clearance，就强制覆盖本次请求的 User-Agent。
+        cookieStore.pairedUserAgentFor(url, nowMs())?.let { pairedUa ->
+            finalHeaders = finalHeaders + ("User-Agent" to pairedUa)
+        }
 
         val resp = try {
             http.fetch(method, url, finalHeaders, body?.takeIf { it != "null" })
@@ -182,6 +189,19 @@ class VeneraSourceRunner(
         val line = "[host] $method $url -> ${resp.status} (${resp.body.length} chars)$cookieMark"
         hostLogs += line
         println(line)
+
+        // Cloudflare 三类拦截处置完全不同，必须在宿主层分类，不能交给源
+        val verdict = CloudflareGuard.classify(resp.status, resp.headers, resp.body)
+        if (verdict.kind != ChallengeKind.NONE) {
+            val cfLine = "[cf] ${verdict.kind} | needsBrowser=${verdict.needsBrowser} " +
+                "| retryable=${verdict.retryable} | ${verdict.hint}"
+            hostLogs += cfLine
+            println(cfLine)
+            if (verdict.kind == ChallengeKind.MANAGED_CHALLENGE) {
+                val n = cookieStore.markInvalid(CookieStore.hostOf(url), "re-challenged", CookieStore.CF_COOKIES)
+                if (n > 0) println("[cf] 已标记 $n 条 Cookie 失效，需重新验证")
+            }
+        }
         return buildJsonObject {
             put("status", resp.status)
             // 控制跨桥体积，避免 32 MB 内存上限被大响应撞穿

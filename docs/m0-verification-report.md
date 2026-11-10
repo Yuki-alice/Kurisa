@@ -192,6 +192,27 @@ search error: Cloudflare 验证拦截：请在漫画源设置中点击「登录�
 
 ---
 
+## 3.7 Cloudflare 拦截与 Cookie 导入
+
+承接 3.6 的结论「WebView 可被 Cookie 导入替代」，这一节验证**导入之后能不能真的用**。细节方案见 `docs/cookie-cloudflare.md`。
+
+**拦截分类**用两类真实抓取的页面做夹具（`src/desktopMain/resources/cf-fixtures/`）：
+
+| 夹具 | 特征 | 分类结果 |
+|---|---|---|
+| `challenge-managed.html`（nopecha demo 403） | `cf-mitigated: challenge` + `Just a moment` | `MANAGED_CHALLENGE`，needsBrowser=true |
+| `block-waf.html`（mycomic 403） | `Sorry, you have been blocked` | `WAF_BLOCK`，不可重试 |
+
+**一个动态现象**：同一台机器访问 `mycomic.com`，curl 无 Cookie 时是 WAF 阻断，而 App 带 Cookie 发同一个 URL 却被判为托管挑战。说明 Cloudflare 的判定随请求形态变化，分类必须逐次响应做，不能缓存站点级结论。
+
+**自动化浏览器过不了托管挑战**：Chromium 在 headless 与 xvfb 有头模式下各试一次，均停在 `Just a moment` 超时。这从反面支持 ADR-009——桌面即使上 KCEF 也不会更好，因为 CEF 同样是可被识别的自动化内核。
+
+**`cf_clearance` 不可解析**：从 `nowsecure.nl` 真实取得的值是 378 字符单段不透明串，不是网上流传的 `v1.<base64>.<hmac>` 结构，拿不到 IP 与过期时间。因此过期判定只能按 `obtainedAt + 25min` 保守兜底。
+
+**验证结果**：`./gradlew :shared:cookieSpike` → `PASS=24 FAIL=0`，覆盖拦截分类 8 项、粘贴解析 6 项、存储语义 10 项。
+
+---
+
 ## 4. 本轮暴露的问题
 
 ### 4.1 `SpikeApp()` 零调用点（已修）

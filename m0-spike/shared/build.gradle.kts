@@ -153,3 +153,15 @@ tasks.register<JavaExec>("accountSpike") {
     )
     mainClass.set("spike.AccountMainKt")
 }
+
+// Cookie / Cloudflare 处理验证：./gradlew :shared:cookieSpike
+tasks.register<JavaExec>("cookieSpike") {
+    group = "verification"
+    description = "Verify Cloudflare challenge classification, cookie parsing and UA pairing"
+    dependsOn("compileKotlinDesktop")
+    classpath = files(
+        configurations.getByName("offlineDesktopRuntime"),
+        layout.buildDirectory.dir("classes/kotlin/desktop/main"),
+    )
+    mainClass.set("spike.CookieSpikeKt")
+}
