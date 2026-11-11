@@ -2,7 +2,7 @@
 
 > 独立仓库，与主仓分离。主仓零预置（C1），本文件只定仓库侧面的布局与流程。
 > 相关：ADR-011 D3、M2 SourceInstaller.plan/confirm、docs/contract/index-schema.json。
-> 建仓位置与新源许可证待定（Q：同组织新 repo？MIT 确认？）。
+> 仓库已建：https://github.com/Yuki-alice/Kurisa-Sources（public，骨架已推）。新源许可证待定（MIT 确认？）。
 
 ## 1. 布局
 
@@ -44,6 +44,6 @@
 
 ## 7. 未决
 
-- Q-ware1：建仓位置（同组织新 repo 还是独立组织）。
+- Q-ware1：已落定（Yuki-alice/Kurisa-Sources，public）。
 - Q-ware2：新源许可证（建议 MIT，待确认）。
 - Q-ware3：维护者签名密钥保管方式（M7 安全评审前定）。
