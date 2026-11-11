@@ -5,6 +5,9 @@
 .workbuddy/
 .workbuddy-ai/
 
+# 本地 agent skills 子集（.dsh/skills，随仓库模板重建，不入库）
+.dsh/
+
 # IDE
 .idea/
 *.iml
