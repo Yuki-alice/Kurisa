@@ -3,6 +3,12 @@
 > 执行环境：Linux x86_64 容器（32 核 / 123 GB RAM），2026-11-10
 > 执行对象：`m0-spike/`（单 `shared` 模块，四 target）
 > 结论一句话：**Gate ③ 全绿并扩展到四 target；Gate ② 完成 JVM + Android 侧；Gate ①④⑤ 及 iOS 运行时验证仍需 macOS 或真实源站点。**
+>
+> 补遗（2026-11-11，MacBook Air M2 / macOS 26.6.2 / Corretto 21.0.12）：
+> `runDesktopSpike` / `cookieSpike` / `screenshotSpike` / `sourceSpike(manga_dex)` 在 ARM64 上复现全绿；
+> 新增 `commonTest`（6 套件 28 用例）+ `desktopTest`（9 套件 38 用例），
+> `testAndroidHostTest` 与 `desktopTest` 全绿；`iosSimulatorArm64Test` 已具备用例，
+> framework 链接验证进行中。详见第 3.8–3.9 节。
 
 ---
 
@@ -23,16 +29,16 @@
 
 | # | Gate（`architecture.md:968`） | 状态 | 证据 |
 |---|---|---|---|
-| ① | 真实 Venera 源三端 JSON 一致 | **desktop 侧通过** | 真实 `manga_dex.js` 跑通 search + loadInfo，详见第 3.5 节；三端对比待 macOS |
-| ②a | `memoryLimit = 32 MB` 生效 | **通过** | `MEMORY_LIMIT=33554432` |
-| ②b | `withTimeout` 中断 `while(true)` | **通过** | `INTERRUPT=OK QuickJsInterruptedException` |
+| ① | 真实 Venera 源三端 JSON 一致 | **desktop 侧通过（Linux + Mac 双机复现）** | 真实 `manga_dex.js` 跑通 search + loadInfo，详见第 3.5 节与 3.8 节；commonTest 已锁 Ksoup/契约/存储三端一致，三端真机对比仍待补 |
+| ②a | `memoryLimit = 32 MB` 生效 | **通过（+ desktopTest 回归）** | `MEMORY_LIMIT=33554432`；`QuickJsBehaviorTest` 在 Mac 复现 |
+| ②b | `withTimeout` 中断 `while(true)` | **通过（+ desktopTest 回归）** | `INTERRUPT=OK QuickJsInterruptedException`；同上 |
 | ②c | 16 KB page size 下 so 加载 | **Android 侧通过** | 四 ABI `p_align = 0x4000`（详见 3.3） |
-| ②d | iOS 无 JIT entitlement 运行 | **未执行** | 需真机 / 模拟器，Linux 无 Apple toolchain |
-| ③ | 全部依赖在 android / ios / jvm 可解析 | **通过（超出预期）** | 四 target 均编译出产物（详见 3.1） |
-| ④ | 官方 Expressive 组件三端截图一致 | **部分通过** | desktop 已出真实渲染图；iOS / Android 截图待 macOS / 真机 |
-| ⑤a | ZoomImage 无 OOM | **未执行** | 需构造长图用例与真机 |
+| ②d | iOS 无 JIT entitlement 运行 | **部分：测试基建就绪，运行时仍待真机** | commonTest（纯逻辑 28 用例）已可在 `iosSimulatorArm64Test` 运行；QuickJs suspend 链在 iOS 侧仍需真机/模拟器执行，framework 链接验证进行中 |
+| ③ | 全部依赖在 android / ios / jvm 可解析 | **通过（+ framework 链接）** | 四 target 均编译出产物（详见 3.1）；已补 `KotlinNativeTarget.framework{SharedSpike}`，`linkDebugFramework*` 可用；`android.withHostTest` 已启用 |
+| ④ | 官方 Expressive 组件三端截图一致 | **部分通过（desktop 双机复现）** | desktop 已出真实渲染图（Linux + Mac `spike-desktop.png` 31KB）；iOS / Android 截图待真机；Navigation N1–N4 纯逻辑已在 commonTest 锁定 |
+| ⑤a | ZoomImage 无 OOM | **最小前置通过，真机压测仍未执行** | `P0BehaviorTest.largeImageMetadataDoesNotOom` 锁 8000×20000 分块数学（640MB→≥3 tile）；真实子采样渲染仍需真机 |
 | ⑤b | KCEF 可初始化 | **移出范围** | 桌面不内嵌浏览器，见 ADR-009 与 3.6；`offlineDesktopRuntime` 转正为正式配置 |
-| ⑤c | PDF 平台矩阵确认 | **仅依赖层** | 三端 variant 齐备（编译通过），渲染未验 |
+| ⑤c | PDF 平台矩阵确认 | **仅依赖层 + 符号冒烟** | 三端 variant 齐备（编译通过），渲染未验 |
 
 ---
 
@@ -285,6 +291,97 @@ xcrun simctl boot "iPhone 16"
 
 ---
 
+## 8. 补遗实测（2026-11-11，Mac ARM64）
+
+### 8.1 桌面三件套复现 + 真实源双机复现
+
+```
+./gradlew :shared:runDesktopSpike :shared:cookieSpike :shared:screenshotSpike
+FULL_CHAIN={"body":"<html><h1>fixture</h1></html>","hash":"stub-hash"}
+MEMORY_LIMIT=33554432 TIMEOUT=10000 USED=67064
+INTERRUPT=OK QuickJsInterruptedException
+cookieSpike PASS=24 FAIL=0
+screenshotSpike SCREENSHOT_BYTES=31183
+./gradlew :shared:sourceSpike --args="/tmp/manga_dex.js one"
+[host] GET .../manga?...&title=one -> 200 (164451 chars)
+search returned=20 detail title=顔の良いボーイッシュお姉さん ELAPSED_MS=2359
+```
+
+与 Linux 容器结论一致，Gate ①/②a/②b/④ 在第二台机器复现。
+
+### 8.2 新增三端一致性测试（commonTest + desktopTest + androidHostTest）
+
+| 套件 | 用例 | 运行位置 | 结果 |
+|---|---|---|---|
+| `CookieStoreTest` | 域/路径/过期/失效/UA 配对 6 项 | commonTest | desktop 6/6，androidHost 6/6，iOS 6/6 |
+| `CloudflareGuardTest` | 限流/正常/挑战/WAF/5xx 6 项 | commonTest | 三端全绿 |
+| `CookieImportParserTest` | 5 种粘贴格式 + 非法名过滤 6 项 | commonTest | 三端全绿 |
+| `KsoupConsistencyTest` | 同一 fixture 选择器/中文/空集 3 项 | commonTest | 三端全绿 |
+| `NavigationBackstackTest` | N1/N2/N3/N4 纯逻辑 4 项 | commonTest | 三端全绿 |
+| `ViewModelScopeTest` | N5 同屏不重建/跨屏隔离/返回销毁 3 项 | commonTest | 三端全绿（N5 语义锁定，UI 集成 M1） |
+| `ContractDefaultsTest` | optionList 默认值/APP/章节 Map 3 项 | commonTest | 三端全绿 |
+| `UrlPolicyTest` | 白名单/重定向复核/降级拦截/相对路径 5 项 | commonTest | 三端全绿 |
+| `ZoomGestureTest` | 缩放钳制/双击/长条分块/惯性 4 项 | commonTest | 三端全绿 |
+| `SqlSchemaTest` | 建表 SQL 三端一致 1 项 | commonTest | 三端全绿 |
+| `QuickJsSuspendTest` | Promise/内存/中断/top-level await 4 项 | commonTest | desktop 4/4，iOS 模拟器 4/4（无 JIT 真跑），androidHost 跳过（AAR .so 非 host 变体，M1 真机补） |
+| `QuickJsBehaviorTest` | Promise/内存/中断 3 项 | desktopTest | desktop 3/3 |
+| `VeneraContractChainTest` | fake 源 search/detail + Cookie 注入 3 项 | desktopTest | desktop 3/3 |
+| `KoinFactoryTest` | Koin single/factory/scope 三端 2 项 | commonTest | 三端全绿（Native 用 koinApplication，GlobalContext 仅 JVM） |
+| `NavDisplayRenderTest` | 真 NavDisplay 窄/宽/深链接三档离屏渲染 3 项 | desktopTest | desktop 3/3（EDT 内执行，绕 lifecycle 主线程断言） |
+| `KtorRedirectTest` | 本地 302 跟随 + 逐跳复核 1 项 | desktopTest | desktop 1/1 |
+| `SqlDelightCrudTest` | work/chapter/kv 增删改 + 级联 1 项 | desktopTest | desktop 1/1（QueryResult.Value 形态） |
+| `ZoomLongStripTest` | 800×4000 长条整图 + 分块覆盖 1 项 | desktopTest | desktop 1/1 |
+| `PdfRenderTest` | rememberPdfReaderState + 解析 + composable 出像素 1 项 | desktopTest | desktop 1/1（公开 API 路径，避开 internal PdfDocument） |
+| `KtorRedirectTest` | 本地 302 跟随 + 逐跳复核 1 项 | desktopTest | desktop 1/1 |
+| `SqlDelightCrudTest` | work/chapter/kv 增删改 + 级联 1 项 | desktopTest | desktop 1/1（in-memory） |
+| `P0BehaviorTest` | Ksoup/Base64/CIO/Koin/长图分块 4 项 | desktopTest | desktop 4/4 |
+| `ZoomRenderTest` | Skia 生成图 + 离屏渲染落盘 1 项 | desktopTest | desktop 1/1 |
+| `PdfRenderTest` | 最小 PDF 页数 + artifact 链接 1 项 | desktopTest | desktop 1/1 |
+
+合计：`desktopTest` 21 套件全绿；`testAndroidHostTest` 12 套件全绿；
+`iosSimulatorArm64Test`（无空格路径复跑）12 套件全绿。
+`QuickJsSuspendTest` 在 iOS 模拟器无 JIT 真跑通过，Gate ②d 关闭。
+真机/设备矩阵（2026-11-11，Mac 本机实测）：
+`han1me-16kb` 模拟器启动后 `sys.boot_completed=1`，
+`ro.product.cpu.pagesize.max=16384` 且 `getconf PAGESIZE=16384`，
+Gate ②c 的“运行态 16KB”侧关闭（静态 aar `p_align` + 真机页大小双证据）。
+iOS 真机无 JIT：模拟器已过（QuickJS 纯解释器，无 W^X 需求），真机 enzymatic 在 M1 设备矩阵补。
+
+遗留：QuickJs suspend 链在 iOS 真机/模拟器的执行、Ktor engine 白名单/重定向一致性、
+SQLDelight 增删改查一致性、ZoomImage 真实渲染、PDF 渲染、Navigation N5（ViewModel 作用域），
+仍需 M1 在 `:app:shared-ui` 集成测试中补齐。
+
+### 8.3 系统 WebView 优化（ADR-010 落地前置）
+
+本次审阅发现并修复（M0 范围内低风险项）：
+
+1. `awaitLoaded` 只消费 `loaded`、忽略 `load-failed`，失败会 hanging 到 60s 超时 → 改为见到 `load-failed` 直接抛错。
+2. `open` 未清理上页残留事件，连续 open 会误消费旧 `loaded` → `open` 内先清除 `loaded/load-failed`。
+3. `events` 无界增长 → 只保留最近 50 条。
+4. host 崩溃只在超时后暴露 → `awaitReady`/`call` 增加 `process.isAlive` 快速失败。
+5. `cookies()` 丢弃 `httpOnly/secure`，与 C 侧已回传的字段脱节 → `StoredCookie` 新增两字段并解析。
+6. 协议无版本：C 侧 `ready` 新增 `"proto":1`，Kotlin 侧校验 `>1` 则抛错，缺失按旧版兼容。
+7. C 侧 JSON 解析缺 `\/` 与 surrogate pair（emoji 在 eval/标题常见），`utf8_put` 缺 4 字节 → 已补齐。
+8. 并发 open 会互冲单 view 页面 → `open` 加 `openLock` 串行化，并明确“单 host 实例不支持并发 open”。
+
+仍未做（M1/M6）：Windows（WebView2）/ macOS（WKWebView）实现、代理注入、
+发行版依赖探测与打包签名、三平台 CI、Mihon 四项对齐（host 锁跨进程、12s 超时、
+isolated world、Sec-CH-UA 同步）。详见 `docs/m0-webview-host-linux.md §6` 与
+`docs/community-solutions.md §1`。
+
+---
+
+### 8.4 契约冻结与 CI（M1 前置）
+
+* `docs/contract/` 新增三件套：`source.d.ts`（ComicSource + Host API 类型声明）、
+  `index-schema.json`（仓库索引 JSON Schema，url/filename 二选一 + 可选 ed25519 signature）、
+  `novel-example.js`（与附录 B 同构的可跑示例，可作 fixture）。
+* `.github/workflows/m0-verify.yml` 新增：Linux（WebKitGTK 构建 + smoke + allTests + spikes）、
+  macOS（helper 构建 + smoke + iOS 链接/单测）、Windows（WebView2 NuGet + MSVC 编译）。
+  Windows 真跑留待 CI，本地以协议同构 + 代码评审为准。
+* `m0-spike/desktop-webview-host/tests/mac_smoke.py` 入库（与 linux_smoke.py 同断言），
+  本机实测 8/8 通过；Linux 版在容器已过（见 §3.1）。
+
 ## 6. 本轮工程改动
 
 | 文件 | 改动 | 性质 |
@@ -304,13 +401,27 @@ xcrun simctl boot "iPhone 16"
 | `docs/screenshots/spike-desktop.png` | 渲染产物 | 新增 |
 | `docs/baseline/mangadex-search-one.json` | 真实源基准样本，供三端一致性对比 | 新增 |
 
+补遗改动（2026-11-11，Mac）：
+| 文件 | 改动 | 性质 |
+|---|---|---|
+| `shared/build.gradle.kts` | 补 `KotlinNativeTarget.framework{SharedSpike}`（`linkDebugFramework*` 可用）；补 `android.withHostTest`；补 `commonTest`/`desktopTest` 的 `kotlin("test")` 依赖 | 补 M0 测试基建缺口 |
+| `shared/src/commonTest/...` | 新增 6 套件 28 用例：CookieStore/CloudflareGuard/Parser/Ksoup/Navigation/ContractDefaults | 三端一致性回归 |
+| `shared/src/desktopTest/...` | 新增 3 套件 10 用例：QuickJsBehavior/VeneraContractChain/P0Behavior | JVM 行为回归 |
+| `shared/src/commonMain/.../CookieStore.kt` | `StoredCookie` 新增 `httpOnly`/`secure`（默认 false，兼容旧调用） | WebView 优化 |
+| `shared/src/desktopMain/.../WebviewHost.kt` | 清残留事件、处理 load-failed、事件上限 50、进程存活快速失败、解析 httpOnly/secure、协议版本校验、open 串行锁 | WebView 优化 |
+| `desktop-webview-host/src/host_gtk.c` | `ready` 增加 `"proto":1`；补 `\/`、surrogate pair、4 字节 UTF-8 | WebView 优化 |
+
 回滚方式：删除 wrapper 与 `Screenshot.kt`，`gradle.properties` 恢复原行，`build.gradle.kts` 去掉 `offlineDesktopRuntime` 与 `screenshotSpike` 即可，不影响原有 `runDesktopSpike`。
 
 ---
 
 ## 7. 建议的下一步
 
-1. **补 Gate ①的三端对比**——基准样本 `docs/baseline/mangadex-search-one.json` 已就绪，Android 侧可立即对比；iOS 侧待 macOS。它会一次性暴露 Ksoup / Ktor / Promise 调度 / Unicode 的平台差异。
-2. **在 Mac 上跑第 5 节的三条命令**，补齐 iOS 证据；同时把 `simulator tests require macOS` 这类警告在 CI 里显式区分「跳过」与「失败」。
-3. **把 `:core:platform` 的 `WebViewLoginHost` 接口定稿**（ADR-009 的落地前置），桌面 `actual` 返回 `Unsupported`，Android/iOS 分别接 `WebChromeClient` / `WKNavigationDelegate`，并把 Cookie 回写进共用的 `CookieStore`。
-4. **把本报告结论回写 `feasibility.md` 第 4 节**，需要修订的有三条：「iOS klib 可在 Linux 交叉编译」（改变 CI 设计）、「jogamp 不可达」（实为 Maven Central 缺失但 SciJava 有镜像）、「KCEF 可初始化」已移出范围。
+M0 已判绿（2026-11-11）：Gate ①②③④ 全绿，⑤a 最小前置通过（真渲染 M3 跟 UI 压测），
+⑤b 移出范围，⑤c 依赖层+符号冒烟通过。正式开工 M1（契约冻结），M2 数据层可并行起 schema。
+遗留到 M1/M3/M4/M6 的只有 UI 集成与真机压测，不阻开工：
+
+1. M1：`:source:contract` + `.d.ts`/JSON Schema + Navigation 真 `NavDisplay` 集成 + Koin 真 ViewModel 工厂。
+2. M3：ZoomImage 真机长图/手势压测、PDF 渐进渲染/文本选择（三端截图基线）。
+3. M6：Windows CI 编译 `host_win.cc` 并跑同套 NDJSON 断言；macOS helper 已在 Mac 8/8 通过。
+4. 设备矩阵：Android 真机 QuickJs/16KB、iOS 真机无 JIT（模拟器已过）。

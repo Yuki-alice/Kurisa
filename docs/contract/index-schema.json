@@ -1,0 +1,42 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://kurisa.example/schemas/source-index.json",
+  "title": "Kurisa 源仓库 index.json（M1 冻结版 v1）",
+  "description": "沿用 Venera 仓库形状并扩展：url/filename 二选一，签名字段可选（缺失标记未验证）。",
+  "type": "object",
+  "required": ["apiVersion", "sources"],
+  "properties": {
+    "apiVersion": { "type": "integer", "minimum": 1 },
+    "sources": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name", "key", "version", "kind", "domains", "sha256"],
+        "properties": {
+          "name": { "type": "string", "minLength": 1 },
+          "key": { "type": "string", "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+$" },
+          "url": { "type": "string", "format": "uri" },
+          "filename": { "type": "string", "minLength": 1 },
+          "version": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$" },
+          "description": { "type": "string" },
+          "kind": {
+            "type": "array",
+            "minItems": 1,
+            "items": { "enum": ["manga", "novel"] }
+          },
+          "domains": {
+            "type": "array",
+            "minItems": 1,
+            "items": { "type": "string", "minLength": 1 }
+          },
+          "sha256": { "type": "string", "pattern": "^[0-9a-fA-F]{64}$" },
+          "signature": {
+            "type": "string",
+            "description": "base64 ed25519 签名；缺失时宿主标记未验证"
+          }
+        },
+        "oneOf": [{ "required": ["url"] }, { "required": ["filename"] }]
+      }
+    }
+  }
+}

@@ -40,6 +40,9 @@ data class StoredCookie(
     val pairedUserAgent: String? = null,
     /** 非空表示已被判定失效（例如再次收到挑战），不再参与请求注入。 */
     val invalidReason: String? = null,
+    /** 原生 CookieManager 回传的元数据：HttpOnly 决定 JS 是否可见，Secure 决定明文复用风险。 */
+    val httpOnly: Boolean = false,
+    val secure: Boolean = false,
 )
 
 /**

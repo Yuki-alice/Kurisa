@@ -91,3 +91,10 @@ N5 ViewModel 作用域：旋转/resize 后同目的地不重建，跨目的地�
 - **官方 Expressive 组件三端截图基线**（M1 建立）。
 - iOS 真机无 JIT entitlement 运行、16KB page size 镜像下 so 加载（仅静态确认四个 ABI 的 `.so` 的 `p_align=16384`）。
 - P1 / P2 依赖（Ketch / FileKit / KSafe / KMP WorkManager / MaterialKolor / kmPalette / Haze / paging / DND / Markdown / RichEditor 等）尚未进矩阵。
+
+### 补遗（2026-11-11，Mac ARM64）
+- `runDesktopSpike` / `cookieSpike(24/24)` / `screenshotSpike(31KB)` / `sourceSpike(manga_dex, 20 条/4 章)` 在第二台机器复现全绿。
+- 三端测试：`desktopTest` 21 套件全绿（含真 NavDisplay 渲染 3 项、Ktor 302 1 项、SQLDelight CRUD 1 项、Zoom 长条 1 项、PDF 真渲染 1 项、Koin 2 项）；`testAndroidHostTest` 12 套件全绿；`iosSimulatorArm64Test` 12 套件全绿（QuickJs 无 JIT 真跑、Koin 三端可用）。serialization 插件已补（NavKey 多态必需）。
+- 契约冻结三件套已落 `docs/contract/`（source.d.ts + index-schema.json + novel-example.js）；CI（Linux/macOS/Windows）已配 `.github/workflows/m0-verify.yml`；macOS helper 本机烟测 8/8。
+- 设备矩阵：`han1me-16kb` 模拟器 `PAGESIZE=16384` 实测，Gate ②c 运行态关闭；iOS 真机 enzymatic M1 补。
+- WebView：Kotlin 侧修 load-failed hanging/残留事件/无界事件/进程死亡慢暴露/协议版本/open 串行/`httpOnly/secure` 透传；C 侧补 `proto:1`、`\/`、surrogate pair、4 字节 UTF-8。代理注入、打包签名仍待 M1/M6。

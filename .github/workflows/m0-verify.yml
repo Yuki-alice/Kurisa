@@ -1,0 +1,54 @@
+name: m0-verify
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  # ---- 桌面三件套 + 全量单元测试（Linux）----
+  spike-linux:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: corretto
+          java-version: '21'
+      - name: Install WebKitGTK
+        run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev xvfb
+      - name: Build linux webview host
+        run: bash m0-spike/desktop-webview-host/build-linux.sh
+      - name: Host smoke (python)
+        run: xvfb-run -a python3 m0-spike/desktop-webview-host/tests/linux_smoke.py
+      - name: Gradle allTests
+        run: ./m0-spike/gradlew -p m0-spike :shared:allTests --console=plain
+      - name: Desktop spikes
+        run: ./m0-spike/gradlew -p m0-spike :shared:runDesktopSpike :shared:cookieSpike :shared:screenshotSpike --console=plain
+
+  # ---- macOS：helper 编译 + 烟测 + iOS 链接/单测 ----
+  spike-macos:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: corretto
+          java-version: '21'
+      - name: Build mac webview host
+        run: bash m0-spike/desktop-webview-host/build-mac.sh
+      - name: Host smoke (mac)
+        run: python3 m0-spike/desktop-webview-host/tests/mac_smoke.py
+      - name: iOS framework + simulator tests
+        run: ./m0-spike/gradlew -p m0-spike :shared:linkDebugFrameworkIosSimulatorArm64 :shared:iosSimulatorArm64Test --console=plain
+
+  # ---- Windows：helper 编译（MSVC + WebView2）----
+  webview-host-windows:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install WebView2 SDK
+        run: nuget install Microsoft.Web.WebView2 -Version 1.0.2903.40 -OutputDirectory m0-spike/desktop-webview-host/packages
+      - uses: microsoft/setup-msbuild@v2
+      - name: Build windows webview host
+        run: powershell -ExecutionPolicy Bypass -File m0-spike/desktop-webview-host/build-windows.ps1

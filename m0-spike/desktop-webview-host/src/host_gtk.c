@@ -114,8 +114,14 @@ static void utf8_put(GString *out, unsigned cp) {
   else if (cp < 0x800) {
     g_string_append_c(out, (char)(0xC0 | (cp >> 6)));
     g_string_append_c(out, (char)(0x80 | (cp & 0x3F)));
-  } else {
+  } else if (cp < 0x10000) {
     g_string_append_c(out, (char)(0xE0 | (cp >> 12)));
+    g_string_append_c(out, (char)(0x80 | ((cp >> 6) & 0x3F)));
+    g_string_append_c(out, (char)(0x80 | (cp & 0x3F)));
+  } else {
+    /* supplementary plane: 4-byte UTF-8（emoji 等，JS eval 常见） */
+    g_string_append_c(out, (char)(0xF0 | (cp >> 18)));
+    g_string_append_c(out, (char)(0x80 | ((cp >> 12) & 0x3F)));
     g_string_append_c(out, (char)(0x80 | ((cp >> 6) & 0x3F)));
     g_string_append_c(out, (char)(0x80 | (cp & 0x3F)));
   }
@@ -138,9 +144,22 @@ static char *json_get_string(const char *json, const char *key) {
         case 't': g_string_append_c(out, '\t'); break;
         case 'b': g_string_append_c(out, '\b'); break;
         case 'f': g_string_append_c(out, '\f'); break;
+        case '/': g_string_append_c(out, '/'); break;
         case 'u':
           if (strlen(p + 1) >= 4) {
-            utf8_put(out, (unsigned)hex4(p + 1));
+            unsigned hi = (unsigned)hex4(p + 1);
+            /* surrogate pair：JS eval 的 emoji 常以 \uD83D\uDE00 出现 */
+            if (hi >= 0xD800 && hi <= 0xDBFF && strlen(p + 1) >= 10 &&
+                p[5] == '\\' && p[6] == 'u') {
+              unsigned lo = (unsigned)hex4(p + 7);
+              if (lo >= 0xDC00 && lo <= 0xDFFF) {
+                unsigned cp = 0x10000 + ((hi - 0xD800) << 10) + (lo - 0xDC00);
+                utf8_put(out, cp);
+                p += 10;
+                break;
+              }
+            }
+            utf8_put(out, hi);
             p += 4;
           }
           break;
@@ -491,7 +510,7 @@ int main(int argc, char **argv) {
   char engine[64];
   snprintf(engine, sizeof(engine), "%d.%d.%d", webkit_get_major_version(),
            webkit_get_minor_version(), webkit_get_micro_version());
-  printf("{\"ev\":\"ready\",\"ua\":");
+  printf("{\"ev\":\"ready\",\"proto\":1,\"ua\":");
   json_write_escaped(stdout, g_ua);
   fputs(",\"engine\":", stdout);
   json_write_escaped(stdout, engine);

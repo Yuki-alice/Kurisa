@@ -44,6 +44,14 @@ class WebviewHost(
     private val pending = ConcurrentHashMap<Int, CompletableFuture<JsonObject>>()
     private val events = java.util.concurrent.CopyOnWriteArrayList<JsonObject>()
     private val nextId = AtomicInteger(0)
+    /** 串行化 open/close：WebKit 单 view 不支持并发 open，并发会互相冲掉页面。 */
+    private val openLock = Any()
+
+    /** 协议版本：host 的 ready 事件应带 `proto:1`；缺失按旧版兼容，错配直接抛错。 */
+    private val expectedProto = 1
+    @Volatile
+    var protocolVersion: Int = -1
+        private set
 
     /** 由 `ready` 事件带回，必须与 Cookie 一起存：cf_clearance 与 UA 绑定。 */
     @Volatile
@@ -85,8 +93,17 @@ class WebviewHost(
                     if (obj["ev"]?.jsonPrimitive?.contentOrNull == "ready") {
                         userAgent = obj["ua"]?.jsonPrimitive?.contentOrNull.orEmpty()
                         engineVersion = obj["engine"]?.jsonPrimitive?.contentOrNull.orEmpty()
+                        protocolVersion = obj["proto"]?.jsonPrimitive?.contentOrNull?.toIntOrNull() ?: 0
+                        // 旧版 host 不带 proto，按 0 兼容；新版必须为 1
+                        if (protocolVersion > expectedProto) {
+                            pending.clear()
+                        }
                     }
                     events += obj
+                    // 事件列表只保留最近 50 条，防止长会话无界增长
+                    if (events.size > 50) {
+                        repeat(events.size - 50) { events.removeAt(0) }
+                    }
                 }
             }
         }
@@ -96,13 +113,24 @@ class WebviewHost(
     private fun awaitReady(timeoutMs: Long = 15_000) {
         val end = System.currentTimeMillis() + timeoutMs
         while (System.currentTimeMillis() < end) {
-            if (userAgent.isNotEmpty()) return
+            if (!process.isAlive) {
+                throw WebviewHostException("webview host 进程已退出（可能缺可执行权限或缺系统库）")
+            }
+            if (userAgent.isNotEmpty()) {
+                if (protocolVersion > expectedProto) {
+                    throw WebviewHostException("webview host 协议版本不匹配: host=$protocolVersion expected=$expectedProto")
+                }
+                return
+            }
             Thread.sleep(20)
         }
         throw WebviewHostException("webview host 未在 ${timeoutMs}ms 内就绪（可能缺少 WebKitGTK）")
     }
 
     private fun call(cmd: JsonObject, timeoutMs: Long = 60_000): JsonObject {
+        if (!process.isAlive) {
+            throw WebviewHostException("webview host 进程已退出，无法执行: $cmd")
+        }
         val id = nextId.incrementAndGet()
         val body = JsonObject(cmd.toMutableMap().apply { put("id", JsonPrimitive(id)) })
         val future = CompletableFuture<JsonObject>()
@@ -123,18 +151,31 @@ class WebviewHost(
     }
 
     fun open(url: String, width: Int = 1000, height: Int = 800) {
-        call(buildJsonObject {
-            put("cmd", "open")
-            put("url", url)
-            put("width", width)
-            put("height", height)
-        })
+        synchronized(openLock) {
+            // 清掉上个页面的残留事件，避免 awaitLoaded 误消费旧 loaded
+            events.removeIf {
+                val ev = it["ev"]?.jsonPrimitive?.contentOrNull
+                ev == "loaded" || ev == "load-failed"
+            }
+            call(buildJsonObject {
+                put("cmd", "open")
+                put("url", url)
+                put("width", width)
+                put("height", height)
+            })
+        }
     }
 
-    /** 等待页面加载完成；返回 page 的 url 与 title。 */
+    /** 等待页面加载完成；返回 page 的 url 与 title。load-failed 直接抛错，不等超时。 */
     fun awaitLoaded(timeoutMs: Long = 60_000): Pair<String, String> {
         val end = System.currentTimeMillis() + timeoutMs
         while (System.currentTimeMillis() < end) {
+            events.firstOrNull { it["ev"]?.jsonPrimitive?.contentOrNull == "load-failed" }?.let {
+                events.remove(it)
+                val url = it["url"]?.jsonPrimitive?.contentOrNull.orEmpty()
+                val err = it["error"]?.jsonPrimitive?.contentOrNull.orEmpty()
+                throw WebviewHostException("页面加载失败: $url $err")
+            }
             events.firstOrNull { it["ev"]?.jsonPrimitive?.contentOrNull == "loaded" }?.let {
                 events.remove(it)
                 val url = it["url"]?.jsonPrimitive?.contentOrNull.orEmpty()
@@ -170,10 +211,12 @@ class WebviewHost(
                 name = name,
                 value = o["value"]?.jsonPrimitive?.contentOrNull.orEmpty(),
                 path = o["path"]?.jsonPrimitive?.contentOrNull ?: "/",
-                expiresAtEpochMs = o["expiresAt"]?.jsonPrimitive?.long,
+                expiresAtEpochMs = o["expiresAt"]?.jsonPrimitive?.contentOrNull?.toLongOrNull(),
                 obtainedAtEpochMs = now,
                 source = CookieSource.WEBVIEW,
                 pairedUserAgent = userAgent,
+                httpOnly = o["httpOnly"]?.jsonPrimitive?.contentOrNull == "true",
+                secure = o["secure"]?.jsonPrimitive?.contentOrNull == "true",
             )
         }
     }

@@ -2,6 +2,7 @@ import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
 plugins {
     alias(libs.plugins.kotlinMultiplatform)
+    alias(libs.plugins.kotlinSerialization)
     alias(libs.plugins.androidKmpLibrary)
     alias(libs.plugins.composeMultiplatform)
     alias(libs.plugins.composeCompiler)
@@ -14,6 +15,7 @@ kotlin {
         namespace = "spike.shared"
         compileSdk = libs.versions.android.compileSdk.get().toInt()
         minSdk = libs.versions.android.minSdk.get().toInt()
+        withHostTest {}
         compilerOptions {
             jvmTarget.set(JvmTarget.JVM_17)
         }
@@ -22,6 +24,16 @@ kotlin {
     iosArm64()
     iosSimulatorArm64()
     jvm("desktop")
+
+    // M0 §5 要求能 link 出 framework，否则 linkDebugFramework* 任务不存在。
+    // 正式工程只有 :app:shared-ui 配 framework，这里为验证三端编译+链接补最小 binary。
+    targets.withType<org.jetbrains.kotlin.gradle.plugin.mpp.KotlinNativeTarget> {
+        binaries {
+            framework {
+                baseName = "SharedSpike"
+            }
+        }
+    }
 
     sourceSets {
         commonMain.dependencies {
@@ -86,6 +98,14 @@ kotlin {
             implementation(libs.sqldelight.sqlite.driver)
             // Skiko 运行时（含 linux-x64 原生库），离屏渲染与桌面窗口都需要
             implementation(compose.desktop.currentOs)
+        }
+
+        commonTest.dependencies {
+            implementation(kotlin("test"))
+        }
+        getByName("desktopTest").dependencies {
+            implementation(kotlin("test"))
+            implementation(kotlin("test-junit"))
         }
     }
 }
