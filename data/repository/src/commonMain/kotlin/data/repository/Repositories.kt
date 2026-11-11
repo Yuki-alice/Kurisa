@@ -2,6 +2,8 @@ package data.repository
 
 import app.cash.sqldelight.coroutines.asFlow
 import app.cash.sqldelight.coroutines.mapToList
+import core.model.DownloadStatus
+import core.model.DownloadTask
 import core.model.ReadingProgress
 import core.model.Shelf
 import core.model.workStableId
@@ -140,3 +142,54 @@ internal class ProgressRepositoryImpl(private val db: ReaderDatabase) : Progress
 
 fun createShelfRepository(db: ReaderDatabase): ShelfRepository = ShelfRepositoryImpl(db)
 fun createProgressRepository(db: ReaderDatabase): ProgressRepository = ProgressRepositoryImpl(db)
+
+/** 下载任务仓库（任务状态落 `download_task`，执行引擎见 `:data:download`）。 */
+interface DownloadTaskRepository {
+    fun observeTasks(): Flow<List<DownloadTask>>
+    suspend fun upsert(task: DownloadTask)
+    suspend fun delete(id: String)
+}
+
+internal class DownloadTaskRepositoryImpl(private val db: ReaderDatabase) : DownloadTaskRepository {
+    override fun observeTasks(): Flow<List<DownloadTask>> =
+        db.downloadQueries.selectDownloads()
+            .asFlow()
+            .mapToList(Dispatchers.Default)
+            .map { rows ->
+                rows.map { row ->
+                    DownloadTask(
+                        id = row.id,
+                        workId = row.work_id,
+                        chapterId = row.chapter_id,
+                        status = runCatching { DownloadStatus.valueOf(row.status) }
+                            .getOrElse { DownloadStatus.QUEUED },
+                        priority = row.priority.toInt(),
+                        done = row.done,
+                        total = row.total,
+                        error = row.error,
+                        createdAtEpochMs = row.created_at,
+                    )
+                }
+            }
+
+    override suspend fun upsert(task: DownloadTask) {
+        db.downloadQueries.upsertDownload(
+            id = task.id,
+            work_id = task.workId,
+            chapter_id = task.chapterId,
+            status = task.status.name,
+            priority = task.priority.toLong(),
+            done = task.done,
+            total = task.total,
+            error = task.error,
+            created_at = task.createdAtEpochMs,
+        )
+    }
+
+    override suspend fun delete(id: String) {
+        db.downloadQueries.deleteDownload(id)
+    }
+}
+
+fun createDownloadTaskRepository(db: ReaderDatabase): DownloadTaskRepository =
+    DownloadTaskRepositoryImpl(db)

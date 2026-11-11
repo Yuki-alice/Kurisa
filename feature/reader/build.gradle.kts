@@ -34,8 +34,18 @@ kotlin {
             implementation(libs.navigation3.ui)
             implementation(libs.kotlinx.serialization.json)
             implementation(libs.kotlinx.coroutines.core)
+            implementation(libs.lifecycle.viewmodel)
+            implementation(libs.lifecycle.viewmodel.compose)
+            implementation(libs.lifecycle.runtime.compose)
             implementation(project(":core:model"))
+            implementation(project(":core:common"))
+            implementation(project(":core:reader"))
             implementation(project(":core:designsystem"))
+            implementation(project(":data:repository"))
+        }
+        commonTest.dependencies {
+            implementation(kotlin("test"))
+            implementation(libs.kotlinx.coroutines.test)
         }
     }
 }

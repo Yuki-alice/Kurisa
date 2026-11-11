@@ -10,6 +10,7 @@ import io.ktor.client.request.header
 import io.ktor.client.request.post
 import io.ktor.client.request.setBody
 import io.ktor.client.statement.HttpResponse
+import io.ktor.client.statement.bodyAsBytes
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
@@ -41,6 +42,31 @@ class SourceHttpClient(
         val audit: SourceAuditEvent,
     )
 
+    /** 字节结果（图片/下载：与文本路径同一套白名单+Cookie+UA+审计不断言正文）。 */
+    data class BytesResult(
+        val status: Int,
+        val bytes: ByteArray,
+        val finalUrl: String,
+        val verdict: Verdict,
+        val audit: SourceAuditEvent,
+    ) {
+        override fun equals(other: Any?): Boolean {
+            if (this === other) return true
+            if (other !is BytesResult) return false
+            return status == other.status && bytes.contentEquals(other.bytes) &&
+                finalUrl == other.finalUrl && verdict == other.verdict && audit == other.audit
+        }
+
+        override fun hashCode(): Int {
+            var r = status
+            r = 31 * r + bytes.contentHashCode()
+            r = 31 * r + finalUrl.hashCode()
+            r = 31 * r + verdict.hashCode()
+            r = 31 * r + audit.hashCode()
+            return r
+        }
+    }
+
     suspend fun get(
         url: String,
         domains: Set<String>,
@@ -55,6 +81,53 @@ class SourceHttpClient(
         body: String? = null,
         defaultUserAgent: String = DEFAULT_UA,
     ): FetchResult = request("POST", url, domains, headers, body, defaultUserAgent)
+
+    /**
+     * 字节 GET（图片页/下载分片）。
+     * 与文本路径共享全部强制点；Cloudflare 判定用正文前 20KB 的有损解码
+     * （挑战页为 HTML 文本，图片字节误判时调用方以状态码为准）。
+     */
+    suspend fun getBytes(
+        url: String,
+        domains: Set<String>,
+        headers: Map<String, String> = emptyMap(),
+        defaultUserAgent: String = DEFAULT_UA,
+    ): BytesResult {
+        require(UrlPolicy.isAllowed(url, domains)) { "domain-blocked:$url" }
+        var current = url
+        var hops = 0
+        while (true) {
+            val ua = cookies.pairedUserAgentFor(current, nowMs()) ?: defaultUserAgent
+            val resp: HttpResponse = client.get(current) {
+                header(HttpHeaders.UserAgent, ua)
+                cookies.headerFor(current, nowMs())?.let { header(HttpHeaders.Cookie, it) }
+                headers.forEach { (k, v) ->
+                    if (!k.equals(HttpHeaders.UserAgent, true) && !k.equals(HttpHeaders.Cookie, true)) {
+                        header(k, v)
+                    }
+                }
+            }
+            val status = resp.status.value
+            if (status in 301..308) {
+                val loc = resp.headers[HttpHeaders.Location].orEmpty()
+                val v = UrlPolicy.validateRedirect(current, loc, domains)
+                require(v.ok) { v.reason }
+                require(++hops <= UrlPolicy.MAX_HOPS) { "too-many-redirects" }
+                current = v.reason
+                continue
+            }
+            val bytes = runCatching { resp.bodyAsBytes() }.getOrElse { ByteArray(0) }
+            val headerMap = resp.headers.entries().associate { it.key to it.value.joinToString(",") }
+            val verdict = CloudflareGuard.classify(status, headerMap, bytes.decodeToString())
+            val audit = SourceAuditEvent(
+                sourceKey = "",
+                host = UrlPolicy.hostOf(current),
+                status = status,
+                atEpochMs = nowMs(),
+            )
+            return BytesResult(status, bytes, current, verdict, audit)
+        }
+    }
 
     private suspend fun request(
         method: String,

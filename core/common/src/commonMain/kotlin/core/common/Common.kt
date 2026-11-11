@@ -1,8 +1,11 @@
 package core.common
 
 import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /**
@@ -66,3 +69,29 @@ object NoopAppLog : AppLog {
 /** IO 调度执行（JVM/Android 走 Dispatchers.IO；调用方一律经此，不直写 withContext）。 */
 suspend fun <T> ioRun(dispatchers: AppDispatchers = DefaultAppDispatchers, block: suspend () -> T): T =
     withContext(dispatchers.io) { block() }
+
+/**
+ * 防抖器（提交后静默满 waitMs 才执行一次；重复提交取消前一次）。
+ * scope 由调用方注入——生产传 viewModelScope，测试传 TestScope，
+ * 不依赖 Dispatchers.Main 的 delay 语义（见 M3 记录）。
+ */
+class Debouncer(
+    private val scope: CoroutineScope,
+    private val waitMs: Long,
+    private val action: suspend () -> Unit,
+) {
+    private var job: Job? = null
+
+    fun submit() {
+        job?.cancel()
+        job = scope.launch {
+            delay(waitMs)
+            action()
+        }
+    }
+
+    fun cancel() {
+        job?.cancel()
+        job = null
+    }
+}

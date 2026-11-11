@@ -1,6 +1,7 @@
 package data.repository
 
 import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
+import core.model.DownloadTask
 import core.model.ReadingProgress
 import core.model.Shelf
 import data.db.ReaderDatabase
@@ -70,5 +71,25 @@ class ShelfRepositoryTest {
         val loaded = repo.load("w1")
         assertEquals("c1", loaded?.chapterId)
         assertEquals(0.5f, loaded?.percent)
+    }
+
+    @Test
+    fun downloadTasksRoundTrip() = runTest {
+        val db = openDb()
+        val repo = createDownloadTaskRepository(db)
+        assertTrue(repo.observeTasks().first().isEmpty())
+        repo.upsert(
+            DownloadTask(
+                "d1", "w1", "c1", core.model.DownloadStatus.QUEUED,
+                5, 0, 100, null, 1_760_000_000_000L,
+            ),
+        )
+        val items = repo.observeTasks().first()
+        assertEquals(1, items.size)
+        assertEquals(100, items[0].total)
+        repo.upsert(items[0].copy(status = core.model.DownloadStatus.DONE, done = 100))
+        assertEquals(core.model.DownloadStatus.DONE, repo.observeTasks().first().single().status)
+        repo.delete("d1")
+        assertTrue(repo.observeTasks().first().isEmpty())
     }
 }

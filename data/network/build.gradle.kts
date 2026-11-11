@@ -53,6 +53,7 @@ kotlin {
         commonTest.dependencies {
             implementation(kotlin("test"))
             implementation(libs.ktor.client.mock)
+            implementation(libs.kotlinx.coroutines.test)
         }
         getByName("desktopTest").dependencies {
             implementation(kotlin("test-junit"))
