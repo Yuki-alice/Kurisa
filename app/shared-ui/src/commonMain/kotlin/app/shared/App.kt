@@ -1,0 +1,73 @@
+package app.shared
+
+import androidx.compose.runtime.Composable
+import androidx.navigation3.runtime.NavEntry
+import androidx.navigation3.runtime.NavKey
+import androidx.navigation3.runtime.rememberNavBackStack
+import androidx.navigation3.ui.NavDisplay
+import androidx.savedstate.serialization.SavedStateConfiguration
+import kotlinx.serialization.modules.SerializersModule
+import core.designsystem.AppTheme
+import feature.detail.DetailRoute
+import feature.detail.DetailScreen
+import feature.downloads.DownloadsRoute
+import feature.downloads.DownloadsScreen
+import feature.explore.ExploreRoute
+import feature.explore.ExploreScreen
+import feature.reader.ReaderRoute
+import feature.reader.ReaderScreen
+import feature.search.SearchRoute
+import feature.search.SearchScreen
+import feature.settings.SettingsRoute
+import feature.settings.SettingsScreen
+import feature.shelf.ShelfRoute
+import feature.shelf.ShelfScreen
+import feature.sources.SourcesRoute
+import feature.sources.SourcesScreen
+
+/**
+ * 全 App 入口（ADR-008）。
+ * ViewModel 工厂集中于此（配合 Koin，M5 接入）；各 feature 禁止自建 scope。
+ */
+@Composable
+fun App() {
+    AppTheme {
+        // iOS 等非 JVM 平台无反射：route key 多态序列化须经 SerializersModule 注册
+        // （当前 8 个 key 均为具体 @Serializable 类型，空模块即可；M5 补深链接回放测试）。
+        val backStack = rememberNavBackStack(
+            SavedStateConfiguration { serializersModule = SerializersModule { } },
+            ShelfRoute,
+        )
+        NavDisplay(
+            backStack = backStack,
+            onBack = { backStack.removeLastOrNull() },
+            entryProvider = { key: NavKey ->
+                when (key) {
+                    is ShelfRoute -> NavEntry(key) {
+                        ShelfScreen(onOpenDetail = { backStack.add(DetailRoute(it)) })
+                    }
+                    is ExploreRoute -> NavEntry(key) {
+                        ExploreScreen(key.sourceKey, onOpenDetail = { backStack.add(DetailRoute(it)) })
+                    }
+                    is SearchRoute -> NavEntry(key) {
+                        SearchScreen(onOpenDetail = { backStack.add(DetailRoute(it)) })
+                    }
+                    is DetailRoute -> NavEntry(key) {
+                        DetailScreen(
+                            workId = key.workId,
+                            onOpenReader = { w, c -> backStack.add(ReaderRoute(w, c)) },
+                            onBack = { backStack.removeLastOrNull() },
+                        )
+                    }
+                    is ReaderRoute -> NavEntry(key) {
+                        ReaderScreen(key.workId, key.chapterId, onBack = { backStack.removeLastOrNull() })
+                    }
+                    is SourcesRoute -> NavEntry(key) { SourcesScreen() }
+                    is DownloadsRoute -> NavEntry(key) { DownloadsScreen() }
+                    is SettingsRoute -> NavEntry(key) { SettingsScreen() }
+                    else -> error("未知路由：$key")
+                }
+            },
+        )
+    }
+}
