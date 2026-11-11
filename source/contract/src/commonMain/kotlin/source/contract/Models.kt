@@ -86,6 +86,8 @@ data class IndexedSource(
     val description: String = "",
     val kind: Set<ContentKind> = emptySet(),
     val domains: List<String> = emptyList(),
+    /** 仓库侧声明的能力位；缺省时由宿主 describe() 探测并按 apiVersion 上界收窄。 */
+    val capabilities: List<String> = emptyList(),
     val sha256: String = "",
     val signature: String? = null,
 )

@@ -370,6 +370,9 @@ reader/
 
 ## 4. 扩展源系统（核心）
 
+> 宿主侧插件引擎的装配、能力探测、错误语义、设置与图片加载配置的落地说明见
+> `docs/plugin-engine.md`；JS 侧声明以 `docs/contract/source.d.ts` 为准。
+
 ### 4.1 设计目标与兼容策略
 
 | 目标   | 做法                                                             |
@@ -429,21 +432,29 @@ reader/
 ### 4.3 生命周期与加载流程
 
 ```
-SourceManager.install()
-   └─ 元数据解析 / 签名校验 / 静态扫描 / 落盘
-SourceRegistry.get(key)
-   ├─ 命中缓存 → 复用 JsSourceInstance
+SourceInstaller.plan/confirm()
+   └─ 元数据解析（不执行） / 签名校验 / 静态扫描 / 落库 + 脚本落盘
+SourceRuntimeManager.acquire(spec)
+   ├─ 命中 LRU → 复用 SourceRuntime
    └─ 未命中
-       ├─ JsEngine.createRuntime(memoryLimit, maxStack, interruptHandler)
-       ├─ createContext() 注入全局对象（Network/Html/Convert/UI/Utils/Storage/Novel）
-       ├─ eval 内置 polyfill（Promise 调度、fetch、ComicSource 基类、类型构造器）
-       ├─ eval 源脚本 → 找到 class extends ComicSource → new 实例
-       ├─ 读取实例字段，生成 SourceDescriptor（kind / capabilities / settings / translation）
-       ├─ 可选 init()
+       ├─ QuickJsEngine.create（memoryLimit / maxStack / interruptHandler，单发求值）
+       ├─ 每次求值重建 context：注入全局对象（Network/Html/Convert/UI/Utils/Storage/Novel）
+       ├─ eval polyfill（Promise 调度、fetch、ComicSource 基类、sendMessage 同步桥、类型构造器）
+       ├─ eval 源脚本 → 找到 class extends ComicSource → new 实例 → 可选 init()
+       ├─ describe()：只读实例字段 → SourceDescriptor
+       │    （kind / capabilities / settings / translation / imageLoad / explore / category）
+       ├─ 校验头块声明与实例字段、apiVersion、minAppVersion；设置 default 预热 KV
        └─ 注册到 LRU 缓存（按 key 串行 dispatcher）
+SourceRuntime.call(path, args)
+   └─ 能力门 → 引擎调用 → 错误分类 → LOGIN_EXPIRED 重放一次 → 原始 JSON
 ```
 
-**销毁**：源被禁用 / 更新 / 内存压力时 dispose context → runtime；先等待在途 Promise 收敛或强制中断。
+引擎采用单发模型（quickjs-kt 的 `quickJs {}` 阅后即焚）：缓存的是「脚本 + 描述符 +
+宿主配置」，不是常驻 JS context；跨调用状态一律经 `loadData/saveData` 落宿主 KV。
+`describe()` 只读取字段形状，不执行任何能力方法、不触发网络。
+
+**销毁**：源被禁用 / 更新 / 内存压力时 `invalidate(key)` → `engine.close()`；
+单次求值的在途 Promise 由 `withTimeout` + `evaluationTimeoutMillis` + `close()` 收敛。
 
 
 ### 4.4 源契约（JS 侧）
@@ -469,6 +480,12 @@ SourceRegistry.get(key)
 | `translation`     | locale → 字符串映射                                               | —                                 | 可选     |
 | `comic.link`      | `domains` + `linkToId(url)`                                  | 外链转 id                            | 可选     |
 
+**能力位与版本**：`@capabilities` 与 `describe()` 探测结果共同决定宿主可调用的方法；
+未声明的能力不调用并抛 `SourceErrorKind.CONTRACT`。`apiVersion = 2` 是冻结基线，
+`apiVersion = 3` 声明使用扩展能力集；v2 源按能力位降级运行。
+`search` / `explore` / `categoryComics` 的分页同时接受页码模型（`load(page)` → `maxPage`）
+与游标模型（`loadNext(next)` → `next`），`load` 存在时优先。
+
 **统一返回类型**（宿主侧规范化，JS 侧同时接受 Venera 的 `comics` 与新名 `works`）：
 
 ```javascript
@@ -477,7 +494,10 @@ WorkDetails{ work, chapters: [{id, title, ordinal}], tags, recommend, ... }
 Chapter    { id, title, payload }   // payload: {type:'images', urls} | {type:'text', text, format}
 ```
 
-**登录过期约定**：抛出 `throw 'Login expired'`，宿主捕获后触发重新登录并重放一次请求（沿用 Venera 行为）。
+**错误约定**：JS 用字符串 `throw` 表达可识别错误，宿主按子串分类为
+`LOGIN_EXPIRED`（重登后重放一次）/ `RATE_LIMITED`（交上层退避，不重放）/
+`NOT_FOUND`（不重试）/ `PERMISSION` / `TIMEOUT` / `CONTRACT` / `EXECUTION`；
+分类与重放边界见 `docs/plugin-engine.md` §6。`throw 'Login expired'` 沿用 Venera 行为。
 
 #### 4.4.3 小说扩展（新增）
 
@@ -516,7 +536,9 @@ Venera 使用 `sendMessage({method, ...})` 做**同步**跨 isolate 调用。KMP
 
 #### 4.6.1 同步桥（兼容 `sendMessage` / `Storage` / `Convert` / `Html` / `Utils`）
 
-- 仅允许**本地、无网络、可快速满足**的方法白名单：`load_data` / `save_data` / `delete_data` / `load_setting` / `isLogged` / 日志 / 编码转换 / HTML 解析。
+- 仅允许**本地、无网络、可快速满足**的方法白名单：`load_data` / `save_data` / `delete_data` / `load_setting` / `isLogged` / `getLocale` / `getPlatform` / `random` / `uuid` / 日志 / 编码转换 / HTML 解析 / Cookie 三件套。
+- 设置读取落在 `HostStorage` 的源私有命名空间，键前缀 `setting:` 由 Kotlin 侧强制；
+  回退链为「用户设置 → `settings[key].default` → null」，`save_data` 拒绝写入 `setting` 键。
 - 宿主在 `SourceDispatcher`（每个源一个串行单线程 dispatcher）上执行，`runBlocking` 只作用于该 dispatcher，**绝不阻塞主线程或 UI 线程**。
 - KV 与设置的读写先查内存缓存（源加载时预热），未命中再查 SQLite；写操作「先写内存、后异步落盘」，返回即成功。
 - 白名单外的方法调用同步桥 → 直接抛 `SourceContractException`，防误用。
@@ -559,7 +581,8 @@ JS: Network.get(url, headers)
 | 网络域名白名单    | 元数据 `@domains`             | `HostApi.Network` 出口统一校验，含重定向目标 |
 | 能力开关       | `@capabilities`            | 未声明的能力对应方法不被宿主调用                |
 | KV 存储      | 隐式授予，源私有命名空间               | 以 `source_key` 分表隔离，禁止跨源读取      |
-| 设置读写       | 隐式                         | 仅本源 `settings` 声明的 key          |
+| 设置读写       | 隐式                         | 仅本源 `settings` 声明的 key；键前缀宿主强制，源脚本不可伪造 |
+| 图片请求头      | `comic.onImageLoad`         | `cookie` / `user-agent` / `host` 被剥离；URL 重写仍过白名单与重定向复核 |
 | WebView 登录 | `account.loginWithWebview` | 必须用户点击触发，WebView 独立、可随时关闭       |
 | 外部跳转       | `UI.launchUrl`             | 需用户手势 + 域名提示                    |
 

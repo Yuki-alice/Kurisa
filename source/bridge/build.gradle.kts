@@ -30,6 +30,7 @@ kotlin {
             implementation(project(":source:contract"))
             implementation(project(":source:hostapi"))
             implementation(project(":data:network"))
+            implementation(project(":data:images"))
             implementation(libs.quickjs.kt)
             implementation(libs.quickjs.converter)
             implementation(libs.ksoup)

@@ -20,6 +20,7 @@ object SourceInstaller {
         val key: String,
         val name: String,
         val version: String,
+        val apiVersion: Int = source.contract.ContractPolicy.CURRENT_API_VERSION,
         val domains: List<String>,
         val capabilities: List<String>,
         val kinds: List<String>,
@@ -84,14 +85,16 @@ object SourceInstaller {
                 key = meta.key,
                 name = meta.name,
                 version = meta.version,
+                apiVersion = meta.apiVersion,
                 domains = meta.domains,
                 capabilities = meta.capabilities,
                 kinds = meta.kind.map { it.serial },
-                sha256Ok = expected == null || true,
+                // 无索引条目时脚本哈希未被任何可信源校验，标记未验证（原先恒 true 是缺陷）。
+                sha256Ok = expected != null,
                 signatureOk = signatureOk,
                 signatureMissing = signatureMissing,
                 warnings = scan.warnings,
-                requiresDoubleConfirm = scan.requiresDoubleConfirm || signatureMissing,
+                requiresDoubleConfirm = scan.requiresDoubleConfirm || signatureMissing || expected == null,
                 isUpdate = installedVersion != null && cmp > 0,
                 isDowngrade = installedVersion != null && cmp < 0,
             ),
@@ -108,7 +111,7 @@ object SourceInstaller {
     ): SourceRecord {
         val sha = SourceSignature.sha256OfScript(script.toUtf8Bytes())
         db.sourceQueries.upsertSource(
-            plan.key, plan.name, plan.version, ContractPolicy.CURRENT_API_VERSION.toLong(),
+            plan.key, plan.name, plan.version, plan.apiVersion.toLong(),
             plan.kinds.joinToString(",", "[", "]"),
             plan.capabilities.joinToString(",", "[", "]"),
             plan.domains.joinToString(",", "[", "]"),
@@ -116,32 +119,13 @@ object SourceInstaller {
         )
         return SourceRecord(
             key = plan.key, name = plan.name, version = plan.version,
-            apiVersion = ContractPolicy.CURRENT_API_VERSION,
+            apiVersion = plan.apiVersion,
             installPath = installPath, sha256 = sha,
             signatureOk = plan.signatureOk, enabled = true,
             settingsJson = settingsJson, updatedAtEpochMs = nowMs,
         )
     }
 
-    /** semver 比较（numeric 主版本；预发布 < 正式；格式已由 ContractPolicy 校验）。 */
-    fun compareSemver(a: String, b: String): Int {
-        fun parts(v: String): Triple<List<Int>, String, Boolean> {
-            val dash = v.indexOf('-')
-            val core = if (dash < 0) v else v.substring(0, dash)
-            val pre = if (dash < 0) "" else v.substring(dash + 1)
-            return Triple(core.split('.').map { it.toIntOrNull() ?: 0 }, pre, dash >= 0)
-        }
-        val (ac, ap, aPre) = parts(a)
-        val (bc, bp, bPre) = parts(b)
-        for (i in 0 until maxOf(ac.size, bc.size)) {
-            val d = (ac.getOrElse(i) { 0 }).compareTo(bc.getOrElse(i) { 0 })
-            if (d != 0) return d
-        }
-        if (aPre != bPre) {
-            if (!aPre && bPre) return 1
-            if (aPre && !bPre) return -1
-            return ap.compareTo(bp)
-        }
-        return 0
-    }
+    /** semver 比较收敛到契约策略（宿主装配层与安装流程共用同一套规则）。 */
+    fun compareSemver(a: String, b: String): Int = ContractPolicy.compareSemver(a, b)
 }

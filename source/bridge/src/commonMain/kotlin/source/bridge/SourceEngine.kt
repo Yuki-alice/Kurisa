@@ -41,3 +41,16 @@ interface SourceCalls {
      */
     suspend fun invoke(path: String, argsJson: String): String
 }
+
+/**
+ * 装配层看到的完整引擎面（[QuickJsEngine] 为默认实现）。
+ * [SourceEngine] 只冻结「双层桥」形状，[SourceCalls] 冻结「类型化主链路」；
+ * 本接口再加「描述符探测 + 设置预热」，使 [SourceRuntime] 可替换引擎做单测。
+ */
+interface SourcePluginEngine : SourceEngine, SourceCalls {
+    /** 只读实例字段的 JSON（不调用任何能力方法、不触发网络）。 */
+    suspend fun describe(): String
+
+    /** 把用户设置写进源私有 KV 的 `setting:` 命名空间，供 `loadSetting` 同步读取。 */
+    fun applySettings(settingsJson: String)
+}
