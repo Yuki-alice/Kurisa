@@ -1,7 +1,8 @@
 # Kurisa 交接文档（换设备开工用）
 
-> 基线：`main` @ `34b8111`（源运行时 bridge 落地），三端全绿
-> （desktop 136 / android-host 124 / iOS-sim 124，零失败）。
+> 基线：`main` @ `21e208a`（全量矩阵引擎修复 + T1 门禁 + ADR-011 重构草稿），工作区干净已同步。
+> 全量三端数沿用 34b8111 实录（desktop 136 / android-host 124 / iOS-sim 124，零失败）；
+> 本轮实测 bridge + contract desktopTest 全绿（含 T1 新断言编译与 SKIP 路径）。
 > 上次验证：2026-11-11 本机；CI 暂无（已投票延后），一切以本地验证为准。
 
 ## 1. 新机器开工（按序）
