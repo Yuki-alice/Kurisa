@@ -1,6 +1,8 @@
 # E2 双运行时路由设计（DRAFT，未评审，实现 ADR 输入）
 
-> 只定路由与分步，不动引擎实现。v4 名字沿 ADR-011 草稿（novelChapter/htmlHelper/cryptoAes），评审可改。
+> 状态：E2a 已落地（纯委托）；E2b-minimal 已落地（strictV4 + KurisaNative工厂）；
+> E2c 路由已开（4 走原生、未知版本 CONTRACT、共存/invalidate 隔离有单测）。
+> v4 名字已锁定（novelChapter/htmlHelper/cryptoAes，ContractPolicy.V4_CAPABILITIES 已同步）。
 > 相关：SourceEngine.kt（SourcePluginEngine/PluginEngineFactory）、SourceRuntimeManager.kt、
 > ADR-011、docs/contract/source-v4.d.ts。
 
@@ -13,11 +15,12 @@
 
 ## 2. 路由设计
 
-- 新增 VersionedPluginEngineFactoryengines：按 spec.apiVersion 选实现。
-- 2/3 走 QuickJsPluginEngineFactory（垫片，冻结，只修崩溃）。
-- 4 走新 KurisaNativeEngine（E2b 骨架，默认 flag 关闭，打开前行为零变）。
-- 未知版本 fail-closed：抛 CONTRACT（未知能力上界不猜），审计留痕。
-- minAppVersion 语义、SUPPORTED 接纳 4 的时机（U5）、日落阈值不变，沿 ADR-011。
+- `VersionedPluginEngineFactory`：按 spec.apiVersion 选实现（4 优先判原生，再走 SUPPORTED 垫片）。
+- 2/3 走 QuickJsPluginEngineFactory（垫片，冻结，只修崩溃；Convert 形状桩保兼容）。
+- 4 走 KurisaNativePluginEngineFactory（E2b-minimal：复用 QuickJsEngine + strictV4；
+  未转正密码学显式 CONTRACT，禁静默桩）。
+- 未知版本 fail-closed：抛 CONTRACT（未知能力上界不猜），审计留痕；Versioned 不触碰 legacy（有单测锁定）。
+- minAppVersion 语义沿 ADR-011；SUPPORTED 已接纳 4（ContractPolicy）；日落阈值待 U5。
 
 ## 3. 接口复用
 
@@ -33,23 +36,35 @@
 
 ## 5. 分步（每步独立可验）
 
-- E2a 工厂缝：Versioned 工厂只做委托（2/3 走旧实现），行为零变，全量矩阵重跑。
-- E2b 新引擎骨架：KurisaNativeEngine 空壳（load/describe 走通，能力返回空），flag 默认关。
-- E2c 路由开：apiVersion=4 进新引擎；未知版本 CONTRACT；双共存测试进 T3。
+- E2a 工厂缝：Versioned 工厂只做委托（2/3 走旧实现），行为零变，全量矩阵重跑。已落地。
+- E2b 原生路由（终态）：KurisaNative 工厂复用 QuickJsEngine + strictV4（U1/U1b 显式 CONTRACT）。
+  说明：依 ADR-003 三端同一份 QuickJS C，不存在第二套 JS 运行时；
+  “原生引擎”即同一引擎 + v4 严格策略（无 second runtime）。
+  无状态调用强化 = 已落地的三件套（per-call init 单测锁定 + KV 唯一状态通道 +
+  v4 禁止 init 挂载），无需也不应另起引擎。
+- E2c 路由开：apiVersion=4 进原生；未知版本 CONTRACT 且不触碰 legacy；
+  双共存 + invalidate 隔离有单测（SourceRuntimeUnitTest）。已落地路由与隔离测试。
 
 ## 6. 测试（T3 输入）
 
-- 双矩阵：老 34 跑垫片（T1 门禁），新 7 跑 v4（T2 fixture + init 计数）。
-- 共存：同 manager 先后装 v3 与 v4 同 key 不同版本，断言各走各的引擎且 invalidate 隔离。
-- 未知版本：apiVersion=99 直接 CONTRACT，不触发脚本求值。
+- 双矩阵：老 34 跑垫片（T1 门禁），新 7 跑 v4（T2 fixture + per-call init 单测）。
+- 共存：同 manager 装 v3 + v4 不同 key，断言各走各的引擎且 invalidate 隔离
+ （SourceRuntimeUnitTest.managerCoexistsV3AndV4AndInvalidatesIndependently）。
+- 未知版本：apiVersion=99 直接 CONTRACT，不触碰 legacy（VersionedEnginesTest）。
+- v4 严格拒绝：AES/RSA/GBK/非 sha256 hmac 在 strictV4 下 CONTRACT（V4HelpersTest）。
 
 ## 7. 验收
 
-- E2a：全量矩阵与此前一致（L1/ API_GAP/MISSING 门禁全绿）。
-- E2b：flag 关时行为零变；开时 v4 模板源可 describe。
-- E2c：共存 + 未知版本 + invalidate 隔离三断言绿。
+- E2a：全量矩阵与此前一致（L1/ API_GAP/MISSING 门禁全绿）。已绿。
+- E2b-minimal：4 经原生工厂可 acquire/describe/主链路调用；strictV4 拒绝未转正密码学。已绿。
+- E2c：共存 + 未知版本 + invalidate 隔离三断言绿。已绿（单测层；
+  全量矩阵已用本地 refs 复跑多轮一致：L1 33/34、API_GAP 0）。
 
 ## 8. 未决
 
-- v4 三个能力位名字（ADR-011 待拍板），影响 helper 全局名，不影响本路由。
-- 新引擎与垫片是否共享 CookieStore 实例（建议共享：同一源升级不断登录态，待安全评审）。
+- U2 分媒体策略（截断可观测已落地：脱敏日志 + MAX_BODY_CHARS + 单测；分媒体阈值待产品输入）。
+- E2b 终态说明见 §5：不存在第二套 JS 运行时（ADR-003），无后续引擎项。
+- AES 已转正（ECB/CBC/CFB/OFB，Base64+PKCS7）；RSA deferred（无三端库）；
+  GBK deferred（无三端 Charset）。strictV4 显式 CONTRACT，垫片保兼容。
+- 新引擎与垫片共享 CookieStore 实例（建议共享：同一源升级不断登录态，待安全评审）。
+- 全量矩阵待 refs 落定重跑；垫片日落阈值待 U5。

@@ -29,7 +29,7 @@ class DomainModelsTest {
 
     @Test
     fun payloadSealed() {
-        val i: ChapterPayload = ChapterPayload.Images(listOf("https://ex.com/1.jpg"))
+        val i: ChapterPayload = ChapterPayload.Images(listOf("https://example.com/1.jpg"))
         val t: ChapterPayload = ChapterPayload.Text("<p>hi</p>", TextFormat.HTML)
         assertTrue(i is ChapterPayload.Images)
         assertTrue(t is ChapterPayload.Text)

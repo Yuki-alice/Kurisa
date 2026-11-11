@@ -75,6 +75,64 @@ class BridgeChapterProviderTest {
     }
 
     @Test
+    fun novelFormatMapping() = runTest {
+        val html = BridgeChapterProvider(
+            FakeCalls(chapter = """{"content":"<p>hi</p>","format":"html"}"""),
+            ContentKind.NOVEL,
+        )
+        assertEquals(
+            core.model.TextFormat.HTML,
+            (html.payload("w", "c") as ChapterPayload.Text).format,
+        )
+        val md = BridgeChapterProvider(
+            FakeCalls(chapter = """{"content":"# t","format":"markdown"}"""),
+            ContentKind.NOVEL,
+        )
+        assertEquals(
+            core.model.TextFormat.MARKDOWN,
+            (md.payload("w", "c") as ChapterPayload.Text).format,
+        )
+        val plain = BridgeChapterProvider(
+            FakeCalls(chapter = """{"text":"body","format":"plain"}"""),
+            ContentKind.NOVEL,
+        )
+        assertEquals(
+            core.model.TextFormat.PLAIN,
+            (plain.payload("w", "c") as ChapterPayload.Text).format,
+        )
+        // 未知格式收敛为 HTML（渲染侧白名单兜底，不静默丢正文）。
+        val unknown = BridgeChapterProvider(
+            FakeCalls(chapter = """{"content":"body","format":"docx"}"""),
+            ContentKind.NOVEL,
+        )
+        assertEquals(
+            core.model.TextFormat.HTML,
+            (unknown.payload("w", "c") as ChapterPayload.Text).format,
+        )
+        // content 优先于 text（真实形状优先，M1 合成例兜底）。
+        val both = BridgeChapterProvider(
+            FakeCalls(chapter = """{"content":"new","text":"old","format":"plain"}"""),
+            ContentKind.NOVEL,
+        )
+        assertEquals("new", (both.payload("w", "c") as ChapterPayload.Text).body)
+    }
+
+    @Test
+    fun videoAudioDeferredExplicitly() = runTest {
+        val video = BridgeChapterProvider(
+            FakeCalls(chapter = """{"images":["u1"]}"""),
+            ContentKind.VIDEO,
+        )
+        val err = assertFailsWith<SourceBridgeException> { video.payload("w", "c") }
+        assertTrue(err.message!!.contains("deferred"), err.message)
+        val audio = BridgeChapterProvider(
+            FakeCalls(chapter = """{"content":"body","format":"plain"}"""),
+            ContentKind.AUDIO,
+        )
+        assertFailsWith<SourceBridgeException> { audio.payload("w", "c") }
+    }
+
+    @Test
     fun missingFieldsThrow() = runTest {
         val noChapters = BridgeChapterProvider(
             FakeCalls(details = """{"title":"W"}"""), ContentKind.MANGA

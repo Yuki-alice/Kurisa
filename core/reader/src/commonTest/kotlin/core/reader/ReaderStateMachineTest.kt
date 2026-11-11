@@ -21,7 +21,7 @@ class FakeChapters(
 
     override suspend fun payload(workId: String, chapterId: String): ChapterPayload {
         if (failPayload) throw IllegalStateException("net")
-        return ChapterPayload.Images(listOf("https://ex.com/1.jpg", "https://ex.com/2.jpg", "https://ex.com/3.jpg"))
+        return ChapterPayload.Images(listOf("https://example.com/1.jpg", "https://example.com/2.jpg", "https://example.com/3.jpg"))
     }
 }
 

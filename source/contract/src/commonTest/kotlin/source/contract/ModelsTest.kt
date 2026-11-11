@@ -11,7 +11,7 @@ class ModelsTest {
     fun workRoundTrip() {
         val w = Work(
             id = "b23c9bb1", title = "お前じゃん", subtitle = "Suzumoto Kou",
-            cover = "https://ex.com/c.jpg", tags = listOf("Romance"),
+            cover = "https://example.com/c.jpg", tags = listOf("Romance"),
             language = "ja", kind = ContentKind.MANGA,
         )
         val raw = ContractJson.json.encodeToString(Work.serializer(), w)
@@ -35,22 +35,25 @@ class ModelsTest {
     fun contentKindParsing() {
         assertEquals(ContentKind.MANGA, ContentKind.of("manga"))
         assertEquals(ContentKind.NOVEL, ContentKind.of(" NOVEL "))
-        assertEquals(null, ContentKind.of("video"))
+        // v4 预留：video/audio 已为合法类型（渲染 deferred，调用侧显式 CONTRACT）。
+        assertEquals(ContentKind.VIDEO, ContentKind.of("video"))
+        assertEquals(ContentKind.AUDIO, ContentKind.of("audio"))
+        assertEquals(null, ContentKind.of("podcast"))
     }
 
     @Test
     fun accountDeclHelpers() {
-        val a = AccountDecl(webviewUrl = "https://x.com/login", cookieFields = listOf("cf_clearance"))
+        val a = AccountDecl(webviewUrl = "https://accounts.example.com/login", cookieFields = listOf("cf_clearance"))
         assertTrue(a.hasWebview && a.hasCookieLogin)
         assertTrue(!AccountDecl().hasWebview)
     }
 
     @Test
     fun metaJsonIgnoresUnknown() {
-        val raw = """{"name":"N","key":"com.ex.n","version":"1.0.0","minAppVersion":"1.0.0",
-            "apiVersion":2,"kind":["novel"],"domains":["ex.com"],"capabilities":[],"futureField":1}"""
+        val raw = """{"name":"N","key":"com.example.n","version":"1.0.0","minAppVersion":"1.0.0",
+            "apiVersion":2,"kind":["novel"],"domains":["example.com"],"capabilities":[],"futureField":1}"""
         val m = ContractJson.decodeMeta(raw)
-        assertEquals("com.ex.n", m.key)
+        assertEquals("com.example.n", m.key)
         assertEquals(setOf(ContentKind.NOVEL), m.kind)
     }
 }

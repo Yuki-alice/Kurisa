@@ -107,7 +107,7 @@ class ReaderViewModelTest {
         saveProgress = SaveReadingProgressUseCase(progress),
         loadProgress = LoadReadingProgressUseCase(progress),
         pages = LoadPageBytesUseCase(images),
-        domains = setOf("ex.com"),
+        domains = setOf("example.com"),
         workScope = saveScope,
     )
 
@@ -181,7 +181,7 @@ class ReaderViewModelTest {
             saveProgress = SaveReadingProgressUseCase(FakeProgress()),
             loadProgress = LoadReadingProgressUseCase(FakeProgress()),
             pages = LoadPageBytesUseCase(images),
-            domains = setOf("ex.com"),
+            domains = setOf("example.com"),
             workScope = backgroundScope,
         )
         val states = mutableListOf<ReaderContract.State>()
@@ -219,7 +219,7 @@ class ReaderViewModelTest {
             saveProgress = SaveReadingProgressUseCase(FakeProgress()),
             loadProgress = LoadReadingProgressUseCase(FakeProgress()),
             pages = LoadPageBytesUseCase(images),
-            domains = setOf("ex.com"),
+            domains = setOf("example.com"),
             workScope = backgroundScope,
         )
         val states = mutableListOf<ReaderContract.State>()

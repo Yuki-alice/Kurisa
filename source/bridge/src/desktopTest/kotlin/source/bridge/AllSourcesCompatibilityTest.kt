@@ -65,6 +65,7 @@ class AllSourcesCompatibilityTest {
         "Convert.hexEncode", "Convert.hmacString", "Convert.hmac",
         "Convert.decryptAesEcb", "Convert.decryptAesCbc", "Convert.decryptAesCfb",
         "Convert.decryptAesOfb", "Convert.decryptRsa",
+        "Html.list", "Html.text", "Html.attr",
         "Utils.createUuid", "Utils.randomInt", "Utils.randomDouble",
         "UI.showMessage", "UI.showDialog", "UI.launchUrl", "UI.showLoading",
         "UI.cancelLoading", "UI.showInputDialog", "UI.showSelectDialog",
@@ -132,9 +133,9 @@ class AllSourcesCompatibilityTest {
         var cursorCount = 0
         val apiUsage = mutableMapOf<String, Int>()
         val globalUsage = mutableMapOf<String, Int>()
-        val apiPattern = Regex("""\b(Network|Convert|UI|Utils)\.([A-Za-z_][A-Za-z0-9_]*)""")
+        val apiPattern = Regex("""\b(Network|Convert|UI|Utils|Html)\.([A-Za-z_][A-Za-z0-9_]*)""")
         val globalPattern = Regex(
-            """\b(fetch|setTimeout|setInterval|createUuid|randomInt|randomDouble|sendMessage|HtmlDocument)\s*\(""",
+            """\b(fetch|setTimeout|setInterval|createUuid|randomInt|randomDouble|sendMessage|HtmlDocument|throwLoginExpired|throwNotFound|throwRateLimited|cleanNovelHtml)\s*\(""",
         )
 
         scripts.forEach { file ->

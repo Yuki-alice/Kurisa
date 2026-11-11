@@ -48,8 +48,9 @@ class SourceRuntime(
     /** 通用能力调用（Venera 形状；path 仅允许标识符点分，由引擎校验）。 */
     suspend fun call(path: String, argsJson: String = "[]"): String = invoke(path, argsJson)
 
-    /** 游标分页（`search.loadNext`）；缺位时抛 CONTRACT，不静默返回空。 */
+    /** 游标分页（`search.loadNext` 或 v4 `search.page`）；缺位时抛 CONTRACT，不静默返回空。 */
     suspend fun searchNext(keyword: String, optionsJson: String, next: String?): String {
+        if (descriptor.hasSearchPage) return invokePage(keyword, optionsJson, next)
         if (!descriptor.hasSearchNext) {
             throw SourcePluginException("源未声明 search.loadNext", SourceErrorKind.CONTRACT)
         }
@@ -64,6 +65,16 @@ class SourceRuntime(
         )
     }
 
+    /**
+     * 调用侧统一分页（v4 DX）：有 next 走游标，无 next 走页码。
+     * 与源侧 `search.page` 自委托互补：源作者愿意可只实现 page，
+     * 调用方愿意可只调 searchPage，宿主按描述符路由，不静默降级。
+     */
+    suspend fun searchPage(keyword: String, optionsJson: String, page: Int? = null, next: String? = null): String {
+        if (next != null) return searchNext(keyword, optionsJson, next)
+        return searchWorks(keyword, optionsJson, page ?: 1)
+    }
+
     /** `comic.onImageLoad` → 归一化配置（危险头剥离、重试有界）。未声明时返回 null。 */
     suspend fun imageLoadConfig(url: String, workId: String, epId: String): ImageLoadConfig? {
         if (!descriptor.hasImageLoad) return null
@@ -73,6 +84,15 @@ class SourceRuntime(
             add(kotlinx.serialization.json.JsonPrimitive(epId))
         }.toString()
         return parseImageConfig(invoke("comic.onImageLoad", args))
+    }
+
+    /** `novel.onImageResolve` → 归一化配置（与图片共用剥离/复核语义）。未声明时返回 null。 */
+    suspend fun novelImageResolve(url: String): ImageLoadConfig? {
+        if (!descriptor.hasNovelImageResolve) return null
+        val args = buildJsonArray {
+            add(kotlinx.serialization.json.JsonPrimitive(url))
+        }.toString()
+        return parseImageConfig(invoke("novel.onImageResolve", args))
     }
 
     /** 源内 i18n；未声明 translation 时返回 key 本身。 */
@@ -88,6 +108,8 @@ class SourceRuntime(
     fun has(capability: SourceCapability): Boolean = descriptor.has(capability)
 
     override suspend fun searchWorks(keyword: String, optionsJson: String, page: Int): String {
+        // v4 统一入口优先：源只实现 page 时，load/loadNext 缺位也不报错。
+        if (descriptor.hasSearchPage) return invokePage(keyword, optionsJson, page)
         if (!descriptor.hasSearchLoad) {
             throw SourcePluginException(
                 if (descriptor.hasSearchNext) {
@@ -99,18 +121,60 @@ class SourceRuntime(
         return withPolicy("search.load") { engine.searchWorks(keyword, optionsJson, page) }
     }
 
+    /** v4 `search.page(keyword, options, pageOrNext)` 统一调用（页码传数字，游标传字符串/null）。 */
+    private suspend fun invokePage(keyword: String, optionsJson: String, pageOrNext: Any?): String {
+        val args = buildJsonArray {
+            add(kotlinx.serialization.json.JsonPrimitive(keyword))
+            add(Json.parseToJsonElement(optionsJson))
+            add(
+                when (pageOrNext) {
+                    is Number -> kotlinx.serialization.json.JsonPrimitive(pageOrNext.toInt())
+                    is String -> kotlinx.serialization.json.JsonPrimitive(pageOrNext)
+                    else -> kotlinx.serialization.json.JsonNull
+                },
+            )
+        }.toString()
+        return invoke("search.page", args)
+    }
+
     override suspend fun defaultSearchOptions(): String =
         withPolicy("search.load") { engine.defaultSearchOptions() }
 
     override suspend fun loadWorkDetails(workId: String, kind: ContentKind): String =
-        withPolicy(if (kind == ContentKind.NOVEL) "novel.loadInfo" else "comic.loadInfo") {
+        withPolicy(pathForDetails(kind)) {
             engine.loadWorkDetails(workId, kind)
         }
 
     override suspend fun loadChapterPayload(workId: String, chapterId: String, kind: ContentKind): String =
-        withPolicy(if (kind == ContentKind.NOVEL) "novel.loadChapter" else "comic.loadEp") {
+        withPolicy(pathForPayload(kind)) {
             engine.loadChapterPayload(workId, chapterId, kind)
         }
+
+    private fun pathForDetails(kind: ContentKind): String = when (kind) {
+        ContentKind.NOVEL -> "novel.loadInfo"
+        ContentKind.MANGA -> "comic.loadInfo"
+        ContentKind.VIDEO -> throw SourcePluginException(
+            "视频源渲染 deferred（ADR-011 D4）：仅类型与能力扩展点已落地",
+            SourceErrorKind.CONTRACT,
+        )
+        ContentKind.AUDIO -> throw SourcePluginException(
+            "音频源渲染 deferred（ADR-011 D4）：仅类型与能力扩展点已落地",
+            SourceErrorKind.CONTRACT,
+        )
+    }
+
+    private fun pathForPayload(kind: ContentKind): String = when (kind) {
+        ContentKind.NOVEL -> "novel.loadChapter"
+        ContentKind.MANGA -> "comic.loadEp"
+        ContentKind.VIDEO -> throw SourcePluginException(
+            "视频源渲染 deferred（ADR-011 D4）：仅类型与能力扩展点已落地",
+            SourceErrorKind.CONTRACT,
+        )
+        ContentKind.AUDIO -> throw SourcePluginException(
+            "音频源渲染 deferred（ADR-011 D4）：仅类型与能力扩展点已落地",
+            SourceErrorKind.CONTRACT,
+        )
+    }
 
     override suspend fun invoke(path: String, argsJson: String): String =
         withPolicy(path) { engine.invoke(path, argsJson) }

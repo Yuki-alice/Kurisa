@@ -44,9 +44,9 @@ class KtorRedirectTest {
             } finally {
                 client.close()
             }
-            val domains = setOf("api.mangadex.org")
+            val domains = setOf("api.example.com")
             val v = UrlPolicy.validateRedirect(
-                "https://api.mangadex.org/a", "https://api.mangadex.org/b", domains
+                "https://api.example.com/a", "https://api.example.com/b", domains
             )
             assertTrue(v.ok)
         } finally {

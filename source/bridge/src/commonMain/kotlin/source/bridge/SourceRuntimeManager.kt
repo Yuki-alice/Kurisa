@@ -63,6 +63,32 @@ class QuickJsPluginEngineFactory(
 }
 
 /**
+ * v4 原生路由最小实现（E2b）：复用 QuickJsEngine 但开 strictV4，
+ * 未转正密码学显式 CONTRACT，垫片行为不变。
+ */
+class KurisaNativePluginEngineFactory(
+    private val cookies: CookieStore,
+    private val dispatchers: SourceDispatchers = DefaultSourceDispatchers(),
+    private val memoryLimitMb: Long = 32,
+    private val evalTimeoutMs: Long = 10_000,
+    private val nowMs: () -> Long = { 0L },
+) : PluginEngineFactory {
+    override fun create(spec: PluginRuntimeSpec, host: HostApi): SourcePluginEngine = QuickJsEngine(
+        sourceKey = spec.key,
+        host = host,
+        cookies = cookies,
+        dispatchers = dispatchers,
+        memoryLimitMb = memoryLimitMb,
+        evalTimeoutMs = evalTimeoutMs,
+        appVersion = spec.appVersion,
+        locale = spec.locale,
+        platform = spec.platform,
+        nowMs = nowMs,
+        strictV4 = true,
+    )
+}
+
+/**
  * 插件运行时装配与 LRU 缓存（架构 4.3 / docs/plugin-engine.md §3）。
  *
  * 同源串行由 [SourceDispatchers] 保证；此处再用 [Mutex] 串行化「装配」本身，

@@ -31,7 +31,17 @@ enum class SourceCapability(val serial: String) {
     FAVORITES("favorites"),
     SETTINGS("settings"),
     TRANSLATION("translation"),
-    IMAGE_LOAD("imageLoad");
+    IMAGE_LOAD("imageLoad"),
+    /** v4 新增：小说双位齐备（loadInfo + loadChapter）才授予，对标 hasSearchLoad/Next。 */
+    NOVEL_CHAPTER("novelChapter"),
+    /** v4 新增：Html.list/text/attr 自动 dispose helper 可用。 */
+    HTML_HELPER("htmlHelper"),
+    /** v4 新增：AES 转正（U1 定案后），转正前宿主显式拒绝。 */
+    CRYPTO_AES("cryptoAes"),
+    /** v4 预留：视频源（渲染 deferred，见 ADR-011 D4；仅类型与能力扩展点）。 */
+    VIDEO("video"),
+    /** v4 预留：音频源（渲染 deferred，见 ADR-011 D4；仅类型与能力扩展点）。 */
+    AUDIO("audio");
 
     companion object {
         fun of(raw: String): SourceCapability? =
@@ -112,6 +122,46 @@ data class ImageLoadConfig(
     }
 }
 
+/** v4 预留流类型（U6 冻结；未知值由调用方按 CONTRACT 拒绝，保持前向收敛）。 */
+@Serializable
+enum class StreamType(val serial: String) {
+    HLS("hls"),
+    MP4("mp4"),
+    DASH("dash");
+
+    companion object {
+        fun of(raw: String): StreamType? =
+            entries.firstOrNull { it.serial == raw.trim().lowercase() }
+    }
+}
+
+@Serializable
+data class StreamSubtitle(
+    val language: String? = null,
+    val title: String = "",
+    val url: String = "",
+)
+
+/**
+ * v4 预留：流媒体播放描述（U6 字段冻结；渲染 deferred，见 ADR-011 D4）。
+ * 仅类型与归一化语义先行，不接播放器、不触发播放依赖（T4 编译门）。
+ * 未知 streamType 在解析侧显式拒绝，不静默降级。
+ */
+@Serializable
+data class StreamPlayback(
+    val url: String = "",
+    val streamType: StreamType = StreamType.HLS,
+    val headers: Map<String, String> = emptyMap(),
+    val subtitles: List<StreamSubtitle> = emptyList(),
+    val quality: String? = null,
+) {
+    /** 与 [ImageLoadConfig] 同一危险头集合：UA / Cookie 由宿主统一注入，源不得覆盖。 */
+    fun sanitized(): StreamPlayback {
+        val forbidden = setOf("cookie", "user-agent", "host", "content-length", "proxy-authorization")
+        return copy(headers = headers.filterKeys { it.lowercase() !in forbidden })
+    }
+}
+
 /**
  * 源运行期描述符。函数字段一律化为存在位，序列化体里不含函数对象。
  * [capabilities] 已与应用版本上界、头块声明求交，宿主只按此集合放行调用。
@@ -133,6 +183,13 @@ data class SourceDescriptor(
     /** Venera 双分页模型：源可能只有 loadNext 而没有 load。 */
     val hasSearchLoad: Boolean = true,
     val hasSearchNext: Boolean = false,
+    /** v4 统一分页入口（源可只实现 page；宿主有 page 时优先调用）。 */
+    val hasSearchPage: Boolean = false,
+    /** v4 小说双位：缺一半的实现 ADR-011 要求报 CONTRACT（对标 hasSearchLoad/Next）。 */
+    val hasNovelLoadInfo: Boolean = false,
+    val hasNovelLoadChapter: Boolean = false,
+    /** 文内图解析存在位（novel.onImageResolve）；缺位时宿主不调用。 */
+    val hasNovelImageResolve: Boolean = false,
     val hasExplore: Boolean = false,
     val hasCategory: Boolean = false,
     val hasAccount: Boolean = false,
@@ -197,6 +254,10 @@ data class SourceDescriptor(
                 if (bool("hasCategory")) add(SourceCapability.CATEGORY)
                 if (bool("hasComic")) add(SourceCapability.COMIC)
                 if (bool("hasNovel")) add(SourceCapability.NOVEL)
+                if (bool("hasNovelLoadInfo") && bool("hasNovelLoadChapter")) {
+                    add(SourceCapability.NOVEL)
+                    add(SourceCapability.NOVEL_CHAPTER)
+                }
                 if (bool("hasImageLoad")) add(SourceCapability.IMAGE_LOAD)
                 if (bool("hasAccount")) add(SourceCapability.ACCOUNT)
                 if (bool("hasFavorites")) add(SourceCapability.FAVORITES)
@@ -221,6 +282,10 @@ data class SourceDescriptor(
                 // 旧版 describe() 输出没有该字段，缺省视为有 load（向后兼容）。
                 hasSearchLoad = o["hasSearchLoad"]?.jsonPrimitive?.booleanOrNull ?: true,
                 hasSearchNext = bool("hasSearchNext"),
+                hasSearchPage = bool("hasSearchPage"),
+                hasNovelLoadInfo = bool("hasNovelLoadInfo"),
+                hasNovelLoadChapter = bool("hasNovelLoadChapter"),
+                hasNovelImageResolve = bool("hasNovelImageResolve"),
                 hasExplore = bool("hasExplore"),
                 hasCategory = bool("hasCategory"),
                 hasAccount = bool("hasAccount"),

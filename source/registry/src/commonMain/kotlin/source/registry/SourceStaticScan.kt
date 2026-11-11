@@ -24,6 +24,28 @@ object SourceStaticScan {
             warnings += "含动态 eval/Function 构造"
             confirm = true
         }
+        // 模块/平台逃逸：宿主 ModuleLoader 全拒 import、无 CJS 加载器、无 Deno/Node/Java 桥。
+        // 扫描只提示 + 二次确认（架构约束：真正边界在运行时强制），避免误杀注释/字符串。
+        if (Regex("""(?m)^\s*import[\s('"]""").containsMatchIn(script)) {
+            warnings += "含 ESM import（宿主拒绝一切模块导入，见 C1）"
+            confirm = true
+        }
+        if (Regex("""\brequire\s*\(""").containsMatchIn(script)) {
+            warnings += "含 CommonJS require（无 CJS 加载器）"
+            confirm = true
+        }
+        if (Regex("""\bDeno\s*\.""").containsMatchIn(script)) {
+            warnings += "含 Deno 全局对象（宿主未注入）"
+            confirm = true
+        }
+        if (Regex("""\bprocess\s*\.\s*env\b""").containsMatchIn(script)) {
+            warnings += "含 Node process.env（宿主未注入）"
+            confirm = true
+        }
+        if (Regex("""\bJava\s*\.\s*type\b""").containsMatchIn(script)) {
+            warnings += "含 Java.type 桥接（宿主无 Java 反射）"
+            confirm = true
+        }
         if (Regex("""while\s*\(\s*true\s*\)""").containsMatchIn(script)) {
             warnings += "含 while(true) 模式（运行时有 10s 中断保护）"
             confirm = true

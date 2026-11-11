@@ -81,6 +81,30 @@ class CryptoTest {
     }
 
     @Test
+    fun aesEcbCbcRoundTrip() {
+        // U1 转正：Base64 进出 + PKCS7；向量由 korlibs 加密端现场生成，三端同一实现互验。
+        val key = Base64Codec.encode("0123456789abcdef".toUtf8BytesCompat())
+        val iv = Base64Codec.encode("abcdef0123456789".toUtf8BytesCompat())
+        val plain = "第一章 正文 hello"
+        val plainBytes = plain.toUtf8BytesCompat()
+        val keyBytes = Base64Codec.decode(key)!!
+        val ivBytes = Base64Codec.decode(iv)!!
+        val pad = korlibs.crypto.CipherPadding.PKCS7Padding
+        val ecbCipher = Base64Codec.encode(
+            korlibs.crypto.AES.encryptAesEcb(plainBytes, keyBytes, pad),
+        )
+        assertEquals(plain, AesCrypto.decryptEcb(ecbCipher, key))
+        val cbcCipher = Base64Codec.encode(
+            korlibs.crypto.AES.encryptAesCbc(plainBytes, keyBytes, ivBytes, pad),
+        )
+        assertEquals(plain, AesCrypto.decryptCbc(cbcCipher, key, iv))
+        // 非法输入一律 null（垫片回空串，strictV4 抛 CONTRACT）。
+        assertEquals(null, AesCrypto.decryptEcb("!!!", key))
+        assertEquals(null, AesCrypto.decryptEcb(ecbCipher, Base64Codec.encode("short".toUtf8BytesCompat())))
+        assertEquals(null, AesCrypto.decryptCbc(cbcCipher, key, Base64Codec.encode("short".toUtf8BytesCompat())))
+    }
+
+    @Test
     fun novelStrip() {
         val n = NovelHost()
         assertEquals(

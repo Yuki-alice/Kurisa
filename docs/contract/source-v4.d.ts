@@ -1,10 +1,15 @@
 /**
- * Kurisa 原生扩展 v4 · 类型骨架（DRAFT，未实现）。
+ * Kurisa 原生扩展 v4 · 类型增量（E1/E2a 已落地，U1/U1b 待定）。
  *
  * - 定位：ADR-011 的类型部分；只增补，不改 source.d.ts v2/v3 任一冻结语义。
  * - 用法：import type 复用 v2 基类，本文件只声明 v4 增量。
- * - 约束：凡标 TODO(ADR-011) 的均为类型先行、运行时未实现；
- *   引擎（describe/Runtime/Convert/Html）零改动，Kotlin 侧接线在实现 ADR。
+ * - 已实现：能力位（novelChapter/htmlHelper/cryptoAes/video/audio，ContractPolicy.V4_CAPABILITIES）、
+ *   描述符小说双位（describe 探测 + fromJson 解析）、Html.list/text/attr、
+ *   throwLoginExpired/throwNotFound/throwRateLimited、cleanNovelHtml、
+ *   Novel format 透出（BridgeChapterProvider 映射 TextFormat）、AES-ECB/CBC/CFB/OFB、
+ *   视频/音频类型与能力扩展点（渲染 deferred，见 D4）。
+ * - 未实现：RSA/GBK 转正（U1/U1b，strictV4 下显式 CONTRACT 拒绝，垫片仍回空串保兼容）；
+ *   Stream 载荷与播放器接线（R 渲染，deferred）。
  * - 版本：源头 @apiVersion 4 + @capabilities 新位 opt-in；老源不受影响。
  */
 
@@ -22,18 +27,25 @@ import type {
 /** v4 声明：源作者在头块写 @apiVersion 4，即表示使用本文件扩展集。 */
 export type ApiVersion4 = 4;
 
-/** v4 新增能力位（名字待 ADR 评审锁定，宿主门禁在实现 ADR 接线）。 */
-// TODO(ADR-011): 评审锁定三位名字后同步 index-schema 与 ContractPolicy。
+/**
+ * v4 内容类型扩展（source.d.ts 冻结 manga|novel 不动，此处增补 video|audio）。
+ * 宿主解析已支持（ContentKind.of）；仓库索引暂不接纳视频/音频（fail-closed）；
+ * 运行时调用侧显式 CONTRACT（渲染 deferred，见 ADR-011 D4）。
+ */
+export type ContentKindV4 = ContentKind | 'video' | 'audio';
+
+/** v4 新增能力位（已锁定，ContractPolicy.V4_CAPABILITIES 与 index-schema 已同步）。 */
 export type SourceCapabilityV4 =
   | SourceCapability
   | 'novelChapter'
   | 'htmlHelper'
-  | 'cryptoAes';
+  | 'cryptoAes'
+  | 'video'
+  | 'audio';
 
 /** v4 描述符增量：只加存在位，不加函数对象（沿 describe 只读字段原则）。 */
 export interface SourceDescriptorV4 extends SourceDescriptor {
-  /** 小说双位：缺一半的实现 ADR 要求报 CONTRACT（对标 hasSearchLoad/Next）。 */
-  // TODO(ADR-011): 引擎 describe() 未实现，先锁类型。
+  /** 小说双位：缺一半的实现 ADR-011 要求报 CONTRACT（对标 hasSearchLoad/Next）。 */
   hasNovelLoadInfo: boolean;
   hasNovelLoadChapter: boolean;
 }
@@ -43,13 +55,10 @@ export interface SourceDescriptorV4 extends SourceDescriptor {
 /** Html 三 helper（自动 dispose；M1 disposed 语义不变）。 */
 export interface HtmlHelpers {
   /** 取列表并映射，内部 new HtmlDocument、query、dispose。 */
-  // TODO(ADR-011): 未实现。
   list<T>(html: string, css: string, map: (el: HtmlElementV4, index: number) => T): T[];
   /** 取首个元素文本，缺省空串。 */
-  // TODO(ADR-011): 未实现。
   text(html: string, css: string): string;
   /** 取首个元素属性，缺省 null。 */
-  // TODO(ADR-011): 未实现。
   attr(html: string, css: string, name: string): string | null;
 }
 
@@ -58,9 +67,11 @@ export type HtmlElementV4 = import('./source').HtmlElement;
 
 export declare const Html: HtmlHelpers;
 
-/** 统一分页：源只调一个入口，宿主侧路由 search.load / search.loadNext。 */
+/**
+ * 统一分页：v4 源可只实现 page（页码传数字，游标传字符串/null），宿主有 page 时优先调用；
+ * 源内也可委托 load/loadNext。缺 load/loadNext 时宿主不再报错，改走 page。
+ */
 export interface SearchNamespaceV4 extends SearchNamespace {
-  // TODO(ADR-011): 未实现；语义 = hasSearchLoad ? load : loadNext。
   page?(keyword: string, options: string[], pageOrNext: number | string | null): Promise<import('./source').SearchPage>;
 }
 
@@ -71,7 +82,7 @@ export declare function throwRateLimited(message?: string): never;
 
 // ---------- B. 小说一等公民 ----------
 
-/** v4 小说章节：format 必透出（B：Bridge 现丢 format，v4 类型先锁）。 */
+/** v4 小说章节：format 必透出（Bridge 已映射为 TextFormat.HTML/MARKDOWN/PLAIN）。 */
 export interface NovelChapterV4 {
   text?: string;
   content?: string;
@@ -84,48 +95,72 @@ export interface NovelCleanOptions {
   keepImages?: boolean;
 }
 
-/** 正文清洗入口（NovelHost.stripHtml 的 v4 形态）。 */
-// TODO(ADR-011): 未实现；正则实现已在 NovelHost，v4 只定签名。
+/** 正文清洗入口（NovelHost.stripHtml 的 v4 形态，已接 __host.novel.clean）。 */
 export declare function cleanNovelHtml(html: string, options?: NovelCleanOptions): string;
 
-/** 文内图片解析（v2 有声明、Kotlin 零实现；v4 补存在位与签名）。 */
+/** 文内图片解析（通用 invoke("novel.onImageResolve") 可调，便利方法待 E3）。 */
 export interface NovelNamespaceV4 {
   loadInfo(id: string): Promise<WorkDetails>;
   loadChapter(workId: string, chapterId: string): Promise<NovelChapterV4>;
-  // TODO(ADR-011): 未实现。
   onImageResolve?(url: string): { url: string; headers?: Record<string, string> } | Promise<{ url: string; headers?: Record<string, string> }>;
 }
 
 // ---------- C. 密码学（转正或明拒，禁回空串） ----------
 
 export interface ConvertV4 {
-  /** GBK：转正（korlibs-encoding 同族，M0 已验）。 */
-  // TODO(ADR-011): 未实现。
+  /**
+   * GBK：终策 deferred（korlibs-encoding 6.0.0 经核验仅 ASCII/Base64/Hex，无 GBK；
+   * 自带码表/平台注入二选一待架构评审）。strictV4 显式 CONTRACT 拒绝；
+   * 垫片（2/3）为保 34 源兼容仍回输入本身，不伪造转码。
+   */
   encodeGbk(s: string): string;
-  // TODO(ADR-011): 未实现。
   decodeGbk(s: string): string;
-  /** SHA-1/512：纯算法转正。 */
-  // TODO(ADR-011): 未实现。
+  /** SHA-1/512：已转正（korlibs-crypto，RFC/FIPS 向量锁定）。 */
   sha1(s: string): string;
-  // TODO(ADR-011): 未实现。
+  /** SHA-1/512：已转正（korlibs-crypto，RFC/FIPS 向量锁定）。 */
   sha512(s: string): string;
   /**
-   * AES/RSA：二选一（korlibs-crypto 转正，或显式 CONTRACT 拒绝）。
-   * 在实现 ADR 定案前，类型保留、行为未定义——禁止按回空串理解。
+   * AES：已转正（korlibs-crypto，Base64 进出 + PKCS7）。
+   * key 16/24/32 字节，iv 16 字节（CBC/CFB/OFB；ECB 忽略）；
+   * 失败垫片回空串，strictV4 抛 CONTRACT。
    */
-  // TODO(ADR-011): 未定（U1），未实现。
   decryptAesEcb(value: string, key: string): string;
-  // TODO(ADR-011): 未定（U1），未实现。
   decryptAesCbc(value: string, key: string, iv: string): string;
-  // TODO(ADR-011): 未定（U1），未实现。
+  decryptAesCfb(value: string, key: string, iv: string): string;
+  decryptAesOfb(value: string, key: string, iv: string): string;
+  /**
+   * RSA：终策 deferred（korlibs-crypto 6.0.0 经 jar 核验无 RSA 实现）。
+   * strictV4 显式 CONTRACT 拒绝，垫片回空串保兼容。
+   */
   decryptRsa(value: string, key: string): string;
+}
+
+// ---------- D. 流媒体预留（U6 字段冻结；渲染 deferred，见 ADR-011 D4） ----------
+
+/** 与 Kotlin `StreamType` 同名同值；未知值宿主按 CONTRACT 拒绝。 */
+export type StreamTypeV4 = 'hls' | 'mp4' | 'dash';
+
+export interface StreamSubtitleV4 {
+  language?: string;
+  title: string;
+  url: string;
+}
+
+/** 仅类型与归一化语义先行（危险头剥离同 ImageLoadConfig），不接播放器。 */
+export interface StreamPlaybackV4 {
+  url: string;
+  streamType: StreamTypeV4;
+  headers?: Record<string, string>;
+  subtitles?: StreamSubtitleV4[];
+  quality?: string | null;
 }
 
 // ---------- v4 源基类增量（无状态约束） ----------
 
 /**
  * v4 源：禁止在 init 挂载实例方法/域名配置；所有状态走 loadData/saveData。
- * 同 runtime 缓存期内 init 只跑一次（实现侧 U3），跨 invalidate 才重跑。
+ * init 语义（U3 已决议）：单发每次求值重建全新 context，`init` 在本次上下文重跑；
+ * v4 `init` 须无网络副作用（仅 KV 预热），跨调用状态一律经 loadData/saveData 落盘。
  */
 export declare class KurisaSource extends ComicSource {
   apiVersion: ApiVersion4;

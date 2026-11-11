@@ -45,7 +45,7 @@
 | L2 搜索 | OK **15**、API_GAP **0**、FIXTURE 18、SKIP 1 |
 | L3 静态 API 缺口 | **0**（`MISSING` 为空） |
 | 游标分页源 | 1（只有 `search.loadNext`，宿主自动改走 `searchNext()`） |
-| MockEngine 请求 | 60 次，全部命中白名单出口 |
+| MockEngine 请求 | 61 次，全部命中白名单出口 |
 
 L2 完全跑通的代表：包子漫画、GoDa、H-Comic、爱看漫、jcomic、Komga、MangaDex、
 漫画柜、漫画人、18漫画、漫小肆、MYCOMIC、nhentai、少年ジャンプ＋、优酷漫画。
@@ -84,8 +84,11 @@ HMAC 另有 RFC 4231 向量单测（`CryptoTest`），三端可跑。
 
 ## 6. 已知边界
 
-- `Convert.sha1/sha512` 已转正（korlibs-crypto 三端一致，RFC/FIPS 向量锁定）；`AES/RSA/GBK` 与 `UI` 弹窗外链仍是**形状兼容桩**，不提供真实密码学
-  或 UI 能力；依赖它们的源在离线 fixture 下仍可能报错（如 CCC 追漫台的章节解密）。
+- `Convert.sha1/sha512` 已转正（korlibs-crypto 三端一致，RFC/FIPS 向量锁定）；
+  `AES-ECB/CBC/CFB/OFB` 已转正（Base64 进出 + PKCS7，失败垫片回空串，strictV4 抛 CONTRACT）；
+  `RSA/GBK` 与 `UI` 弹窗外链仍是**形状兼容桩**（RSA 垫片回空串、GBK 垫片回输入本身；
+  strictV4 均抛 CONTRACT），不提供真实密码学或 UI 能力；
+  依赖它们的源在离线 fixture 下仍可能报错（如 CCC 追漫台的章节解密）。
 - 单份通用 fixture 无法同时满足所有站点的响应结构，L2 的 `FIXTURE` 不等于产品缺陷。
 - `Network.put/delete/patch` 当前安全出口只开放 GET/POST，返回明确 status 0。
 - iOS 测试任务需 macOS；本次矩阵在 desktopTest 执行，commonMain 改动已由

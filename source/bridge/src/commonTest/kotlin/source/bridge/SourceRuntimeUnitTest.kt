@@ -259,6 +259,49 @@ class SourceRuntimeUnitTest {
         manager.close()
     }
 
+    @Test
+    fun managerCoexistsV3AndV4AndInvalidatesIndependently() = runTest {
+        val created = mutableListOf<FakeEngine>()
+        val engines = VersionedPluginEngineFactory(
+            legacy = object : PluginEngineFactory {
+                override fun create(spec: PluginRuntimeSpec, host: HostApi): SourcePluginEngine =
+                    FakeEngine(describeJson = """{"key":"k","name":"L"}""").also { created += it }
+            },
+            native = object : PluginEngineFactory {
+                override fun create(spec: PluginRuntimeSpec, host: HostApi): SourcePluginEngine =
+                    FakeEngine(describeJson = """{"key":"k","name":"N"}""").also { created += it }
+            },
+        )
+        val manager = SourceRuntimeManager(
+            engines = engines,
+            hosts = PluginHostProvider { StubHost() },
+        )
+        val v3 = PluginRuntimeSpec(
+            key = "com.example.old",
+            script = "class T extends ComicSource {}",
+            domains = setOf("old.example.com"),
+            apiVersion = 3,
+            appVersion = "1.0.0",
+        )
+        val v4 = PluginRuntimeSpec(
+            key = "com.example.new",
+            script = "class T extends ComicSource {}",
+            domains = setOf("new.example.com"),
+            apiVersion = 4,
+            appVersion = "1.0.0",
+        )
+        manager.acquire(v3)
+        manager.acquire(v4)
+        assertEquals(setOf("com.example.old", "com.example.new"), manager.cachedKeys().toSet())
+        // 淘汰 v3 不影响 v4；同一 manager 可共存两种运行时。
+        manager.invalidate("com.example.old")
+        assertEquals(listOf("com.example.new"), manager.cachedKeys())
+        assertTrue(created[0].closed)
+        assertTrue(!created[1].closed)
+        manager.close()
+        assertTrue(created[1].closed)
+    }
+
     /** 装配层 fake HostApi：本测试只驱动引擎接口，不触碰网络/存储实现。 */
     private class StubHost : HostApi {
         override val network = object : HostNetwork {

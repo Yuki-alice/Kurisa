@@ -22,7 +22,6 @@ class VersionedPluginEngineFactory(
     private val native: PluginEngineFactory? = null,
 ) : PluginEngineFactory {
     override fun create(spec: PluginRuntimeSpec, host: HostApi): SourcePluginEngine {
-        if (spec.apiVersion in ContractPolicy.SUPPORTED_API_VERSIONS) return legacy.create(spec, host)
         if (spec.apiVersion == NATIVE_API_VERSION) {
             return native?.create(spec, host)
                 ?: throw SourcePluginException(
@@ -30,6 +29,7 @@ class VersionedPluginEngineFactory(
                     SourceErrorKind.CONTRACT,
                 )
         }
+        if (spec.apiVersion in ContractPolicy.SUPPORTED_API_VERSIONS) return legacy.create(spec, host)
         throw SourcePluginException(
             "不支持的 apiVersion=${spec.apiVersion}（垫片仅支持 ${ContractPolicy.SUPPORTED_API_VERSIONS.sorted()}）",
             SourceErrorKind.CONTRACT,

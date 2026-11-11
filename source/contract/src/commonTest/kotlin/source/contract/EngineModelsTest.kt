@@ -57,6 +57,28 @@ class EngineModelsTest {
     }
 
     @Test
+    fun streamPlaybackFrozenAndSanitized() {
+        // U6 字段冻结：序列化往返稳定，危险头与 ImageLoadConfig 同口径剥离。
+        val s = StreamPlayback(
+            url = "https://cdn.example.com/v.m3u8",
+            streamType = StreamType.HLS,
+            headers = mapOf("Cookie" to "s=1", "Referer" to "https://cdn.example.com/"),
+            subtitles = listOf(StreamSubtitle("zh", "中文", "https://cdn.example.com/z.srt")),
+            quality = "1080p",
+        )
+        val raw = ContractJson.json.encodeToString(StreamPlayback.serializer(), s)
+        val back: StreamPlayback = ContractJson.json.decodeFromString(raw)
+        assertEquals(s, back)
+        val clean = s.sanitized()
+        assertTrue(clean.headers.keys.none { it.equals("cookie", true) })
+        assertEquals("https://cdn.example.com/", clean.headers["Referer"])
+        assertEquals(1, clean.subtitles.size)
+        // 未知流类型显式未知（调用方按 CONTRACT 拒绝，不静默降级）。
+        assertNull(StreamType.of("rtmp"))
+        assertEquals(StreamType.MP4, StreamType.of(" MP4 "))
+    }
+
+    @Test
     fun descriptorHonoursHeaderDeclarationAndVersion() {
         // 头块只声明 search + imageLoad：脚本探测出的 settings/explore 被收窄。
         val d = SourceDescriptor.fromJson(

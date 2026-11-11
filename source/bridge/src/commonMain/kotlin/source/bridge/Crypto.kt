@@ -197,3 +197,50 @@ internal object HmacSha256 {
         else -> 0
     }
 }
+
+/**
+ * AES 解密（v4 U1 转正；korlibs-crypto 三端一致）。
+ *
+ * 约定（文档见 source-v4.d.ts `ConvertV4`）：
+ * - 输入 value/key/iv 均为 Base64（与 `encodeBase64` 同一表；Venera 侧 ArrayBuffer 经 Base64 过桥）；
+ * - key 长度 16/24/32 字节（AES-128/192/256），iv 16 字节（CBC/CFB/OFB；ECB 忽略）；
+ * - 分组填充 PKCS7（Web 站点最常见；与 korlibs `CipherPadding.PKCS7Padding` 一致）；
+ * - 输出为 UTF-8 字符串；任何失败（非法 Base64/长度/填充/异常）返回 null，
+ *   由调用方按模式处理：垫片回空串保兼容，strictV4 抛 CONTRACT（禁静默伪造）。
+ */
+internal object AesCrypto {
+    fun decryptEcb(valueB64: String, keyB64: String): String? = runCatching {
+        val data = Base64Codec.decode(valueB64) ?: return null
+        val key = Base64Codec.decode(keyB64) ?: return null
+        if (key.size !in setOf(16, 24, 32) || data.isEmpty() || data.size % 16 != 0) return null
+        val plain = korlibs.crypto.AES.decryptAesEcb(data, key, korlibs.crypto.CipherPadding.PKCS7Padding)
+        plain.decodeToString()
+    }.getOrNull()
+
+    fun decryptCbc(valueB64: String, keyB64: String, ivB64: String): String? = runCatching {
+        val data = Base64Codec.decode(valueB64) ?: return null
+        val key = Base64Codec.decode(keyB64) ?: return null
+        val iv = Base64Codec.decode(ivB64) ?: return null
+        if (key.size !in setOf(16, 24, 32) || iv.size != 16 || data.isEmpty() || data.size % 16 != 0) return null
+        val plain = korlibs.crypto.AES.decryptAesCbc(data, key, iv, korlibs.crypto.CipherPadding.PKCS7Padding)
+        plain.decodeToString()
+    }.getOrNull()
+
+    fun decryptCfb(valueB64: String, keyB64: String, ivB64: String): String? = runCatching {
+        val data = Base64Codec.decode(valueB64) ?: return null
+        val key = Base64Codec.decode(keyB64) ?: return null
+        val iv = Base64Codec.decode(ivB64) ?: return null
+        if (key.size !in setOf(16, 24, 32) || iv.size != 16 || data.isEmpty()) return null
+        val plain = korlibs.crypto.AES.decryptAesCfb(data, key, iv, korlibs.crypto.CipherPadding.PKCS7Padding)
+        plain.decodeToString()
+    }.getOrNull()
+
+    fun decryptOfb(valueB64: String, keyB64: String, ivB64: String): String? = runCatching {
+        val data = Base64Codec.decode(valueB64) ?: return null
+        val key = Base64Codec.decode(keyB64) ?: return null
+        val iv = Base64Codec.decode(ivB64) ?: return null
+        if (key.size !in setOf(16, 24, 32) || iv.size != 16 || data.isEmpty()) return null
+        val plain = korlibs.crypto.AES.decryptAesOfb(data, key, iv, korlibs.crypto.CipherPadding.PKCS7Padding)
+        plain.decodeToString()
+    }.getOrNull()
+}

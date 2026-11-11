@@ -69,7 +69,7 @@ class MigrationAndOfflineTest {
             val db = ReaderDatabase(driver)
             ReaderDatabase.Schema.create(driver)
             db.sourceQueries.upsertSource(
-                "com.example.n", "N", "1.0.0", 2L, "[\"manga\"]", "[]", "[\"ex.com\"]",
+                "com.example.n", "N", "1.0.0", 2L, "[\"manga\"]", "[]", "[\"example.com\"]",
                 "", "b".repeat(64), 1L, 1L, "{\"theme\":\"dark\"}", 1_760_000_000_000L,
             )
             // 逐条执行回滚脚本

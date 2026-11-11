@@ -10,8 +10,8 @@ package source.contract
  */
 object ContractPolicy {
     const val CURRENT_API_VERSION = 2
-    const val LATEST_CAPABILITY_VERSION = 3
-    val SUPPORTED_API_VERSIONS = setOf(2, 3)
+    const val LATEST_CAPABILITY_VERSION = 4
+    val SUPPORTED_API_VERSIONS = setOf(2, 3, 4)
 
     private val KEY_RE = Regex("""^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$""")
     private val SEMVER_RE = Regex("""^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$""")
@@ -30,8 +30,18 @@ object ContractPolicy {
         SourceCapability.IMAGE_LOAD, SourceCapability.FAVORITES,
     )
 
+    /** v4 新增能力（novelChapter / htmlHelper / cryptoAes / video / audio，opt-in，不影响 v2/v3 冻结语义）。 */
+    val V4_CAPABILITIES: Set<SourceCapability> = V3_CAPABILITIES + setOf(
+        SourceCapability.NOVEL_CHAPTER, SourceCapability.HTML_HELPER, SourceCapability.CRYPTO_AES,
+        SourceCapability.VIDEO, SourceCapability.AUDIO,
+    )
+
     fun capabilitiesFor(apiVersion: Int): Set<SourceCapability> =
-        if (apiVersion >= LATEST_CAPABILITY_VERSION) V3_CAPABILITIES else V2_CAPABILITIES
+        when {
+            apiVersion >= LATEST_CAPABILITY_VERSION -> V4_CAPABILITIES
+            apiVersion >= 3 -> V3_CAPABILITIES
+            else -> V2_CAPABILITIES
+        }
 
     /**
      * 运行时有效能力 = 探测结果 ∩ 版本上界 ∩ 头块声明（头块为空时不额外收窄）。
@@ -53,6 +63,8 @@ object ContractPolicy {
         "category", "categoryComics" -> SourceCapability.CATEGORY
         "comic" -> SourceCapability.COMIC
         "novel" -> SourceCapability.NOVEL
+        "video" -> SourceCapability.VIDEO
+        "audio" -> SourceCapability.AUDIO
         "account" -> SourceCapability.ACCOUNT
         "favorites" -> SourceCapability.FAVORITES
         "settings" -> SourceCapability.SETTINGS

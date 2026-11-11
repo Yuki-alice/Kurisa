@@ -62,6 +62,13 @@ class QuickJsEngine(
     private val locale: String = "zh_CN",
     private val platform: String = "common",
     private val nowMs: () -> Long = { 0L },
+    /**
+     * v4 严格模式（E2b 最小原生语义）：RSA/GBK 与非 sha256 的 hmac
+     * 显式抛 CONTRACT 而不是回空串/回输入（禁静默桩，见 ADR-011 U1/U1b）；
+     * AES-ECB/CBC/CFB/OFB 已转正，失败时（非法输入/填充错误）同样 CONTRACT。
+     * 垫片（2/3）保持 false 保 34 源兼容；apiVersion=4 原生路由必须传 true。
+     */
+    private val strictV4: Boolean = false,
 ) : SourcePluginEngine {
 
     private var loadedScript: String? = null
@@ -102,6 +109,7 @@ class QuickJsEngine(
         "cookie" -> handleCookie(payload)
         "utils" -> handleUtils(payload)
         "ui" -> handleUi(payload)
+        "novel" -> handleNovel(payload)
         else -> throw SourceBridgeException("未知同步方法：$method")
     }
 
@@ -210,6 +218,7 @@ class QuickJsEngine(
                             function("cookie") { payload: String -> handleCookie(payload) }
                             function("utils") { payload: String -> handleUtils(payload) }
                             function("ui") { payload: String -> handleUi(payload) }
+                            function("novel") { payload: String -> handleNovel(payload) }
                             function("log") { msg: String ->
                                 host.utils.log(msg)
                                 msg.length
@@ -350,7 +359,22 @@ class QuickJsEngine(
         val op = o["op"]?.jsonPrimitive?.contentOrNull ?: return ""
         val input = o["value"]?.jsonPrimitive?.contentOrNull.orEmpty()
         val key = o["key"]?.jsonPrimitive?.contentOrNull.orEmpty()
+        val iv = o["iv"]?.jsonPrimitive?.contentOrNull.orEmpty()
         val hash = o["hash"]?.jsonPrimitive?.contentOrNull.orEmpty()
+        // v4 严格模式：未转正能力显式 CONTRACT，禁静默桩（ADR-011 U1/U1b）。
+        // AES-ECB/CBC/CFB/OFB 已转正（Base64+PKCS7，见 AesCrypto），失败同样 CONTRACT。
+        if (strictV4) {
+            when (op) {
+                "encodeGbk", "decodeGbk" ->
+                    throw SourceBridgeException("契约未开放：GBK（U1b）请避开或等转正公告")
+                "decryptRsa" ->
+                    throw SourceBridgeException("契约未定案：RSA（U1）请避开或等转正公告")
+                "hmacString", "hmac" ->
+                    if (!(hash.isBlank() || hash.lowercase() == "sha256")) {
+                        throw SourceBridgeException("契约仅支持：hmac sha256（U1），当前 hash=$hash")
+                    }
+            }
+        }
         return when (op) {
             "md5" -> host.convert.md5(input)
             "sha256" -> host.convert.sha256(input)
@@ -367,11 +391,21 @@ class QuickJsEngine(
                 if (hash.isBlank() || hash.lowercase() == "sha256") {
                     HmacSha256.hex(key.toUtf8Bytes(), input.toUtf8Bytes())
                 } else ""
-            // AES/RSA/GBK 属未开放能力：给形状桩（空串），
+            "decryptAesEcb" -> aesResult(strictV4, AesCrypto.decryptEcb(input, key))
+            "decryptAesCbc" -> aesResult(strictV4, AesCrypto.decryptCbc(input, key, iv))
+            "decryptAesCfb" -> aesResult(strictV4, AesCrypto.decryptCfb(input, key, iv))
+            "decryptAesOfb" -> aesResult(strictV4, AesCrypto.decryptOfb(input, key, iv))
+            // 垫片（2/3）兼容：RSA/GBK 给形状桩（空串），
             // 避免源脚本因 "not a function" 在 init 阶段整体崩溃；不伪造结果。
-            // TODO(U1/U1b)：AES（korlibs 有 API）与 GBK（无三端库）定案后转正或明确拒绝。
+            // v4 严格模式对 RSA/GBK 已在上方显式拒绝，不走此分支。
             else -> ""
         }
+    }
+
+    private fun aesResult(strictV4: Boolean, plain: String?): String {
+        if (plain != null) return plain
+        if (strictV4) throw SourceBridgeException("契约解密失败：AES 输入非法或填充错误（U1）")
+        return ""
     }
 
     private fun hexOf(text: String): String {
@@ -396,6 +430,15 @@ class QuickJsEngine(
                 if (max <= min) min.toString() else Random.nextLong(min, max).toString()
             }
             "randomDouble" -> Random.nextDouble().toString()
+            else -> ""
+        }
+    }
+
+    private fun handleNovel(payload: String): String {
+        val o = runCatching { json.parseToJsonElement(payload).jsonObject }.getOrNull()
+            ?: return ""
+        return when (o["op"]?.jsonPrimitive?.contentOrNull) {
+            "clean" -> host.novel.stripHtml(o["html"]?.jsonPrimitive?.contentOrNull.orEmpty())
             else -> ""
         }
     }
@@ -498,7 +541,14 @@ class QuickJsEngine(
                 // 安全出口当前只开放 GET/POST（SourceHttpClient 的白名单/重定向/审计路径）。
                 else -> HostResponse(0, "UNSUPPORTED_METHOD:$method")
             }
-            val body = if (r.body.length > 300_000) r.body.take(300_000) else r.body
+            val body = if (r.body.length > MAX_BODY_CHARS) {
+                // U2 可观测性：只记源 key 与长度，不记 URL/正文（隐私：审计禁 Cookie 与正文）。
+                host.utils.log(
+                    "[source-net] 响应截断：source=" + sourceKey +
+                        " 原长度=" + r.body.length + " 截断至=" + MAX_BODY_CHARS,
+                )
+                r.body.take(MAX_BODY_CHARS)
+            } else r.body
             """{"status":${r.status},"body":${
                 Json.encodeToString(kotlinx.serialization.serializer<String>(), body)
             },"headers":{}}"""
@@ -533,6 +583,8 @@ class QuickJsEngine(
     companion object {
         internal const val SETTING_PREFIX = "setting:"
         private const val MAX_TIMER_MS = 30_000L
+        /** 单次网络响应进 JS 前的截断上限（U2：分媒体策略待定；截断必写脱敏日志，不含正文/URL）。 */
+        internal const val MAX_BODY_CHARS = 300_000
 
         /**
          * 描述符探测片段（只读字段，不调用能力方法）。
@@ -588,8 +640,12 @@ class QuickJsEngine(
                 hasSearch: !!s.search,
                 hasSearchLoad: !!(s.search && s.search.load),
                 hasSearchNext: !!(s.search && s.search.loadNext),
+                hasSearchPage: !!(s.search && s.search.page),
                 hasComic: !!s.comic,
                 hasNovel: !!s.novel,
+                hasNovelLoadInfo: !!(s.novel && s.novel.loadInfo),
+                hasNovelLoadChapter: !!(s.novel && (s.novel.loadChapter || s.novel.loadEp)),
+                hasNovelImageResolve: !!(s.novel && s.novel.onImageResolve),
                 hasImageLoad: !!(s.comic && s.comic.onImageLoad),
                 hasExplore: Array.isArray(s.explore) && s.explore.length > 0,
                 hasCategory: !!(s.category || s.categoryComics),
@@ -698,6 +754,47 @@ class QuickJsEngine(
               }
               getElementById(id) { return this.querySelector('#' + id); }
               dispose() { __host.html(JSON.stringify({ op: 'dispose', doc: this.__doc })); }
+            }
+            const Html = {
+              list: function (html, css, map) {
+                var d = new HtmlDocument(String(html));
+                var out = [];
+                try {
+                  var els = d.querySelectorAll(String(css));
+                  for (var i = 0; i < els.length; i++) {
+                    out.push(map(els[i], i));
+                  }
+                } finally {
+                  d.dispose();
+                }
+                return out;
+              },
+              text: function (html, css) {
+                var d = new HtmlDocument(String(html));
+                try {
+                  var el = d.querySelector(String(css));
+                  return el ? el.text : '';
+                } finally {
+                  d.dispose();
+                }
+              },
+              attr: function (html, css, name) {
+                var d = new HtmlDocument(String(html));
+                try {
+                  var el = d.querySelector(String(css));
+                  if (!el) return null;
+                  var v = el.attributes[String(name)];
+                  return (v === undefined || v === null) ? null : String(v);
+                } finally {
+                  d.dispose();
+                }
+              }
+            };
+            function throwLoginExpired(message) { throw 'Login expired' + (message ? (': ' + String(message)) : ''); }
+            function throwNotFound(message) { throw 'Not found' + (message ? (': ' + String(message)) : ''); }
+            function throwRateLimited(message) { throw 'Rate limited' + (message ? (': ' + String(message)) : ''); }
+            function cleanNovelHtml(html, options) {
+              return __host.novel(JSON.stringify({ op: 'clean', html: String(html) }));
             }
 
             const Network = {

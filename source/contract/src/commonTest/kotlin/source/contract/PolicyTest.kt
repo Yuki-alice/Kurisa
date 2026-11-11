@@ -25,7 +25,7 @@ class PolicyTest {
         assertTrue(badKey.any { it.contains("key") })
         val badVer = ContractPolicy.validateMeta(goodMeta().copy(version = "1.0"))
         assertTrue(badVer.any { it.contains("version") })
-        val badApi = ContractPolicy.validateMeta(goodMeta().copy(apiVersion = 4))
+        val badApi = ContractPolicy.validateMeta(goodMeta().copy(apiVersion = 5))
         assertTrue(badApi.any { it.contains("apiVersion") })
         val noKind = ContractPolicy.validateMeta(goodMeta().copy(kind = emptySet()))
         assertTrue(noKind.any { it.contains("kind") })
@@ -39,23 +39,23 @@ class PolicyTest {
             sources = listOf(
                 IndexedSource(
                     name = "N", key = "com.example.n", version = "1.0.0",
-                    kind = setOf(ContentKind.MANGA), domains = listOf("ex.com"),
+                    kind = setOf(ContentKind.MANGA), domains = listOf("example.com"),
                     sha256 = "a".repeat(64), url = url, filename = file,
                 )
             )
         )
-        assertTrue(ContractPolicy.validateIndex(idx("https://ex.com/n.js", null)).isEmpty())
+        assertTrue(ContractPolicy.validateIndex(idx("https://example.com/n.js", null)).isEmpty())
         assertTrue(ContractPolicy.validateIndex(idx(null, "n.js")).isEmpty())
         assertFalse(ContractPolicy.validateIndex(idx(null, null)).isEmpty())
-        assertFalse(ContractPolicy.validateIndex(idx("https://ex.com/n.js", "n.js")).isEmpty())
+        assertFalse(ContractPolicy.validateIndex(idx("https://example.com/n.js", "n.js")).isEmpty())
         assertFalse(
             ContractPolicy.validateIndex(
-                idx("https://ex.com/n.js", null).copy(
+                idx("https://example.com/n.js", null).copy(
                     sources = listOf(
                         IndexedSource(
                             name = "N", key = "bad key", version = "1.0.0",
-                            kind = setOf(ContentKind.MANGA), domains = listOf("ex.com"),
-                            sha256 = "xyz", url = "https://ex.com/n.js",
+                            kind = setOf(ContentKind.MANGA), domains = listOf("example.com"),
+                            sha256 = "xyz", url = "https://example.com/n.js",
                         )
                     )
                 )
@@ -69,8 +69,8 @@ class PolicyTest {
             sources = listOf(
                 IndexedSource(
                     name = "N", key = "com.example.n", version = "1.0.0",
-                    kind = setOf(ContentKind.MANGA), domains = listOf("ex.com"),
-                    sha256 = "a".repeat(64), url = "https://ex.com/n.js",
+                    kind = setOf(ContentKind.MANGA), domains = listOf("example.com"),
+                    sha256 = "a".repeat(64), url = "https://example.com/n.js",
                     capabilities = listOf("search", "bogus"),
                 ),
             ),
@@ -100,10 +100,28 @@ class PolicyTest {
 
     @Test
     fun capabilityVersioning() {
-        // v2 是冻结基线；v3 才启用扩展能力集；宿主按版本启用能力。
+        // v2 是冻结基线；v3 才启用扩展能力集；v4 在 v3 上叠加 opt-in 能力；宿主按版本启用能力。
         assertTrue(ContractPolicy.validateMeta(goodMeta().copy(apiVersion = 3)).isEmpty())
+        assertTrue(ContractPolicy.validateMeta(goodMeta().copy(apiVersion = 4)).isEmpty())
         assertTrue(SourceCapability.SETTINGS in ContractPolicy.capabilitiesFor(3))
         assertFalse(SourceCapability.SETTINGS in ContractPolicy.capabilitiesFor(2))
+        assertTrue(SourceCapability.HTML_HELPER in ContractPolicy.capabilitiesFor(4))
+        assertTrue(SourceCapability.NOVEL_CHAPTER in ContractPolicy.capabilitiesFor(4))
+        assertTrue(SourceCapability.CRYPTO_AES in ContractPolicy.capabilitiesFor(4))
+        assertFalse(SourceCapability.HTML_HELPER in ContractPolicy.capabilitiesFor(3))
+        // 视频/音频为 v4 预留扩展点（渲染 deferred，仅类型与能力先行）。
+        assertTrue(SourceCapability.VIDEO in ContractPolicy.capabilitiesFor(4))
+        assertTrue(SourceCapability.AUDIO in ContractPolicy.capabilitiesFor(4))
+        assertFalse(SourceCapability.VIDEO in ContractPolicy.capabilitiesFor(3))
+        assertFalse(SourceCapability.AUDIO in ContractPolicy.capabilitiesFor(3))
+        assertEquals(SourceCapability.VIDEO, ContractPolicy.capabilityForPath("video.loadInfo"))
+        assertEquals(SourceCapability.AUDIO, ContractPolicy.capabilityForPath("audio.loadChapter"))
+        // video kind 在 v4 元数据校验中通过（仓库索引暂不接纳，fail-closed 在索引层）。
+        assertTrue(
+            ContractPolicy.validateMeta(
+                goodMeta().copy(apiVersion = 4, kind = setOf(ContentKind.VIDEO)),
+            ).isEmpty(),
+        )
         val effective = ContractPolicy.effectiveCapabilities(
             detected = setOf(SourceCapability.SEARCH, SourceCapability.SETTINGS),
             apiVersion = 2,

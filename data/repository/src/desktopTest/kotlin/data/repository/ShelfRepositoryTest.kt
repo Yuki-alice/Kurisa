@@ -30,7 +30,7 @@ class ShelfRepositoryTest {
 
     private fun sampleWork() = Work(
         id = "b23c9bb1", title = "お前じゃん", subtitle = "作者",
-        cover = "https://ex.com/c.jpg", tags = listOf("纯爱"),
+        cover = "https://example.com/c.jpg", tags = listOf("纯爱"),
         description = "desc", language = "zh_CN", kind = ContentKind.MANGA,
     )
 

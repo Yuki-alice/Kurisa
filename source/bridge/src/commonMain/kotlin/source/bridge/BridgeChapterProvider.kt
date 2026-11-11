@@ -62,16 +62,25 @@ class BridgeChapterProvider(
             throw SourceBridgeException("章节解析失败：${it.message}")
         }
         return if (kind == ContentKind.NOVEL) {
-            // content（真实形状，M0#5）优先，text（M1 合成例）兜底。
+            // content（真实形状，M0#5）优先，text（M1 合成例）兜底；format 必透出（v4）。
             val body = obj["content"]?.jsonPrimitive?.contentOrNull
                 ?: obj["text"]?.jsonPrimitive?.contentOrNull
                 ?: throw SourceBridgeException("小说章节缺 content/text")
-            ChapterPayload.Text(body)
-        } else {
+            val format = when (obj["format"]?.jsonPrimitive?.contentOrNull?.lowercase()) {
+                "markdown", "md" -> core.model.TextFormat.MARKDOWN
+                "plain", "text", "txt" -> core.model.TextFormat.PLAIN
+                else -> core.model.TextFormat.HTML
+            }
+            ChapterPayload.Text(body, format)
+        } else if (kind == ContentKind.MANGA) {
             val urls = obj["images"]?.jsonArray
                 ?.mapNotNull { it.jsonPrimitive.contentOrNull }
                 ?: throw SourceBridgeException("漫画章节缺 images")
             ChapterPayload.Images(urls)
+        } else {
+            // VIDEO/AUDIO：类型与能力扩展点已落地，渲染接线 deferred（ADR-011 D4），
+            // 此处显式失败，不伪装成漫画 images，避免误导调用方。
+            throw SourceBridgeException("视频/音频渲染 deferred（ADR-011 D4）：kind=${kind.serial}")
         }
     }
 }

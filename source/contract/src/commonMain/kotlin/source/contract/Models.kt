@@ -3,14 +3,20 @@ package source.contract
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
-/** 内容类型。`kind` 数组至少含一项。 */
+/** 内容类型。`kind` 数组至少含一项；VIDEO/AUDIO 为 v4 预留（渲染 deferred，见 ADR-011 D4）。 */
 @Serializable
 enum class ContentKind(val serial: String) {
     @SerialName("manga")
     MANGA("manga"),
 
     @SerialName("novel")
-    NOVEL("novel");
+    NOVEL("novel"),
+
+    @SerialName("video")
+    VIDEO("video"),
+
+    @SerialName("audio")
+    AUDIO("audio");
 
     companion object {
         fun of(raw: String): ContentKind? =

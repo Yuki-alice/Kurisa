@@ -33,7 +33,7 @@
             "type": "array",
             "description": "运行时能力位；缺省时由宿主 describe() 探测并按 apiVersion 上界收窄",
             "items": {
-              "enum": ["search", "explore", "category", "comic", "novel", "account", "favorites", "settings", "translation", "imageLoad"]
+              "enum": ["search", "explore", "category", "comic", "novel", "account", "favorites", "settings", "translation", "imageLoad", "novelChapter", "htmlHelper", "cryptoAes"]
             }
           },
           "sha256": { "type": "string", "pattern": "^[0-9a-fA-F]{64}$" },

@@ -299,8 +299,10 @@ export declare class HtmlElement {
 
 /**
  * Convert：Venera 用 ArrayBuffer，本宿主统一以字符串传递（三端一致的 UTF-8 语义）。
- * `hmacString` 为真实 HMAC-SHA256（小写 hex）；sha1/sha512/AES/RSA 当前是形状桩，
- * 返回空串而非伪造结果，源作者应自行判空（见 docs/real-source-e2e.md）。
+ * `md5/sha1/sha256/sha512/hmacString(sha256)/Base64/hex` 为真实实现；
+ * AES-ECB/CBC/CFB/OFB 已转正（Base64 进出 + PKCS7；失败垫片回空串，v4 严格模式抛 CONTRACT）；
+ * RSA/GBK 仍是形状桩（RSA 垫片回空串、GBK 垫片回输入本身，v4 严格模式抛 CONTRACT，
+ * 见 source-v4.d.ts）。类型签名冻结，语义以本注与实现为准。
  */
 export declare const Convert: {
   md5(s: string): string;
