@@ -1,6 +1,6 @@
 # M1 契约评审记录（冻结版 v1，apiVersion=2）
 
-> 评审对象：`reader/source/contract` + `docs/contract/{source.d.ts,index-schema.json,novel-example.js,manga-example.js}`。
+> 评审对象：`:source:contract` + `docs/contract/{source.d.ts,index-schema.json,novel-example.js,manga-example.js}`。
 > 结论：**通过，冻结**。此后契约变更走版本化流程（apiVersion 递增 + 宿主按版本启用能力）。
 
 ## 1. 三件套对照

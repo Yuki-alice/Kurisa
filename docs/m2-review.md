@@ -1,6 +1,6 @@
 # M2 数据层评审记录
 
-> 评审对象：`reader/:core:model`、`:data:db`、`:data:network`、`:data:repository`、
+> 评审对象：`:core:model`、`:data:db`、`:data:network`、`:data:repository`、
 > `:source:registry`（`:source:contract` 为 M1 冻结，不动）。
 > 结论：**通过**。Gate 三项（断网书架可用；迁移测试通过含回滚；签名/权限校验生效）
 > 均由自动化测试锁定，三端（desktopTest / testAndroidHostTest / iosSimulatorArm64Test）全绿。

@@ -11,3 +11,9 @@
 # IDE
 .idea/
 *.iml
+
+# 构建产物（Gradle / Kotlin）
+build/
+.gradle/
+.kotlin/
+local.properties
