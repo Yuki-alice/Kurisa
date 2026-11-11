@@ -5,8 +5,8 @@
 .workbuddy/
 .workbuddy-ai/
 
-# 本地 agent skills 子集（.dsh/skills，随仓库模板重建，不入库）
-.dsh/
+# agent skills 子集（.dsh/skills）：已入库随项目分发，换设备可直接复用。
+# 仅提交 skills 内容；会话/缓存类产物若日后出现，在此按需排除。
 
 # IDE
 .idea/

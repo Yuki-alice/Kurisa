@@ -43,7 +43,8 @@ code-review/compose-expert/material-3/md3e（4）。
 
 - M3（阅读器 UI）/M5（设计系统）需要更多时，回 `~/skills` 按需取，不常驻。
 - 同步：上游更新后 `cp -R ~/skills/<collection>/skills/<name> .dsh/skills/<name>`。
-- `.dsh/` 仅本地生效（已加入 `.gitignore`），不入库；要分发给其他机器时显式打包。
+- `.dsh/skills/` **已入库**（随项目分发，换设备 clone 即可复用）；新增/更新技能时一并提交。
+  只提交 skills 内容，不提交会话数据或缓存产物（`.DS_Store` 由 `.gitignore` 全局排除）。
 
 ## 5. 文档纪律
 
