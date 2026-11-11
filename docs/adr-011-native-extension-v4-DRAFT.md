@@ -23,7 +23,7 @@
   小说吐带格式正文（html 进 clean、plain 原样、markdown 预留 M4）+ 文内图走 onImageResolve。
 - 写源高级货：Html 三 helper（list/text/attr，自动 dispose）、统一分页 page()（ host 路由页码与游标）、
   throwLoginExpired/throwNotFound/throwRateLimited（替代口口相传的字符串分类）。
-- 密码学：GBK 与 SHA-1/512 转正；AES/RSA 要么真做要么明确报暂不支持，禁止回空串。
+- 密码学：SHA-1/512 经 korlibs-crypto 转正；AES（API 已确认存在）下轮对向量实现（U1）；GBK 无三端库延期（U1b）；转正前桩行为不变、文档显式标注。
 - 网络：只开 GET/POST，PUT/PATCH/DELETE 回明确不支持；UA 与 Cookie 宿主注入，源不可覆盖
   （cf_clearance 配对 UA 红线）。资源上限与超时不放宽，ModuleLoader 继续拒绝一切 import。
 
@@ -81,6 +81,7 @@ N-GBK（中文 HTML 站，覆盖 N1-HTML + N2-GBK + N3-卷章）；N-ENC（加�
 ## 8. 未决
 
 - Q1：小说 3 个具体站点（需 Miru 生态地址或本地 refs 路径，网络受限待输入）。
-- U1：AES/RSA 转正选型或显式拒绝。
+- U1：AES/RSA 实现（korlibs AES API 已确认）与输入编码约定（base64/hex/原文）vs 显式拒绝。
+- U1b：GBK（korlibs 无三端 Charset；备选：自带码表 / 平台注入评审 / 放弃）。
 - U2：300KB 截断对小说通道策略。U3：init 缓存语义与计数断言。
 - U4：markdown 渲染归 M4。U5：SUPPORTED 接纳 4 的时机与垫片日落阈值。

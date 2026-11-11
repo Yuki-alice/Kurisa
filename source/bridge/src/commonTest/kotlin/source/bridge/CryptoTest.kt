@@ -4,6 +4,8 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
+import korlibs.crypto.sha1
+import korlibs.crypto.sha512
 
 class CryptoTest {
 
@@ -52,6 +54,30 @@ class CryptoTest {
         assertEquals("TWFu", c.encodeBase64("Man".toUtf8BytesCompat()))
         assertEquals("Man", c.decodeBase64("TWFu").decodeToStringCompat())
         assertFailsWith<IllegalArgumentException> { c.decodeBase64("!!!") }
+    }
+
+    @Test
+    fun sha1Rfc3174Vectors() {
+        // RFC 3174：空串 / 短串 / 56 字节边界，确保 Convert.sha1 三端一致。
+        assertEquals("da39a3ee5e6b4b0d3255bfef95601890afd80709", ByteArray(0).sha1().hexLower)
+        assertEquals("a9993e364706816aba3e25717850c26c9cd0d89d", "abc".toUtf8BytesCompat().sha1().hexLower)
+        assertEquals(
+            "84983e441c3bd26ebaae4aa1f95129e5e54670f1",
+            "abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq".toUtf8BytesCompat().sha1().hexLower,
+        )
+    }
+
+    @Test
+    fun sha512Fips180Vectors() {
+        // FIPS 180-4 空串/短串（经 JDK SunJCE 与 korlibs 双实现交叉验证），确保 Convert.sha512 三端一致。
+        assertEquals(
+            "cf83e1357eefb8bdf1542850d66d8007d620e4050b5715dc83f4a921d36ce9ce47d0d13c5d85f2b0ff8318d2877eec2f63b931bd47417a81a538327af927da3e",
+            ByteArray(0).sha512().hexLower,
+        )
+        assertEquals(
+            "ddaf35a193617abacc417349ae20413112e6fa4e89a97ea20a9eeee64b55d39a2192992a274fc1a836ba3c23a3feebbd454d4423643ce80e2a9ac94fa54ca49f",
+            "abc".toUtf8BytesCompat().sha512().hexLower,
+        )
     }
 
     @Test

@@ -19,6 +19,8 @@ import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import korlibs.crypto.sha1
+import korlibs.crypto.sha512
 import source.contract.ContentKind
 import source.hostapi.HostApi
 import source.hostapi.HostResponse
@@ -352,6 +354,9 @@ class QuickJsEngine(
         return when (op) {
             "md5" -> host.convert.md5(input)
             "sha256" -> host.convert.sha256(input)
+            // MASVS-CRYPTO 豁免同 Md5：仅源脚本站点签名兼容，不用于口令/密钥/宿主鉴权。
+            "sha1" -> input.toUtf8Bytes().sha1().hexLower
+            "sha512" -> input.toUtf8Bytes().sha512().hexLower
             "encodeBase64" -> host.convert.encodeBase64(input.toUtf8Bytes())
             "decodeBase64" -> runCatching {
                 host.convert.decodeBase64(input).decodeToString()
@@ -362,8 +367,9 @@ class QuickJsEngine(
                 if (hash.isBlank() || hash.lowercase() == "sha256") {
                     HmacSha256.hex(key.toUtf8Bytes(), input.toUtf8Bytes())
                 } else ""
-            // sha1/sha512/AES/RSA 属未开放能力：给形状桩（空串），
+            // AES/RSA/GBK 属未开放能力：给形状桩（空串），
             // 避免源脚本因 "not a function" 在 init 阶段整体崩溃；不伪造结果。
+            // TODO(U1/U1b)：AES（korlibs 有 API）与 GBK（无三端库）定案后转正或明确拒绝。
             else -> ""
         }
     }

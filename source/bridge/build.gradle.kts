@@ -34,6 +34,8 @@ kotlin {
             implementation(libs.quickjs.kt)
             implementation(libs.quickjs.converter)
             implementation(libs.ksoup)
+            // SHA-1/512（korlibs-crypto，与 :source:registry 同库同版本三端一致）
+            implementation(libs.korlibs.crypto)
             implementation(libs.kotlinx.serialization.json)
             implementation(libs.kotlinx.coroutines.core)
         }

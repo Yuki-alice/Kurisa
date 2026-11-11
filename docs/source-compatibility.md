@@ -84,7 +84,7 @@ HMAC 另有 RFC 4231 向量单测（`CryptoTest`），三端可跑。
 
 ## 6. 已知边界
 
-- `Convert.sha1/sha512/AES/RSA/GBK`、`UI` 弹窗与外链是**形状兼容桩**，不提供真实密码学
+- `Convert.sha1/sha512` 已转正（korlibs-crypto 三端一致，RFC/FIPS 向量锁定）；`AES/RSA/GBK` 与 `UI` 弹窗外链仍是**形状兼容桩**，不提供真实密码学
   或 UI 能力；依赖它们的源在离线 fixture 下仍可能报错（如 CCC 追漫台的章节解密）。
 - 单份通用 fixture 无法同时满足所有站点的响应结构，L2 的 `FIXTURE` 不等于产品缺陷。
 - `Network.put/delete/patch` 当前安全出口只开放 GET/POST，返回明确 status 0。
