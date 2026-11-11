@@ -174,6 +174,14 @@ class ReaderStateMachine {
     /** 当前章节总页数（无载荷时 0）。 */
     fun currentPageCount(): Int = lastPayload?.let(::pageCountOf) ?: 0
 
+    /** 当前页图片 URL（漫画 Images；小说/未知为空，UI 据此分支）。 */
+    fun currentPageUrls(): List<String> =
+        (lastPayload as? ChapterPayload.Images)?.urls.orEmpty()
+
+    /** 当前小说正文（Text 载荷；漫画为 null，M4 做排版分页）。 */
+    fun currentText(): String? =
+        (lastPayload as? ChapterPayload.Text)?.body
+
     fun chapterCount(): Int = chapterList.size
 
     /**

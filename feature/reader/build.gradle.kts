@@ -37,11 +37,16 @@ kotlin {
             implementation(libs.lifecycle.viewmodel)
             implementation(libs.lifecycle.viewmodel.compose)
             implementation(libs.lifecycle.runtime.compose)
+            implementation(libs.zoomimage.compose)
+            implementation(libs.zoomimage.compose.coil3)
+            implementation(libs.ktor.client.core)
             implementation(project(":core:model"))
             implementation(project(":core:common"))
             implementation(project(":core:reader"))
             implementation(project(":core:designsystem"))
             implementation(project(":data:repository"))
+            implementation(project(":data:network"))
+            implementation(project(":data:images"))
         }
         commonTest.dependencies {
             implementation(kotlin("test"))

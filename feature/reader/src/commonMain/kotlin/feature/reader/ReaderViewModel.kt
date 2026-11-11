@@ -8,7 +8,10 @@ import core.reader.ChapterProvider
 import core.reader.ReaderState
 import core.reader.ReaderStateMachine
 import core.reader.ReadingMode
+import data.images.ImageFetcher
+import data.images.ImageRequest
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.SharingStarted
@@ -21,12 +24,10 @@ import kotlinx.coroutines.launch
 /**
  * 阅读器 ViewModel（MVI：StateFlow 状态 + Channel 一次性事件）。
  *
- * 防竞态纪律（M3 Slice A 实录）：
- * - 页码/总数一律读机器同步快照（currentPageIndex/currentPageCount），
- *   永不读屏 State 推导（StateFlow 合流会压缩 Ready，导致总数卡 0）。
- * - 保存走显式参数 saveNow(w, c, page, total)，不读 state.value。
- * - 打开/重试/切章委托状态机；Ready 后恢复进度（load→pageTo→save，防丢）。
- * - 章节末端 Toast 走 Effect；异常收敛为 Error 状态；持久化失败不中断阅读。
+ * 学科纪律（M3 Slice A 实录）：
+ * - 页码/总数一律读机器同步快照，不读屏 State 推导（合流压缩致总数卡 0）。
+ * - 保存走显式参数；虚拟时间断言必须推过期限（499/+5）。
+ * - 图片字节只保留当前预加载窗口（切章/翻页即驱逐，窗口外完成直接丢弃）。
  */
 class ReaderViewModel(
     private val workId: String,
@@ -35,15 +36,21 @@ class ReaderViewModel(
     private val chapters: ChapterProvider,
     private val saveProgress: SaveReadingProgressUseCase,
     private val loadProgress: LoadReadingProgressUseCase,
+    private val pages: LoadPageBytesUseCase,
+    private val domains: Set<String>,
     /**
-     * 防抖作用域（默认 viewModelScope；测试注入 TestScope）。
-     * 虚拟时间纪律：本工程 advanceTimeBy 恰到期不触发，必须推过期限
-     * （见单测 499/+5 写法；M3 Slice A 实录）。
+     * 工作作用域（默认 viewModelScope；测试注入 TestScope 使 delay 可虚拟推进）。
+     * 防抖与分页抓取共用此域。
      */
-    saveScope: CoroutineScope? = null,
+    workScope: CoroutineScope? = null,
 ) : ViewModel() {
 
-    private data class Local(val mode: ReadingMode, val reachedEnd: Boolean)
+    private data class Local(
+        val mode: ReadingMode,
+        val reachedEnd: Boolean,
+        val pages: Map<Int, ByteArray> = emptyMap(),
+        val article: String? = null,
+    )
 
     private val _effect = Channel<ReaderContract.Effect>(Channel.BUFFERED)
     val effect: Flow<ReaderContract.Effect> = _effect.receiveAsFlow()
@@ -51,6 +58,8 @@ class ReaderViewModel(
     private val local = kotlinx.coroutines.flow.MutableStateFlow(
         Local(ReadingMode.PAGED, false)
     )
+
+    private val worker: CoroutineScope = workScope ?: viewModelScope
 
     val state: StateFlow<ReaderContract.State> =
         combine(machine.state, local) { ms, l ->
@@ -70,6 +79,7 @@ class ReaderViewModel(
                         chapterCount = machine.chapterCount(),
                         pageIndex = 0, pageCount = ms.pageCount,
                         mode = l.mode, loading = false,
+                        pages = l.pages, article = l.article,
                     )
                 is ReaderState.Reading ->
                     ReaderContract.State(
@@ -80,6 +90,7 @@ class ReaderViewModel(
                         pageIndex = ms.pageIndex,
                         pageCount = machine.currentPageCount(),
                         mode = l.mode, loading = false, reachedEnd = l.reachedEnd,
+                        pages = l.pages, article = l.article,
                     )
                 is ReaderState.Preloading ->
                     ReaderContract.State(
@@ -87,6 +98,7 @@ class ReaderViewModel(
                         pageIndex = ms.pageIndex,
                         pageCount = machine.currentPageCount(),
                         mode = l.mode, loading = false,
+                        pages = l.pages, article = l.article,
                     )
                 is ReaderState.ChapterEnd ->
                     ReaderContract.State(
@@ -101,17 +113,21 @@ class ReaderViewModel(
             }
         }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), ReaderContract.State(workId = workId))
 
-    private val saver = Debouncer(saveScope ?: viewModelScope, 500) {
+    private val saver = Debouncer(worker, 500) {
         val w = workId
         val c = machine.currentChapterId() ?: return@Debouncer
         saveNow(w, c, machine.currentPageIndex(), machine.currentPageCount())
     }
     private var endNotifiedFor: String? = null
+    private var windowVersion = 0
+    private var windowChapter: String? = null
+    private val pageJobs = mutableMapOf<Int, Job>()
 
     init {
         viewModelScope.launch {
             machine.state.collect { ms ->
                 if (ms is ReaderState.Ready) onReady(ms.workId, ms.chapterId, ms.pageCount)
+                if (ms is ReaderState.Reading) ensureWindow()
                 if (ms is ReaderState.ChapterEnd && endNotifiedFor != ms.chapterId) {
                     endNotifiedFor = ms.chapterId
                     local.value = local.value.copy(reachedEnd = true)
@@ -126,14 +142,16 @@ class ReaderViewModel(
         when (intent) {
             is ReaderContract.Intent.PageChanged -> {
                 machine.pageTo(intent.index)
-                scheduleSave()
+                ensureWindow()
+                saver.submit()
             }
             is ReaderContract.Intent.NextPage -> {
                 val next = machine.currentPageIndex() + 1
                 val total = machine.currentPageCount()
                 if (next < total) {
                     machine.pageTo(next)
-                    scheduleSave()
+                    ensureWindow()
+                    saver.submit()
                 } else {
                     toast("已是本章最后一页")
                 }
@@ -142,7 +160,8 @@ class ReaderViewModel(
                 val prev = machine.currentPageIndex() - 1
                 if (prev >= 0) {
                     machine.pageTo(prev)
-                    scheduleSave()
+                    ensureWindow()
+                    saver.submit()
                 } else {
                     toast("已是本章第一页")
                 }
@@ -159,6 +178,10 @@ class ReaderViewModel(
             }
             is ReaderContract.Intent.RetryClicked -> viewModelScope.launch {
                 machine.retry()
+            }
+            is ReaderContract.Intent.RefreshPage -> {
+                dropWindow()
+                ensureWindow()
             }
             is ReaderContract.Intent.ModeChanged -> {
                 local.value = local.value.copy(mode = intent.mode)
@@ -179,11 +202,52 @@ class ReaderViewModel(
             idx = savedPage.coerceIn(0, (pageCount - 1).coerceAtLeast(0))
             machine.pageTo(idx)
         }
+        local.value = local.value.copy(article = machine.currentText())
+        ensureWindow()
         saveNow(w, c, idx, pageCount)
     }
 
-    private fun scheduleSave() {
-        saver.submit()
+    /**
+     * 窗口保障：补齐缺页抓取、取消窗外任务、驱逐窗外字节、丢弃过期完成。
+     * 与 machine.preloadWindow() 同源（前 1 后 2），内存天然有界。
+     * 任务与字节均按“当前章”作用域：切章时整窗作废（同下标跨章撞键是 M3 实录 bug）。
+     */
+    private fun ensureWindow() {
+        val chapter = machine.currentChapterId() ?: return
+        if (chapter != windowChapter) {
+            dropWindow()
+            windowChapter = chapter
+        }
+        val window = machine.preloadWindow().toSet()
+        val urls = machine.currentPageUrls()
+        windowVersion++
+        val v = windowVersion
+        // 取消窗外任务。
+        val stale = pageJobs.keys.filterNot { it in window }
+        stale.forEach { pageJobs.remove(it)?.cancel() }
+        // 驱逐窗外字节。
+        val kept = local.value.pages.filterKeys { it in window }
+        if (kept.size != local.value.pages.size || local.value.article == null) {
+            local.value = local.value.copy(pages = kept)
+        }
+        for (index in window) {
+            if (index in local.value.pages || pageJobs.containsKey(index)) continue
+            val url = urls.getOrNull(index) ?: continue
+            val job = worker.launch {
+                val bytes = runCatching { pages(url, domains) }.getOrNull() ?: return@launch
+                if (v != windowVersion) return@launch // 过期完成直接丢弃
+                pageJobs.remove(index)
+                local.value = local.value.copy(pages = local.value.pages + (index to bytes))
+            }
+            pageJobs[index] = job
+        }
+    }
+
+    private fun dropWindow() {
+        windowVersion++
+        pageJobs.values.forEach { it.cancel() }
+        pageJobs.clear()
+        local.value = local.value.copy(pages = emptyMap())
     }
 
     private suspend fun saveNow(workId: String, chapterId: String, page: Int, total: Int) {
@@ -213,6 +277,14 @@ class ReaderViewModel(
     }
 }
 
+/** 分页字节用例（ViewModel 直达数据源是不允许的，见 data-layer 技能）。 */
+class LoadPageBytesUseCase(
+    private val images: ImageFetcher,
+) {
+    suspend operator fun invoke(url: String, domains: Set<String>): ByteArray =
+        images.fetch(ImageRequest(url, domains)).bytes
+}
+
 /** Koin 接入前手写 Factory（M5 改 viewModelOf；SavedStateHandle 按需再加）。 */
 class ReaderViewModelFactory(
     private val workId: String,
@@ -220,6 +292,8 @@ class ReaderViewModelFactory(
     private val chapters: ChapterProvider,
     private val saveProgress: SaveReadingProgressUseCase,
     private val loadProgress: LoadReadingProgressUseCase,
+    private val pages: LoadPageBytesUseCase,
+    private val domains: Set<String>,
     private val machine: ReaderStateMachine = ReaderStateMachine(),
 ) : androidx.lifecycle.ViewModelProvider.Factory {
     @Suppress("UNCHECKED_CAST")
@@ -228,6 +302,9 @@ class ReaderViewModelFactory(
         extras: androidx.lifecycle.viewmodel.CreationExtras,
     ): T {
         require(modelClass == ReaderViewModel::class) { "仅支持 ReaderViewModel" }
-        return ReaderViewModel(workId, chapterId, machine, chapters, saveProgress, loadProgress) as T
+        return ReaderViewModel(
+            workId, chapterId, machine, chapters,
+            saveProgress, loadProgress, pages, domains,
+        ) as T
     }
 }

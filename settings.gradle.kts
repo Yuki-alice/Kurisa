@@ -31,6 +31,7 @@ include(":data:repository")
 include(":data:download")
 include(":data:localimport")
 include(":data:cache")
+include(":data:images")
 // source ③：contract/registry 已有，hostapi/bridge 为初始化骨架
 include(":source:registry")
 include(":source:hostapi")

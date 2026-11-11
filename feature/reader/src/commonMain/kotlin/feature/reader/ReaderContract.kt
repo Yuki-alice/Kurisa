@@ -9,6 +9,8 @@ import core.reader.ReadingMode
  */
 object ReaderContract {
 
+    // @Immutable 有效性说明：pages 的 ByteArray 发布后永不原地修改
+    // （窗口更新一律换新 Map + 新数组），引用变化即内容变化，可跳过重组安全。
     @Immutable
     data class State(
         val workId: String = "",
@@ -22,6 +24,10 @@ object ReaderContract {
         val loading: Boolean = true,
         val error: String? = null,
         val reachedEnd: Boolean = false,
+        /** 当前预加载窗口的字节（key=页下标；窗外已驱逐）。 */
+        val pages: Map<Int, ByteArray> = emptyMap(),
+        /** 小说正文（漫画为 null；M4 做排版分页）。 */
+        val article: String? = null,
     )
 
     sealed interface Intent {
@@ -31,6 +37,8 @@ object ReaderContract {
         data object NextChapter : Intent
         data object PrevChapter : Intent
         data object RetryClicked : Intent
+        /** 当前窗口重抓（图片失败占位上的重试入口）。 */
+        data object RefreshPage : Intent
         data class ModeChanged(val mode: ReadingMode) : Intent
     }
 

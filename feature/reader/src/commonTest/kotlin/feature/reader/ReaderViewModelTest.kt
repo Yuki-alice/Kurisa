@@ -6,7 +6,11 @@ import core.reader.ChapterProvider
 import core.reader.ChapterRef
 import core.reader.ReaderStateMachine
 import core.reader.ReadingMode
+import data.images.ImageFetcher
+import data.images.ImageRequest
+import data.images.FetchedImage
 import data.repository.ProgressRepository
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.launch
@@ -21,6 +25,17 @@ import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
+
+/** ASCII 编解码（测试 URL 全 ASCII；Native 下不用碰 Charsets）。 */
+private fun String.toAsciiBytes(): ByteArray {
+    require(all { it.code < 128 })
+    return ByteArray(length) { this[it].code.toByte() }
+}
+
+private fun ByteArray.asciiString(): String {
+    require(all { it.toInt() and 0x80 == 0 })
+    return CharArray(size) { this[it].toInt().toChar() }.concatToString()
+}
 
 /**
  * ViewModel 单测（runTest + 后台收集；不用 Turbine）。
@@ -52,6 +67,21 @@ class ReaderViewModelTest {
         override suspend fun load(workId: String): ReadingProgress? = stored
     }
 
+    /** 可门控抓取器（-nil gate 为直通；stale 丢弃测试用 gate 挂起）。 */
+    class FakeImages(
+        private val gate: CompletableDeferred<Unit>? = null,
+    ) : ImageFetcher {
+        val calls = mutableListOf<String>()
+        override suspend fun fetch(request: ImageRequest): FetchedImage {
+            calls += request.url
+            gate?.await()
+            return FetchedImage(
+                ("bytes:" + request.url).toAsciiBytes(),
+                request.url,
+            )
+        }
+    }
+
     private val dispatcher = StandardTestDispatcher()
 
     @BeforeTest
@@ -67,6 +97,7 @@ class ReaderViewModelTest {
     private fun vm(
         progress: FakeProgress = FakeProgress(),
         chapterId: String = "c1",
+        images: ImageFetcher = FakeImages(),
         saveScope: kotlinx.coroutines.CoroutineScope? = null,
     ) = ReaderViewModel(
         workId = "w",
@@ -75,7 +106,9 @@ class ReaderViewModelTest {
         chapters = FakeProvider(),
         saveProgress = SaveReadingProgressUseCase(progress),
         loadProgress = LoadReadingProgressUseCase(progress),
-        saveScope = saveScope,
+        pages = LoadPageBytesUseCase(images),
+        domains = setOf("ex.com"),
+        workScope = saveScope,
     )
 
     @Test
@@ -137,5 +170,69 @@ class ReaderViewModelTest {
         m.onIntent(ReaderContract.Intent.ModeChanged(ReadingMode.CONTINUOUS))
         runCurrent()
         assertEquals(ReadingMode.CONTINUOUS, states.last().mode)
+    }
+
+    @Test
+    fun windowFillsAndDrops() = runTest(dispatcher) {
+        val images = FakeImages()
+        val m = ReaderViewModel(
+            workId = "w", chapterId = "c1", machine = ReaderStateMachine(),
+            chapters = FakeProvider(),
+            saveProgress = SaveReadingProgressUseCase(FakeProgress()),
+            loadProgress = LoadReadingProgressUseCase(FakeProgress()),
+            pages = LoadPageBytesUseCase(images),
+            domains = setOf("ex.com"),
+            workScope = backgroundScope,
+        )
+        val states = mutableListOf<ReaderContract.State>()
+        backgroundScope.launch { m.state.collect { states += it } }
+        runCurrent()
+        // 打开即填满窗口 [0..2]（3 页全在窗内）。
+        assertEquals(setOf(0, 1, 2), states.last().pages.keys)
+        assertEquals(listOf("u1", "u2", "u3"), images.calls.sorted())
+        // 切章：窗外字节驱逐，新窗重填。
+        m.onIntent(ReaderContract.Intent.NextChapter)
+        runCurrent()
+        val last = states.last()
+        assertTrue(last.pages.keys.all { it in 0..2 })
+        assertTrue(images.calls.size >= 3)
+    }
+
+    @Test
+    fun staleFetchDropped() = runTest(dispatcher) {
+        val chapterUrls = mapOf(
+            "c1" to listOf("c1u1", "c1u2", "c1u3"),
+            "c2" to listOf("c2u1", "c2u2", "c2u3"),
+        )
+        val chapterProvider = object : ChapterProvider {
+            override suspend fun chapters(workId: String) =
+                listOf(ChapterRef("c1", "第1话", 1), ChapterRef("c2", "第2话", 2))
+
+            override suspend fun payload(workId: String, chapterId: String) =
+                ChapterPayload.Images(chapterUrls.getValue(chapterId))
+        }
+        val gate = CompletableDeferred<Unit>()
+        val images = FakeImages(gate)
+        val m = ReaderViewModel(
+            workId = "w", chapterId = "c1", machine = ReaderStateMachine(),
+            chapters = chapterProvider,
+            saveProgress = SaveReadingProgressUseCase(FakeProgress()),
+            loadProgress = LoadReadingProgressUseCase(FakeProgress()),
+            pages = LoadPageBytesUseCase(images),
+            domains = setOf("ex.com"),
+            workScope = backgroundScope,
+        )
+        val states = mutableListOf<ReaderContract.State>()
+        backgroundScope.launch { m.state.collect { states += it } }
+        runCurrent()
+        // c1 窗口抓取挂起中 → 切 c2（版本推进）→ 放行：c1 结果必须丢弃。
+        assertTrue(states.last().pages.isEmpty())
+        m.onIntent(ReaderContract.Intent.NextChapter)
+        runCurrent()
+        gate.complete(Unit)
+        runCurrent()
+        val got = states.last().pages.values.map { it.asciiString() }
+        assertTrue(got.none { it.contains("c1u") }, "stale c1 bytes leaked: $got")
+        assertTrue(got.any { it.contains("c2u") }, "c2 window missing: $got")
     }
 }
