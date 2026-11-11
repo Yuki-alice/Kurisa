@@ -55,5 +55,8 @@ kotlin {
             implementation(project(":feature:settings"))
             implementation(project(":feature:reader"))
         }
+        commonTest.dependencies {
+            implementation(kotlin("test"))
+        }
     }
 }

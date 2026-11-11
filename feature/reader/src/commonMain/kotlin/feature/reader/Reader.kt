@@ -193,11 +193,14 @@ private fun ContinuousContent(
     }
     LazyColumn(modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(Tokens.spacingM)) {
         itemsIndexed(List(state.pageCount.coerceAtLeast(1)) { it }) { index, _ ->
+            // LazyColumn 纵轴无约束：必须给确定高宽比，否则异步图加载前高度塌成 0
+            // （M3 真机实录；长条真实宽高比随 M-hardening 用解码尺寸替换）。
             PageImage(
                 bytes = state.pages[index],
                 desc = "P${index + 1}",
                 contentScale = ContentScale.FillWidth,
                 onRetry = { onIntent(ReaderContract.Intent.RefreshPage) },
+                modifier = Modifier.aspectRatio(Tokens.coverAspect),
             )
         }
     }

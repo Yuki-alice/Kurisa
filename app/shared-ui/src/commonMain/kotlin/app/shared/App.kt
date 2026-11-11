@@ -7,6 +7,8 @@ import androidx.navigation3.runtime.rememberNavBackStack
 import androidx.navigation3.ui.NavDisplay
 import androidx.savedstate.serialization.SavedStateConfiguration
 import kotlinx.serialization.modules.SerializersModule
+import kotlinx.serialization.modules.polymorphic
+import kotlinx.serialization.modules.subclass
 import core.designsystem.AppTheme
 import feature.detail.DetailRoute
 import feature.detail.DetailScreen
@@ -26,16 +28,31 @@ import feature.sources.SourcesRoute
 import feature.sources.SourcesScreen
 
 /**
+ * 全 App 路由多态模块（ADR-008：iOS 等非 JVM 平台无反射，route key 必须显式注册；
+ * 少注册一个就是一次启动崩溃——见 M3 真机实录，已由 NavRoutesTest 锁门）。
+ */
+val appSerializersModule = SerializersModule {
+    polymorphic(NavKey::class) {
+        subclass(ShelfRoute::class)
+        subclass(ExploreRoute::class)
+        subclass(SearchRoute::class)
+        subclass(DetailRoute::class)
+        subclass(ReaderRoute::class)
+        subclass(SourcesRoute::class)
+        subclass(DownloadsRoute::class)
+        subclass(SettingsRoute::class)
+    }
+}
+
+/**
  * 全 App 入口（ADR-008）。
  * ViewModel 工厂集中于此（配合 Koin，M5 接入）；各 feature 禁止自建 scope。
  */
 @Composable
 fun App() {
     AppTheme {
-        // iOS 等非 JVM 平台无反射：route key 多态序列化须经 SerializersModule 注册
-        // （当前 8 个 key 均为具体 @Serializable 类型，空模块即可；M5 补深链接回放测试）。
         val backStack = rememberNavBackStack(
-            SavedStateConfiguration { serializersModule = SerializersModule { } },
+            SavedStateConfiguration { serializersModule = appSerializersModule },
             ShelfRoute,
         )
         NavDisplay(
