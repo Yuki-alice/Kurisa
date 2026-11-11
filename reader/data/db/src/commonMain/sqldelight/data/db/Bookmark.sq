@@ -1,0 +1,20 @@
+CREATE TABLE bookmark (
+  id TEXT PRIMARY KEY,
+  work_id TEXT NOT NULL,
+  chapter_id TEXT NOT NULL,
+  position INTEGER NOT NULL,
+  excerpt TEXT,
+  note TEXT,
+  created_at INTEGER NOT NULL
+);
+
+upsertBookmark:
+INSERT OR REPLACE INTO bookmark
+  (id, work_id, chapter_id, position, excerpt, note, created_at)
+VALUES (?, ?, ?, ?, ?, ?, ?);
+
+selectBookmarks:
+SELECT * FROM bookmark WHERE work_id = ? ORDER BY created_at;
+
+deleteBookmark:
+DELETE FROM bookmark WHERE id = ?;

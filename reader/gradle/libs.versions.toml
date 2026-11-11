@@ -30,6 +30,7 @@ kotlinSerialization = { id = "org.jetbrains.kotlin.plugin.serialization", versio
 androidKmpLibrary = { id = "com.android.kotlin.multiplatform.library", version.ref = "agp" }
 composeMultiplatform = { id = "org.jetbrains.compose", version.ref = "compose" }
 composeCompiler = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
+sqldelight = { id = "app.cash.sqldelight", version.ref = "sqldelight" }
 
 [libraries]
 # --- CMP core (material3 须显式写官方矩阵版本，不能依赖 plugin accessor) ---
@@ -45,6 +46,7 @@ quickjs-converter = { module = "io.github.dokar3:quickjs-kt-converter-ktxseriali
 ksoup = { module = "com.fleeksoft.ksoup:ksoup", version.ref = "ksoup" }
 xmlutil-core = { module = "io.github.pdvrieze.xmlutil:core", version.ref = "xmlutil" }
 korlibs-encoding = { module = "com.soywiz:korlibs-encoding", version.ref = "korlibsEncoding" }
+korlibs-crypto = { module = "com.soywiz:korlibs-crypto", version.ref = "korlibsEncoding" }
 
 # --- network / serialization ---
 ktor-client-core = { module = "io.ktor:ktor-client-core", version.ref = "ktor" }
@@ -53,8 +55,10 @@ ktor-serialization-kotlinx-json = { module = "io.ktor:ktor-serialization-kotlinx
 ktor-client-okhttp = { module = "io.ktor:ktor-client-okhttp", version.ref = "ktor" }
 ktor-client-darwin = { module = "io.ktor:ktor-client-darwin", version.ref = "ktor" }
 ktor-client-cio = { module = "io.ktor:ktor-client-cio", version.ref = "ktor" }
+ktor-client-mock = { module = "io.ktor:ktor-client-mock", version.ref = "ktor" }
 kotlinx-serialization-json = { module = "org.jetbrains.kotlinx:kotlinx-serialization-json", version.ref = "serialization" }
 kotlinx-coroutines-core = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "coroutines" }
+kotlinx-coroutines-test = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-test", version.ref = "coroutines" }
 kotlinx-datetime = { module = "org.jetbrains.kotlinx:kotlinx-datetime", version.ref = "datetime" }
 
 # --- persistence ---

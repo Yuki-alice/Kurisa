@@ -1,0 +1,37 @@
+CREATE TABLE work (
+  id TEXT PRIMARY KEY,
+  source_key TEXT NOT NULL,
+  source_work_id TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  title TEXT NOT NULL,
+  subtitle TEXT,
+  cover TEXT,
+  description TEXT,
+  tags_json TEXT NOT NULL DEFAULT '[]',
+  stars REAL,
+  language TEXT,
+  url TEXT,
+  added_at INTEGER NOT NULL,
+  last_read_at INTEGER,
+  UNIQUE(source_key, source_work_id)
+);
+CREATE INDEX idx_work_source ON work(source_key);
+CREATE INDEX idx_work_read ON work(last_read_at DESC);
+
+upsertWork:
+INSERT OR REPLACE INTO work
+  (id, source_key, source_work_id, kind, title, subtitle, cover, description,
+   tags_json, stars, language, url, added_at, last_read_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+
+selectWork:
+SELECT * FROM work WHERE id = ?;
+
+selectShelfWorks:
+SELECT w.* FROM work w
+INNER JOIN shelf_item si ON si.work_id = w.id
+WHERE si.shelf_id = ?
+ORDER BY si.added_at DESC;
+
+deleteWork:
+DELETE FROM work WHERE id = ?;

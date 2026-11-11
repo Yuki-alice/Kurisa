@@ -17,3 +17,8 @@ dependencyResolutionManagement {
 
 rootProject.name = "reader"
 include(":source:contract")
+include(":core:model")
+include(":data:db")
+include(":data:network")
+include(":data:repository")
+include(":source:registry")

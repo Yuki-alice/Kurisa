@@ -1,0 +1,17 @@
+CREATE TABLE cookie (
+  domain TEXT NOT NULL,
+  name TEXT NOT NULL,
+  value TEXT NOT NULL,
+  expires_at INTEGER,
+  PRIMARY KEY(domain, name)
+);
+
+upsertCookie:
+INSERT OR REPLACE INTO cookie (domain, name, value, expires_at)
+VALUES (?, ?, ?, ?);
+
+selectCookies:
+SELECT * FROM cookie WHERE domain = ?;
+
+deleteCookiesOfHost:
+DELETE FROM cookie WHERE domain = ?;

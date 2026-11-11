@@ -1,0 +1,22 @@
+CREATE TABLE download_task (
+  id TEXT PRIMARY KEY,
+  work_id TEXT NOT NULL,
+  chapter_id TEXT NOT NULL,
+  status TEXT NOT NULL,
+  priority INTEGER NOT NULL DEFAULT 0,
+  done INTEGER NOT NULL DEFAULT 0,
+  total INTEGER NOT NULL DEFAULT 0,
+  error TEXT,
+  created_at INTEGER NOT NULL
+);
+
+upsertDownload:
+INSERT OR REPLACE INTO download_task
+  (id, work_id, chapter_id, status, priority, done, total, error, created_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);
+
+selectDownloads:
+SELECT * FROM download_task ORDER BY priority DESC, created_at;
+
+deleteDownload:
+DELETE FROM download_task WHERE id = ?;

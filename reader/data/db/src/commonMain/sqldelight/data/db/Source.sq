@@ -1,0 +1,33 @@
+CREATE TABLE source (
+  `key` TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  version TEXT NOT NULL,
+  api_version INTEGER NOT NULL,
+  kinds TEXT NOT NULL,
+  capabilities TEXT NOT NULL,
+  domains TEXT NOT NULL,
+  install_path TEXT NOT NULL,
+  sha256 TEXT NOT NULL,
+  signature_ok INTEGER NOT NULL,
+  enabled INTEGER NOT NULL DEFAULT 1,
+  settings_json TEXT NOT NULL DEFAULT '{}',
+  updated_at INTEGER NOT NULL
+);
+
+upsertSource:
+INSERT OR REPLACE INTO source
+  (`key`, name, version, api_version, kinds, capabilities, domains,
+   install_path, sha256, signature_ok, enabled, settings_json, updated_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+
+selectSource:
+SELECT * FROM source WHERE `key` = ?;
+
+selectEnabledSources:
+SELECT * FROM source WHERE enabled = 1 ORDER BY `key`;
+
+setSourceEnabled:
+UPDATE source SET enabled = ?, updated_at = ? WHERE `key` = ?;
+
+deleteSource:
+DELETE FROM source WHERE `key` = ?;

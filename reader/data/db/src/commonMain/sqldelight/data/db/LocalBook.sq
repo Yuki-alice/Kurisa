@@ -1,0 +1,15 @@
+CREATE TABLE local_book (
+  id TEXT PRIMARY KEY,
+  path TEXT NOT NULL,
+  format TEXT NOT NULL,
+  title TEXT NOT NULL,
+  cover TEXT,
+  imported_at INTEGER NOT NULL
+);
+
+upsertLocalBook:
+INSERT OR REPLACE INTO local_book (id, path, format, title, cover, imported_at)
+VALUES (?, ?, ?, ?, ?, ?);
+
+selectLocalBooks:
+SELECT * FROM local_book ORDER BY imported_at DESC;

@@ -1,0 +1,23 @@
+CREATE TABLE chapter (
+  id TEXT PRIMARY KEY,
+  work_id TEXT NOT NULL REFERENCES work(id) ON DELETE CASCADE,
+  source_chapter_id TEXT NOT NULL,
+  title TEXT NOT NULL,
+  ordinal INTEGER NOT NULL,
+  payload_json TEXT,
+  downloaded INTEGER NOT NULL DEFAULT 0,
+  updated_at INTEGER NOT NULL,
+  UNIQUE(work_id, source_chapter_id)
+);
+CREATE INDEX idx_chapter_work ON chapter(work_id, ordinal);
+
+upsertChapter:
+INSERT OR REPLACE INTO chapter
+  (id, work_id, source_chapter_id, title, ordinal, payload_json, downloaded, updated_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?);
+
+selectChapters:
+SELECT * FROM chapter WHERE work_id = ? ORDER BY ordinal;
+
+deleteChaptersOfWork:
+DELETE FROM chapter WHERE work_id = ?;
