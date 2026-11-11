@@ -87,8 +87,17 @@ class SourceRuntime(
 
     fun has(capability: SourceCapability): Boolean = descriptor.has(capability)
 
-    override suspend fun searchWorks(keyword: String, optionsJson: String, page: Int): String =
-        withPolicy("search.load") { engine.searchWorks(keyword, optionsJson, page) }
+    override suspend fun searchWorks(keyword: String, optionsJson: String, page: Int): String {
+        if (!descriptor.hasSearchLoad) {
+            throw SourcePluginException(
+                if (descriptor.hasSearchNext) {
+                    "源仅提供 search.loadNext（游标分页），请改用 searchNext()"
+                } else "源未提供 search.load",
+                SourceErrorKind.CONTRACT,
+            )
+        }
+        return withPolicy("search.load") { engine.searchWorks(keyword, optionsJson, page) }
+    }
 
     override suspend fun defaultSearchOptions(): String =
         withPolicy("search.load") { engine.defaultSearchOptions() }

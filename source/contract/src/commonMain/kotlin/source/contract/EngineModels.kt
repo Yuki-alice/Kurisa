@@ -130,6 +130,8 @@ data class SourceDescriptor(
     val translationLocales: List<String> = emptyList(),
     val hasInit: Boolean = false,
     val hasImageLoad: Boolean = false,
+    /** Venera 双分页模型：源可能只有 loadNext 而没有 load。 */
+    val hasSearchLoad: Boolean = true,
     val hasSearchNext: Boolean = false,
     val hasExplore: Boolean = false,
     val hasCategory: Boolean = false,
@@ -216,6 +218,8 @@ data class SourceDescriptor(
                 translationLocales = locales,
                 hasInit = bool("hasInit"),
                 hasImageLoad = bool("hasImageLoad"),
+                // 旧版 describe() 输出没有该字段，缺省视为有 load（向后兼容）。
+                hasSearchLoad = o["hasSearchLoad"]?.jsonPrimitive?.booleanOrNull ?: true,
                 hasSearchNext = bool("hasSearchNext"),
                 hasExplore = bool("hasExplore"),
                 hasCategory = bool("hasCategory"),

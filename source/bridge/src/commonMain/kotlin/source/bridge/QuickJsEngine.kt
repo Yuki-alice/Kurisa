@@ -71,10 +71,8 @@ class QuickJsEngine(
     override suspend fun load(script: String) {
         val name = findClass(script)
             ?: throw IllegalArgumentException("未找到 `class X extends ComicSource`")
-        runCall(
-            name, script,
-            "if (typeof __source.init === 'function') { await __source.init(); } 'ok';",
-        )
+        // init 由 runCall 在每次求值的上下文里统一执行，这里只验证脚本可实例化。
+        runCall(name, script, "'ok';")
         loadedScript = script
         className = name
     }
@@ -101,6 +99,7 @@ class QuickJsEngine(
         "convert" -> handleConvert(payload)
         "cookie" -> handleCookie(payload)
         "utils" -> handleUtils(payload)
+        "ui" -> handleUi(payload)
         else -> throw SourceBridgeException("未知同步方法：$method")
     }
 
@@ -122,7 +121,7 @@ class QuickJsEngine(
     override suspend fun searchWorks(keyword: String, optionsJson: String, page: Int): String {
         val kw = Json.encodeToString(kotlinx.serialization.serializer<String>(), keyword)
         return runCall(
-            "await __source.search.load($kw, $optionsJson, $page)" +
+            "await Promise.resolve(__source.search.load($kw, $optionsJson, $page))" +
                 ".then(function (r) { return JSON.stringify(r); })"
         )
     }
@@ -153,7 +152,8 @@ class QuickJsEngine(
         val id = Json.encodeToString(kotlinx.serialization.serializer<String>(), workId)
         val ns = if (kind == ContentKind.NOVEL) "novel" else "comic"
         return runCall(
-            "await __source.$ns.loadInfo($id).then(function (r) { return JSON.stringify(r, " +
+            "await Promise.resolve(__source.$ns.loadInfo($id))" +
+                ".then(function (r) { return JSON.stringify(r, " +
                 "function (k, v) { return v instanceof Map ? Object.fromEntries(v) : v; }); })"
         )
     }
@@ -162,11 +162,13 @@ class QuickJsEngine(
         val w = Json.encodeToString(kotlinx.serialization.serializer<String>(), workId)
         val c = Json.encodeToString(kotlinx.serialization.serializer<String>(), chapterId)
         val call = if (kind == ContentKind.NOVEL) {
-            "await __source.novel.loadChapter($w, $c)"
+            "__source.novel.loadChapter($w, $c)"
         } else {
-            "await __source.comic.loadEp($w, $c)"
+            "__source.comic.loadEp($w, $c)"
         }
-        return runCall("$call.then(function (r) { return JSON.stringify(r); })")
+        return runCall(
+            "await Promise.resolve($call).then(function (r) { return JSON.stringify(r); })"
+        )
     }
 
     override suspend fun invoke(path: String, argsJson: String): String {
@@ -205,6 +207,7 @@ class QuickJsEngine(
                             function("convert") { payload: String -> handleConvert(payload) }
                             function("cookie") { payload: String -> handleCookie(payload) }
                             function("utils") { payload: String -> handleUtils(payload) }
+                            function("ui") { payload: String -> handleUi(payload) }
                             function("log") { msg: String ->
                                 host.utils.log(msg)
                                 msg.length
@@ -214,8 +217,17 @@ class QuickJsEngine(
                             asyncFunction("delay") { payload: String -> handleDelay(payload) }
                         }
                         evaluate<String>(polyfillOf(appVersion, locale, platform))
-                        evaluate<String>(script)
+                        // 源脚本顶层可能有 for 循环/赋值（其完成值是 number/object），
+                        // quickjs-kt 的 evaluate<String> 没有对应类型转换器；
+                        // 末尾追加字符串表达式，保证求值结果恒为 String，且不改变脚本语义。
+                        evaluate<String>(script + "\n;'';")
                         evaluate<String>("const __source = new $className();")
+                        // 单发模型每次求值都重建实例：init() 必须在本次上下文重跑，
+                        // 否则源在 init 中挂载的实例方法/域名配置会丢失（Venera 常驻 Isolate
+                        // 只跑一次，这里必须每次自洽；重状态仍应经 loadData/saveData 落 KV）。
+                        evaluate<String>(
+                            "if (typeof __source.init === 'function') { await __source.init(); } 'ok';"
+                        )
                         evaluate<String>(snippet)
                     }
                 }
@@ -335,6 +347,8 @@ class QuickJsEngine(
             ?: return ""
         val op = o["op"]?.jsonPrimitive?.contentOrNull ?: return ""
         val input = o["value"]?.jsonPrimitive?.contentOrNull.orEmpty()
+        val key = o["key"]?.jsonPrimitive?.contentOrNull.orEmpty()
+        val hash = o["hash"]?.jsonPrimitive?.contentOrNull.orEmpty()
         return when (op) {
             "md5" -> host.convert.md5(input)
             "sha256" -> host.convert.sha256(input)
@@ -342,9 +356,14 @@ class QuickJsEngine(
             "decodeBase64" -> runCatching {
                 host.convert.decodeBase64(input).decodeToString()
             }.getOrDefault("")
-            "encodeUtf8", "decodeUtf8" -> input
+            "encodeUtf8", "decodeUtf8", "encodeGbk", "decodeGbk" -> input
             "hexEncode" -> hexOf(input)
-            // sha1/sha512/AES/RSA 属扩展能力，当前宿主不开放；返回空串而非伪造结果。
+            "hmacString", "hmac" ->
+                if (hash.isBlank() || hash.lowercase() == "sha256") {
+                    HmacSha256.hex(key.toUtf8Bytes(), input.toUtf8Bytes())
+                } else ""
+            // sha1/sha512/AES/RSA 属未开放能力：给形状桩（空串），
+            // 避免源脚本因 "not a function" 在 init 阶段整体崩溃；不伪造结果。
             else -> ""
         }
     }
@@ -372,6 +391,33 @@ class QuickJsEngine(
             }
             "randomDouble" -> Random.nextDouble().toString()
             else -> ""
+        }
+    }
+
+    /**
+     * UI 同步桥（桌面端降级，架构 4.5 / ADR-009）。
+     * 真实源大量使用 UI.* 作为「有则用、无则过」的可选能力：
+     * 这里不弹窗、不跳转，只记日志并返回中性值，避免源在 init 阶段因缺方法崩溃。
+     * 需要用户手势的 WebView 登录/外链仍走异步 `ui.showMessage` / M6 平台实现。
+     */
+    private fun handleUi(payload: String): String {
+        val o = runCatching { json.parseToJsonElement(payload).jsonObject }.getOrNull()
+            ?: return "0"
+        val op = o["op"]?.jsonPrimitive?.contentOrNull
+        return when (op) {
+            "showMessage" -> {
+                host.utils.log("[source-ui] " + o["text"]?.jsonPrimitive?.contentOrNull.orEmpty())
+                "1"
+            }
+            "showDialog" -> {
+                host.utils.log("[source-ui:dialog] " + o["title"]?.jsonPrimitive?.contentOrNull.orEmpty())
+                "1"
+            }
+            "launchUrl" -> "0" // 桌面端不打开外部链接；不抛异常中断源
+            "showLoading" -> "0"
+            "cancelLoading" -> "1"
+            "showInputDialog", "showSelectDialog" -> "null"
+            else -> "0"
         }
     }
 
@@ -534,6 +580,7 @@ class QuickJsEngine(
                 translationLocales: keys(s.translation),
                 hasInit: typeof s.init === 'function',
                 hasSearch: !!s.search,
+                hasSearchLoad: !!(s.search && s.search.load),
                 hasSearchNext: !!(s.search && s.search.loadNext),
                 hasComic: !!s.comic,
                 hasNovel: !!s.novel,
@@ -611,6 +658,18 @@ class QuickJsEngine(
                   }
                 }, this);
               }
+              /** 元素级选择器：以自身 innerHtml 建临时文档查询（Venera HtmlElement 形状）。 */
+              querySelectorAll(css) {
+                const d = new HtmlDocument(this.innerHtml || '');
+                const r = d.querySelectorAll(css);
+                d.dispose();
+                return r;
+              }
+              querySelector(css) {
+                const a = this.querySelectorAll(css);
+                return a[0] || null;
+              }
+              getElementById(id) { return this.querySelector('#' + id); }
             }
             class HtmlDocument {
               constructor(html) {
@@ -702,11 +761,67 @@ class QuickJsEngine(
             const Convert = {
               md5: function (s) { return __host.convert(JSON.stringify({ op: 'md5', value: String(s) })); },
               sha256: function (s) { return __host.convert(JSON.stringify({ op: 'sha256', value: String(s) })); },
+              sha1: function (s) { return __host.convert(JSON.stringify({ op: 'sha1', value: String(s) })); },
+              sha512: function (s) { return __host.convert(JSON.stringify({ op: 'sha512', value: String(s) })); },
               encodeBase64: function (s) { return __host.convert(JSON.stringify({ op: 'encodeBase64', value: String(s) })); },
               decodeBase64: function (s) { return __host.convert(JSON.stringify({ op: 'decodeBase64', value: String(s) })); },
               encodeUtf8: function (s) { return __host.convert(JSON.stringify({ op: 'encodeUtf8', value: String(s) })); },
               decodeUtf8: function (s) { return __host.convert(JSON.stringify({ op: 'decodeUtf8', value: String(s) })); },
-              hexEncode: function (s) { return __host.convert(JSON.stringify({ op: 'hexEncode', value: String(s) })); }
+              encodeGbk: function (s) { return __host.convert(JSON.stringify({ op: 'encodeGbk', value: String(s) })); },
+              decodeGbk: function (s) { return __host.convert(JSON.stringify({ op: 'decodeGbk', value: String(s) })); },
+              hexEncode: function (s) { return __host.convert(JSON.stringify({ op: 'hexEncode', value: String(s) })); },
+              hmacString: function (key, value, hash) {
+                return __host.convert(JSON.stringify({
+                  op: 'hmacString', key: String(key), value: String(value), hash: String(hash || 'sha256')
+                }));
+              },
+              hmac: function (key, value, hash) { return Convert.hmacString(key, value, hash); },
+              decryptAesEcb: function (v, key) {
+                return __host.convert(JSON.stringify({ op: 'decryptAesEcb', value: String(v), key: String(key) }));
+              },
+              decryptAesCbc: function (v, key, iv) {
+                return __host.convert(JSON.stringify({
+                  op: 'decryptAesCbc', value: String(v), key: String(key), iv: String(iv)
+                }));
+              },
+              decryptAesCfb: function (v, key, iv) {
+                return __host.convert(JSON.stringify({
+                  op: 'decryptAesCfb', value: String(v), key: String(key), iv: String(iv)
+                }));
+              },
+              decryptAesOfb: function (v, key, iv) {
+                return __host.convert(JSON.stringify({
+                  op: 'decryptAesOfb', value: String(v), key: String(key), iv: String(iv)
+                }));
+              },
+              decryptRsa: function (v, key) {
+                return __host.convert(JSON.stringify({ op: 'decryptRsa', value: String(v), key: String(key) }));
+              }
+            };
+
+            /** UI 可选能力的桌面端降级形状（ADR-009）：不弹窗、不跳转、不抛错。 */
+            const UI = {
+              showMessage: function (msg) {
+                __host.ui(JSON.stringify({ op: 'showMessage', text: String(msg) }));
+              },
+              showDialog: function (title, content, actions) {
+                __host.ui(JSON.stringify({ op: 'showDialog', title: String(title) }));
+              },
+              launchUrl: function (url) {
+                return __host.ui(JSON.stringify({ op: 'launchUrl', url: String(url) })) === '1';
+              },
+              showLoading: function () {
+                return Number(__host.ui(JSON.stringify({ op: 'showLoading' })));
+              },
+              cancelLoading: function (id) {
+                __host.ui(JSON.stringify({ op: 'cancelLoading', id: id }));
+              },
+              showInputDialog: function () {
+                return null;
+              },
+              showSelectDialog: function () {
+                return null;
+              }
             };
 
             function createUuid() { return __host.utils(JSON.stringify({ op: 'uuid' })); }

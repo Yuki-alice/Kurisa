@@ -153,3 +153,47 @@ internal object Base64Codec {
         return out.toByteArray()
     }
 }
+
+/**
+ * HMAC-SHA256（Venera `Convert.hmacString(..., 'sha256')` 的宿主实现）。
+ *
+ * 复用 `:core:model` 已三端验证的纯 Kotlin SHA-256（[core.model.sha256HexBytes]），
+ * 不引入新依赖；输出为小写 hex，与 Dart `Digest.toString()` 一致。
+ * 密钥超过块长时先哈希压缩；只用于源脚本的站点签名，不用于宿主鉴权。
+ */
+internal object HmacSha256 {
+    private const val BLOCK = 64
+
+    fun hex(key: ByteArray, value: ByteArray): String {
+        val k0 = if (key.size > BLOCK) sha256Bytes(key) else key
+        val k = ByteArray(BLOCK) { i -> if (i < k0.size) k0[i] else 0 }
+        val inner = ByteArray(BLOCK + value.size)
+        val outer = ByteArray(BLOCK + 32)
+        for (i in 0 until BLOCK) {
+            val b = k[i].toInt() and 0xff
+            inner[i] = (b xor 0x36).toByte()
+            outer[i] = (b xor 0x5c).toByte()
+        }
+        value.copyInto(inner, BLOCK)
+        sha256Bytes(inner).copyInto(outer, BLOCK)
+        return core.model.sha256HexBytes(outer)
+    }
+
+    private fun sha256Bytes(bytes: ByteArray): ByteArray =
+        hexToBytes(core.model.sha256HexBytes(bytes))
+
+    private fun hexToBytes(hex: String): ByteArray {
+        val out = ByteArray(hex.length / 2)
+        for (i in out.indices) {
+            out[i] = ((nibble(hex[i * 2]) shl 4) or nibble(hex[i * 2 + 1])).toByte()
+        }
+        return out
+    }
+
+    private fun nibble(c: Char): Int = when (c) {
+        in '0'..'9' -> c.code - '0'.code
+        in 'a'..'f' -> c.code - 'a'.code + 10
+        in 'A'..'F' -> c.code - 'A'.code + 10
+        else -> 0
+    }
+}

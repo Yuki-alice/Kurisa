@@ -190,6 +190,8 @@ export interface SourceDescriptor {
   translationLocales: string[];
   hasInit: boolean;
   hasImageLoad: boolean;
+  /** 源是否有 search.load；为 false 时宿主应改用 searchNext()（游标分页）。 */
+  hasSearchLoad: boolean;
   hasSearchNext: boolean;
 }
 
@@ -295,14 +297,41 @@ export declare class HtmlElement {
   localName: string;
 }
 
+/**
+ * Convert：Venera 用 ArrayBuffer，本宿主统一以字符串传递（三端一致的 UTF-8 语义）。
+ * `hmacString` 为真实 HMAC-SHA256（小写 hex）；sha1/sha512/AES/RSA 当前是形状桩，
+ * 返回空串而非伪造结果，源作者应自行判空（见 docs/real-source-e2e.md）。
+ */
 export declare const Convert: {
   md5(s: string): string;
+  sha1(s: string): string;
   sha256(s: string): string;
+  sha512(s: string): string;
   encodeBase64(s: string): string;
   decodeBase64(s: string): string;
   encodeUtf8(s: string): string;
   decodeUtf8(s: string): string;
+  encodeGbk(s: string): string;
+  decodeGbk(s: string): string;
   hexEncode(s: string): string;
+  hmacString(key: string, value: string, hash?: 'sha256' | 'sha512' | 'md5' | 'sha1'): string;
+  hmac(key: string, value: string, hash?: string): string;
+  decryptAesEcb(value: string, key: string): string;
+  decryptAesCbc(value: string, key: string, iv: string): string;
+  decryptAesCfb(value: string, key: string, iv: string): string;
+  decryptAesOfb(value: string, key: string, iv: string): string;
+  decryptRsa(value: string, key: string): string;
+};
+
+/** UI：需 UI 上下文，桌面端降级（ADR-009），不弹窗/不跳转/不抛错。 */
+export declare const UI: {
+  showMessage(message: string): void;
+  showDialog(title: string, content: string, actions?: unknown[]): void;
+  launchUrl(url: string): boolean;
+  showLoading(onCancel?: (() => void) | null): number;
+  cancelLoading(id: number): void;
+  showInputDialog(title: string, validator?: unknown): string | null;
+  showSelectDialog(title: string, options: string[], initialIndex?: number): number | null;
 };
 
 export declare const Utils: {

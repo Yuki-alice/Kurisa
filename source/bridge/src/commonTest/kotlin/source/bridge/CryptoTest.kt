@@ -15,6 +15,22 @@ class CryptoTest {
     }
 
     @Test
+    fun hmacSha256Rfc4231Vectors() {
+        // RFC 4231 TC1 / TC2：确保 Venera Convert.hmacString 的宿主实现三端一致。
+        assertEquals(
+            "b0344c61d8db38535ca8afceaf0bf12b881dc200c9833da726e9376c2e32cff7",
+            HmacSha256.hex(ByteArray(20) { 0x0b.toByte() }, "Hi There".toUtf8BytesCompat()),
+        )
+        assertEquals(
+            "5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843",
+            HmacSha256.hex(
+                "Jefe".toUtf8BytesCompat(),
+                "what do ya want for nothing?".toUtf8BytesCompat(),
+            ),
+        )
+    }
+
+    @Test
     fun base64RoundTrip() {
         assertEquals("", Base64Codec.encode(byteArrayOf()))
         assertEquals("TWFu", Base64Codec.encode("Man".toUtf8BytesCompat()))

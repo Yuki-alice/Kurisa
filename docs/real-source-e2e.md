@@ -52,6 +52,9 @@ IMAGE_LOAD, ACCOUNT, SETTINGS, TRANSLATION] requests=2 settings=1 images=1`。
 详情是对象），当前单份 fixture 未覆盖；WebView 登录、`UI.*`、`modifyImage`、
 缩略图管线仍属后续能力。
 
+> 单源验证之后已扩展为官方仓库全量矩阵（34 个脚本），结论见
+> `docs/source-compatibility.md`；本文保留单源主链路的细粒度验证记录。
+
 ## 5. 队列第 1 项剩余部分
 
 引擎侧已就绪，仍需两处产品接线：

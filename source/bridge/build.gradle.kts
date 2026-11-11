@@ -51,7 +51,7 @@ kotlin {
 // 本地真实源 E2E：refs 目录与域名白名单由运行者通过 -D 提供，缺省时测试自动跳过。
 // 代码库内不含任何站点 URL 或第三方源脚本（C1 / GPL 隔离）。
 tasks.withType<org.gradle.api.tasks.testing.Test>().configureEach {
-    listOf("kurisa.refsDir", "kurisa.e2eDomains").forEach { key ->
+    listOf("kurisa.refsDir", "kurisa.e2eDomains", "kurisa.e2eReport").forEach { key ->
         System.getProperty(key)?.let { systemProperty(key, it) }
     }
 }
