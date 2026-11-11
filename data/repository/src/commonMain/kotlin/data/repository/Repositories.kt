@@ -14,6 +14,7 @@ import kotlinx.coroutines.flow.map
 import kotlinx.serialization.json.Json
 import source.contract.ContentKind
 import source.contract.Work
+import source.hostapi.HostStorage
 
 /**
  * 书架仓库（离线优先，cache-first）。
@@ -142,6 +143,25 @@ internal class ProgressRepositoryImpl(private val db: ReaderDatabase) : Progress
 
 fun createShelfRepository(db: ReaderDatabase): ShelfRepository = ShelfRepositoryImpl(db)
 fun createProgressRepository(db: ReaderDatabase): ProgressRepository = ProgressRepositoryImpl(db)
+
+/**
+ * 源 KV 仓（`source_kv` 表；主键含 source_key，跨源隔离由 schema 保证）。
+ * 同步阻塞调用——只允许在源串行 dispatcher 上调用，禁止 Main（见 bridge 约定）。
+ */
+class DbKvStore(private val db: ReaderDatabase) : HostStorage {
+    override fun get(sourceKey: String, key: String): String? =
+        db.sourceKvQueries.getKv(sourceKey, key).executeAsOneOrNull()
+
+    override fun set(sourceKey: String, key: String, value: String) {
+        db.sourceKvQueries.putKv(sourceKey, key, value)
+    }
+
+    override fun delete(sourceKey: String, key: String) {
+        db.sourceKvQueries.deleteKv(sourceKey, key)
+    }
+}
+
+fun createKvStore(db: ReaderDatabase): HostStorage = DbKvStore(db)
 
 /** 下载任务仓库（任务状态落 `download_task`，执行引擎见 `:data:download`）。 */
 interface DownloadTaskRepository {

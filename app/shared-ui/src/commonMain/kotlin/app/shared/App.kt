@@ -18,6 +18,7 @@ import feature.explore.ExploreRoute
 import feature.explore.ExploreScreen
 import feature.reader.ReaderRoute
 import feature.reader.ReaderScreen
+import feature.reader.NoopChapterProvider
 import feature.search.SearchRoute
 import feature.search.SearchScreen
 import feature.settings.SettingsRoute
@@ -77,7 +78,12 @@ fun App() {
                         )
                     }
                     is ReaderRoute -> NavEntry(key) {
-                        ReaderScreen(key.workId, key.chapterId, onBack = { backStack.removeLastOrNull() })
+                        ReaderScreen(
+                            key.workId, key.chapterId,
+                            onBack = { backStack.removeLastOrNull() },
+                            chapters = NoopChapterProvider,
+                            domains = emptySet(),
+                        )
                     }
                     is SourcesRoute -> NavEntry(key) { SourcesScreen() }
                     is DownloadsRoute -> NavEntry(key) { DownloadsScreen() }

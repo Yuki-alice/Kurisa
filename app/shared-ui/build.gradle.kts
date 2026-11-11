@@ -45,6 +45,7 @@ kotlin {
             implementation(libs.kotlinx.serialization.json)
             implementation(libs.kotlinx.coroutines.core)
             implementation(project(":core:model"))
+            implementation(project(":core:reader"))
             implementation(project(":core:designsystem"))
             implementation(project(":feature:shelf"))
             implementation(project(":feature:explore"))

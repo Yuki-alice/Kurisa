@@ -35,6 +35,7 @@ kotlin {
         commonMain.dependencies {
             implementation(project(":core:model"))
             implementation(project(":source:contract"))
+            implementation(project(":source:hostapi"))
             implementation(project(":data:db"))
             implementation(project(":data:network"))
             implementation(libs.sqldelight.coroutines.extensions)

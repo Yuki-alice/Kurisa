@@ -52,9 +52,9 @@ fun ReaderScreen(
     workId: String,
     chapterId: String,
     onBack: () -> Unit,
-    chapters: ChapterProvider = DemoChapterProvider,
+    chapters: ChapterProvider,
+    domains: Set<String>,
     progress: ProgressRepository = NoopProgressRepository,
-    domains: Set<String> = DemoChapterProvider.domains,
 ) {
     // 网络栈装配（Koin M5 前手写：CookieStore 按 composition 记忆；
     // 会话级共享随 M5 DI 落地；demo 源无鉴权需求）。
