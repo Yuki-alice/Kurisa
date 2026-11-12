@@ -5,7 +5,7 @@ import data.images.ImageRequest
 import source.contract.ImageLoadConfig
 
 /**
- * `comic.onImageLoad` → `:data:images` 抓图管线的接线（docs/plugin-engine.md §7）。
+ * `comic.onImageLoad` → `:data:images` 抓图管线的接线（归一化语义见 `HOST-SDK.md` § Model）。
  * 白名单/Cookie/配对 UA/审计仍由 `SourceImageFetcher` 在出口强制；
  * 本层只负责把已 sanitize 的配置翻译成宿主请求。
  */

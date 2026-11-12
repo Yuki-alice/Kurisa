@@ -37,5 +37,8 @@ kotlin {
             implementation(project(":core:model"))
             implementation(project(":core:designsystem"))
         }
+        commonTest.dependencies {
+            implementation(kotlin("test"))
+        }
     }
 }

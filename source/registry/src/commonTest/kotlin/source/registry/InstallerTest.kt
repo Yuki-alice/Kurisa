@@ -92,4 +92,47 @@ class InstallerTest {
         assertEquals(0, SourceInstaller.compareSemver("1.0.0", "1.0.0"))
         assertTrue(SourceInstaller.compareSemver("1.0.0", "1.0.0-beta") > 0)
     }
+
+    private fun rulesScript(
+        key: String = "ex.rules",
+        version: String = "1.0.0",
+        domains: String = "\"cdn.example.com\"",
+    ) = """
+        {
+          "format": "rules/v1", "key": "$key", "name": "R",
+          "version": "$version", "kind": ["manga"], "domains": [$domains],
+          "baseUrl": "https://cdn.example.com/",
+          "search": {"request": {"url": "/s"}, "list": ".a", "fields": {}},
+          "detail": {"request": {"url": "/d"}, "chapters": {"list": ".c"}},
+          "content": {"images": {"list": "img", "value": "@src | absUrl"}}
+        }
+    """.trimIndent()
+
+    @Test
+    fun rulesPlanOkAndFormatMismatchRejected() {
+        val s = rulesScript()
+        val ok = SourceInstaller.plan(s)
+        assertTrue(ok is SourceInstaller.PlanResult.Ok)
+        val plan = (ok as SourceInstaller.PlanResult.Ok).plan
+        assertEquals("rules/v1", plan.format)
+        assertEquals(listOf("cdn.example.com"), plan.domains)
+        assertTrue(plan.requiresDoubleConfirm)
+
+        // 索引 format 与脚本不一致即拒绝。
+        val sha = SourceSignature.sha256OfScript(s.toUtf8Bytes())
+        val jsIdx = IndexedSource(
+            name = "R", key = "ex.rules", version = "1.0.0",
+            kind = setOf(ContentKind.MANGA), domains = listOf("cdn.example.com"),
+            sha256 = sha, filename = "ex.rules.js",
+        )
+        assertTrue(SourceInstaller.plan(s, jsIdx) is SourceInstaller.PlanResult.Rejected)
+
+        val rulesIdx = jsIdx.copy(format = "rules/v1", filename = "ex.rules.rules.json")
+        assertTrue(SourceInstaller.plan(s, rulesIdx) is SourceInstaller.PlanResult.Ok)
+    }
+
+    @Test
+    fun rulesInvalidJsonRejected() {
+        assertTrue(SourceInstaller.plan("""{"format":"rules/v1"}""") is SourceInstaller.PlanResult.Rejected)
+    }
 }

@@ -14,8 +14,10 @@ kotlin {
             implementation(project(":app:shared-ui"))
             implementation(project(":data:db"))
             implementation(project(":data:repository"))
+            implementation(project(":data:network"))
             implementation(project(":core:reader"))
             implementation(libs.sqldelight.sqlite.driver)
+            implementation(libs.ktor.client.core)
             implementation(compose.desktop.currentOs)
         }
     }

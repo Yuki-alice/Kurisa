@@ -26,6 +26,9 @@ SELECT * FROM source WHERE `key` = ?;
 selectEnabledSources:
 SELECT * FROM source WHERE enabled = 1 ORDER BY `key`;
 
+selectAllSources:
+SELECT * FROM source ORDER BY `key`;
+
 setSourceEnabled:
 UPDATE source SET enabled = ?, updated_at = ? WHERE `key` = ?;
 

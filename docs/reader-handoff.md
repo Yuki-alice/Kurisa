@@ -1,6 +1,7 @@
 # 漫画阅读器交接文档
 
-> 状态：第一轮实现完成，可编译、可测试、可运行；真实源装配与高级渲染仍待下一轮。
+> 状态：真实源装配骨架、源管理页（列表/启用）与源安装器（粘贴/预览/落盘）已落地，
+> 可编译、可测试、可运行；仓库订阅/文件选择与多源路由仍待下一轮。
 > 架构基线见 `docs/architecture.md`，插件契约见 `docs/contract/`。
 
 ## 1. 本轮结论
@@ -100,17 +101,19 @@ ReaderViewModel.ensureWindow()
 
 ```kotlin
 App(
-    readerChapters = realChapterProvider,   // 真实源
-    readerDomains = sourceDomains,          // 域名白名单
-    readerProgress = progressRepository,    // 真实进度仓
-    readerSettings = readerSettingsStore,   // 持久化设置
+    readerChapters = catalog.chapters,   // 真实源（首个 enabled 源，无源退化 Noop）
+    readerDomains = catalog.currentDomains(), // enabled 源白名单并集
+    readerProgress = progressRepository,  // 真实进度仓
+    readerSettings = readerSettingsStore, // 持久化设置
+    sourceCatalog = catalog,              // 源管理页：全量快照 + 启用/禁用 + 运行时失效
 )
 ```
 
 默认值全部为 Noop / 内存实现，保证主仓零预置源（C1）。
 
-**当前唯一缺口**：平台壳尚未构造 `SourceRuntimeManager` 与 `BridgeChapterProvider`，
-因此 App 启动后阅读器拿到的仍是 `NoopChapterProvider`。
+**当前缺口**：仓库订阅（index.json 拉取/签名 TOFU 绑定）与文件选择器（FileKit）
+未做，安装入口目前只有脚本粘贴；多源按作品路由（`ReaderRoute` 携带 sourceKey）
+需导航签名变更，随订阅同一轮落地。
 
 ## 4. 运行与验证
 
@@ -181,11 +184,14 @@ cd /workspace/Kurisa
 
 ## 8. 交接检查清单
 
-- [x] `desktopTest` 217/0
+- [x] `desktopTest` 231/0
 - [x] `:app:android:assembleDebug` 成功
 - [x] Android/Desktop 数据库与设置仓库已装配
 - [x] `onImageLoad` 端到端接通
 - [x] 分页 / 长条 / RTL / 双页 / 目录 / 设置面板可用
-- [ ] 真实源 `ChapterProvider` 装配（下一轮 P0）
-- [ ] 源管理页安装流程（下一轮 P0）
+- [x] 真实源 `ChapterProvider` 装配（单活跃源；无源退化 Noop）
+- [x] 源管理页列表/启用/禁用（安装器未做）
+- [x] 源安装器（粘贴脚本 → 权限预览 → 二次确认 → 落盘入库 → 即装即用）
+- [ ] 仓库订阅/文件选择器（下一轮 P0）
+- [ ] 多源按作品路由（`ReaderRoute` 携带 sourceKey，下一轮 P0）
 - [ ] iOS 构建验证（需 macOS）

@@ -370,8 +370,9 @@ reader/
 
 ## 4. 扩展源系统（核心）
 
-> 宿主侧插件引擎的装配、能力探测、错误语义、设置与图片加载配置的落地说明见
-> `docs/plugin-engine.md`；JS 侧声明以 `docs/contract/source.d.ts` 为准。
+> 宿主侧插件引擎的**目标态设计**见 `docs/plugin-system/DESIGN.md`，重构顺序见
+> `docs/plugin-system/REFACTOR-PLAN.md`（`docs/plugin-engine.md` 已归档，仅描述 v1 实现）；
+> JS 侧声明以 `docs/contract/source.d.ts` 为准。
 
 ### 4.1 设计目标与兼容策略
 
@@ -449,6 +450,12 @@ SourceRuntime.call(path, args)
    └─ 能力门 → 引擎调用 → 错误分类 → LOGIN_EXPIRED 重放一次 → 原始 JSON
 ```
 
+> **状态说明（2026-11-12）**：本节流程图与以下两段描述的是 **v1 实现现状**。其前提
+> （quickjs-kt 无法长驻、`quickJs {}` 阅后即焚）已被证伪：上游 1.0.18 提供
+> `QuickJs.create(dispatcher)`、字节码缓存与类型化桥，与本文 ADR-003（第 99 行）及
+> §4.6.3（第 569 行）一致。**目标态以 `docs/plugin-system/DESIGN.md` 为准**，
+> 落地顺序见 `docs/plugin-system/REFACTOR-PLAN.md`；P0 完成前以下仍是当前代码行为。
+
 引擎采用单发模型（quickjs-kt 的 `quickJs {}` 阅后即焚）：缓存的是「脚本 + 描述符 +
 宿主配置」，不是常驻 JS context；跨调用状态一律经 `loadData/saveData` 落宿主 KV。
 `describe()` 只读取字段形状，不执行任何能力方法、不触发网络。
@@ -497,7 +504,8 @@ Chapter    { id, title, payload }   // payload: {type:'images', urls} | {type:'t
 **错误约定**：JS 用字符串 `throw` 表达可识别错误，宿主按子串分类为
 `LOGIN_EXPIRED`（重登后重放一次）/ `RATE_LIMITED`（交上层退避，不重放）/
 `NOT_FOUND`（不重试）/ `PERMISSION` / `TIMEOUT` / `CONTRACT` / `EXECUTION`；
-分类与重放边界见 `docs/plugin-engine.md` §6。`throw 'Login expired'` 沿用 Venera 行为。
+分类与重放边界见 `docs/plugin-system/DESIGN.md` §10。`throw 'Login expired'` 沿用 Venera 行为
+（目标态改为结构化错误码，兼容期保留子串分类 fallback）。
 
 #### 4.4.3 小说扩展（新增）
 

@@ -1,13 +1,14 @@
 /**
  * Kurisa 原生扩展 v4 · 类型增量（E1/E2a 已落地，U1/U1b 待定）。
  *
- * - 定位：ADR-011 的类型部分；只增补，不改 source.d.ts v2/v3 任一冻结语义。
+ * - 定位：v4 类型增量；只增补，不改 source.d.ts v2/v3 任一冻结语义。
+ *   设计依据见 `docs/plugin-system/DESIGN.md`（ADR-011 草稿已归档，不再作为引用）。
  * - 用法：import type 复用 v2 基类，本文件只声明 v4 增量。
  * - 已实现：能力位（novelChapter/htmlHelper/cryptoAes/video/audio，ContractPolicy.V4_CAPABILITIES）、
  *   描述符小说双位（describe 探测 + fromJson 解析）、Html.list/text/attr、
- *   throwLoginExpired/throwNotFound/throwRateLimited、cleanNovelHtml、
+ *   throwLoginExpired/throwNotFound/throwRateLimited、cleanNovelHtml、Cache.getOrPut、
  *   Novel format 透出（BridgeChapterProvider 映射 TextFormat）、AES-ECB/CBC/CFB/OFB、
- *   视频/音频类型与能力扩展点（渲染 deferred，见 D4）。
+ *   视频/音频类型与能力扩展点（播放器未接线）。
  * - 未实现：RSA/GBK 转正（U1/U1b，strictV4 下显式 CONTRACT 拒绝，垫片仍回空串保兼容）；
  *   Stream 载荷与播放器接线（R 渲染，deferred）。
  * - 版本：源头 @apiVersion 4 + @capabilities 新位 opt-in；老源不受影响。
@@ -30,7 +31,7 @@ export type ApiVersion4 = 4;
 /**
  * v4 内容类型扩展（source.d.ts 冻结 manga|novel 不动，此处增补 video|audio）。
  * 宿主解析已支持（ContentKind.of）；仓库索引暂不接纳视频/音频（fail-closed）；
- * 运行时调用侧显式 CONTRACT（渲染 deferred，见 ADR-011 D4）。
+ * 运行时调用侧显式 CONTRACT（视频/音频渲染未接线，目标态见 `docs/plugin-system/DESIGN.md`）。
  */
 export type ContentKindV4 = ContentKind | 'video' | 'audio';
 
@@ -45,7 +46,7 @@ export type SourceCapabilityV4 =
 
 /** v4 描述符增量：只加存在位，不加函数对象（沿 describe 只读字段原则）。 */
 export interface SourceDescriptorV4 extends SourceDescriptor {
-  /** 小说双位：缺一半的实现 ADR-011 要求报 CONTRACT（对标 hasSearchLoad/Next）。 */
+  /** 小说双位：缺一半的实现宿主报 CONTRACT（对标 hasSearchLoad/Next）。 */
   hasNovelLoadInfo: boolean;
   hasNovelLoadChapter: boolean;
 }
@@ -79,6 +80,16 @@ export interface SearchNamespaceV4 extends SearchNamespace {
 export declare function throwLoginExpired(message?: string): never;
 export declare function throwNotFound(message?: string): never;
 export declare function throwRateLimited(message?: string): never;
+
+// ---------- A2. 缓存（HOST-SDK § Store：cache.getOrPut(ttl)） ----------
+
+/**
+ * TTL 记忆化（源私有 KV 命名空间 `cache:<key>:{v,t}`，与 loadData/saveData 互不干扰）。
+ * 只缓存字符串；`ttlMs <= 0` 视为不缓存，直接求值。过期/缺失调 `loader()` 重算并回写。
+ */
+export declare const Cache: {
+  getOrPut(key: string, ttlMs: number, loader: () => unknown | Promise<unknown>): Promise<string>;
+};
 
 // ---------- B. 小说一等公民 ----------
 
@@ -135,7 +146,7 @@ export interface ConvertV4 {
   decryptRsa(value: string, key: string): string;
 }
 
-// ---------- D. 流媒体预留（U6 字段冻结；渲染 deferred，见 ADR-011 D4） ----------
+// ---------- D. 流媒体预留（U6 字段冻结；播放器渲染未接线） ----------
 
 /** 与 Kotlin `StreamType` 同名同值；未知值宿主按 CONTRACT 拒绝。 */
 export type StreamTypeV4 = 'hls' | 'mp4' | 'dash';

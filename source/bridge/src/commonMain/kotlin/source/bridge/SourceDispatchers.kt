@@ -15,6 +15,9 @@ import kotlinx.coroutines.sync.withLock
  */
 interface SourceDispatchers {
     suspend fun dispatcherFor(sourceKey: String): CoroutineDispatcher
+
+    /** 宿主 IO 并发缝（P1：网络/解析走此 dispatcher，JS 求值仍走 per-source 串行）。 */
+    fun ioDispatcher(): CoroutineDispatcher = Dispatchers.Default
 }
 
 class DefaultSourceDispatchers : SourceDispatchers {

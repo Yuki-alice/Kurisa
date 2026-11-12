@@ -21,10 +21,25 @@ data class PluginRuntimeSpec(
     val appVersion: String = "0.0.0",
     val locale: String = "zh_CN",
     val platform: String = "common",
+    /**
+     * DB 稳定标识（`SourceRecord.sha256`，安装期写入）。`signature()` 优先用它，
+     * 不再依赖 `script.hashCode()`（后者要求先读盘，且跨进程不稳定）。
+     * 为空时回退旧语义，保证单测 FakeEngine 零改动。
+     */
+    val scriptSha256: String = "",
+    /**
+     * 源形态（`SOURCE-PACKAGE.md`）：`js/v1`（缺省，长驻 QuickJS）或 `rules/v1`
+     *（纯对象走 Kotlin 规则执行器，不起 JS 引擎）。`signature()` 包含它，
+     * 同脚本不同形态不共享运行时。
+     */
+    val format: String = "js/v1",
 ) {
     /** 版本/脚本/域名/设置变化都要重建运行时（禁用了旧实例后重新探测描述符）。 */
     fun signature(): String = buildString {
-        append(script.length).append(':').append(script.hashCode())
+        append(format).append('|')
+        if (scriptSha256.isNotBlank()) append(scriptSha256) else {
+            append(script.length).append(':').append(script.hashCode())
+        }
         append('|').append(apiVersion)
         append('|').append(domains.sorted().joinToString(","))
         append('|').append(capabilities.map { it.serial }.sorted().joinToString(","))
@@ -89,11 +104,11 @@ class KurisaNativePluginEngineFactory(
 }
 
 /**
- * 插件运行时装配与 LRU 缓存（架构 4.3 / docs/plugin-engine.md §3）。
+ * 插件运行时装配与 LRU 缓存（架构 §4.3 / `docs/plugin-system/DESIGN.md` §4）。
  *
  * 同源串行由 [SourceDispatchers] 保证；此处再用 [Mutex] 串行化「装配」本身，
- * 避免并发首次加载重复实例化。缓存的是「脚本 + 描述符 + 宿主配置」，
- * 不是常驻 JS context（单发模型）。
+ * 避免并发首次加载重复实例化。P0 起缓存的是长驻 JS context 的运行时，
+ * 淘汰/禁用/更新时 `close()` 真关闭（旧单发语义作废）。
  */
 class SourceRuntimeManager(
     private val engines: PluginEngineFactory,
@@ -106,6 +121,8 @@ class SourceRuntimeManager(
 
     private val mutex = Mutex()
     private val cache = LinkedHashMap<String, Entry>()
+    /** 纯函数结果跨运行时共享缓存（`DESIGN.md` §8；源更新/禁用时按源前缀失效）。 */
+    private val pureResults = PureResultCache()
 
     suspend fun acquire(spec: PluginRuntimeSpec): SourceRuntime = mutex.withLock {
         val signature = spec.signature()
@@ -118,7 +135,12 @@ class SourceRuntimeManager(
             existing.runtime.close()
             cache.remove(spec.key)
         }
-        val engine = engines.create(spec, hosts.hostFor(spec))
+        val engine: SourcePluginEngine = if (spec.format == "rules/v1") {
+            // 一体包规则子集：Kotlin 执行器（不起 QuickJS），复用同一 HostApi/描述符/能力交集语义。
+            RulesEngine(spec.key, hosts.hostFor(spec), spec.apiVersion)
+        } else {
+            engines.create(spec, hosts.hostFor(spec))
+        }
         try {
             engine.load(spec.script)
             val descriptor = SourceDescriptor.fromJson(
@@ -147,6 +169,7 @@ class SourceRuntimeManager(
                 engine = engine,
                 onRelogin = { onRelogin(spec.key) },
                 onError = { onError(spec.key, it) },
+                pureCache = pureResults,
             )
             runtime.updateSettings(spec.settingsJson)
             cache[spec.key] = Entry(signature, runtime)
@@ -158,9 +181,11 @@ class SourceRuntimeManager(
         }
     }
 
-    /** 禁用 / 更新 / 内存压力：立刻释放该源运行时。 */
+    /** 禁用 / 更新 / 内存压力：立刻释放该源运行时，并失效其纯函数缓存。 */
     suspend fun invalidate(key: String): Unit = mutex.withLock {
         cache.remove(key)?.runtime?.close()
+        pureResults.invalidatePrefix("img|$key|")
+        pureResults.invalidatePrefix("tr|$key|")
     }
 
     suspend fun close(): Unit = mutex.withLock {

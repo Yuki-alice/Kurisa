@@ -157,8 +157,11 @@ class PolicyTest {
         assertEquals(SourceErrorKind.RATE_LIMITED, ContractPolicy.classifyError("http:429"))
         assertEquals(SourceErrorKind.NOT_FOUND, ContractPolicy.classifyError("NotFound"))
         assertEquals(SourceErrorKind.PERMISSION, ContractPolicy.classifyError("domain-blocked:https://evil.com"))
+        assertEquals(SourceErrorKind.PERMISSION, ContractPolicy.classifyError("unsupported-hostcall"))
         assertEquals(SourceErrorKind.TIMEOUT, ContractPolicy.classifyError("源调用超时（800ms）"))
         assertEquals(SourceErrorKind.CONTRACT, ContractPolicy.classifyError("disposed-or-unknown"))
+        assertEquals(SourceErrorKind.CONTRACT, ContractPolicy.classifyError("""{"error":"unknown-op"}"""))
+        assertEquals(SourceErrorKind.CONTRACT, ContractPolicy.classifyError("""{"error":"too-many-requests"}"""))
         assertEquals(SourceErrorKind.EXECUTION, ContractPolicy.classifyError("TypeError: undefined"))
     }
 }

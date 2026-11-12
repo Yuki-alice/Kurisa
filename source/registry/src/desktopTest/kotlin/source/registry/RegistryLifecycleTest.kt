@@ -65,4 +65,30 @@ class RegistryLifecycleTest {
         assertEquals("1.2.0", back?.version)
         assertTrue(back?.enabled ?: false)
     }
+
+    @Test
+    fun allListsInstalledRegardlessOfEnabled() {
+        val db = openDb()
+        val registry = SourceRegistry(db)
+
+        val s1 = script("1.2.0")
+        val p1 = SourceInstaller.plan(s1) as SourceInstaller.PlanResult.Ok
+        registry.put(SourceInstaller.confirm(db, p1.plan, s1, "sources/a/1.2.0.js", nowMs = 1L))
+        val s2 = script("2.0.0").replace("com.example.novel", "com.example.other")
+        val p2 = SourceInstaller.plan(s2) as SourceInstaller.PlanResult.Ok
+        registry.put(SourceInstaller.confirm(db, p2.plan, s2, "sources/b/2.0.0.js", nowMs = 2L))
+
+        // ORDER BY key：全量有序
+        assertEquals(listOf("com.example.novel", "com.example.other"), registry.allKeys())
+        assertEquals(2, registry.all().size)
+
+        // 禁用后仍在全量列表，仅退出 enabled 集合
+        assertTrue(registry.setEnabled("com.example.novel", false, 3L))
+        assertEquals(listOf("com.example.novel", "com.example.other"), registry.allKeys())
+        assertEquals(
+            listOf(false, true),
+            registry.all().map { it.enabled },
+        )
+        assertEquals(listOf("com.example.other"), registry.enabledKeys())
+    }
 }

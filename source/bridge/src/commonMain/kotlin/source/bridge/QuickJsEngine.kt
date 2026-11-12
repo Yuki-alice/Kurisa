@@ -3,7 +3,6 @@ package source.bridge
 import com.dokar.quickjs.binding.asyncFunction
 import com.dokar.quickjs.binding.define
 import com.dokar.quickjs.binding.function
-import com.dokar.quickjs.quickJs
 import core.model.toUtf8Bytes
 import data.network.CookieStore
 import kotlinx.coroutines.CancellationException
@@ -25,6 +24,7 @@ import source.contract.ContentKind
 import source.hostapi.HostApi
 import source.hostapi.HostResponse
 import kotlin.random.Random
+import kotlin.time.TimeSource
 
 /** 源桥异常（JS 侧错误原文保留在 message，便于源作者排查）。 */
 class SourceBridgeException(message: String, cause: Throwable? = null) : Exception(message, cause)
@@ -37,17 +37,16 @@ class SourceBridgeException(message: String, cause: Throwable? = null) : Excepti
 class HostMissingException(message: String) : Exception(message)
 
 /**
- * quickjs-kt 引擎（架构 4.6 / docs/plugin-engine.md §2）。
+ * quickjs-kt 引擎（架构 4.6.3 / `docs/plugin-system/DESIGN.md` §4；Host SDK 见 `HOST-SDK.md`）。
  *
- * 单发模型：quickjs-kt 的实例构造器私有，`quickJs {}` 块结束即 close，
- * 因此每次调用都新建实例（polyfill + 脚本 + 实例化 + 调用片段一次求值）。
- * 跨调用状态必须经 loadData/saveData 落宿主 KV（Venera 源本就如此编写，
- * 宿主随时可能重建上下文——这是被迫的优点，不是缺陷）。
+ * 长驻模型（P0）：每源一个 `QuickJs.create()` 实例，`load()` 内一次性 `define(__host…)`
+ * + `evaluate(SDK)` + `evaluate(源脚本)` + `new` + `await init()`；`runCall()` 仅 `evaluate(业务片段)`。
+ * 跨调用状态以宿主 KV 为主通道，长驻实例允许 JS 内缓存，重建时须可恢复（旧“每次求值重跑 init”作废）。
  *
  * - 同步桥（`__host.kv/html/convert/cookie/utils/log`）：本地白名单方法，
  *   与 [callSync] 共用同一套 handler（JS 内调与 Kotlin 直调同语义）。
  * - 异步桥（`__host.request` 兼容 + `__host.hostCall` + `__host.delay`）：网络/UI/定时器走宿主协程。
- * - 超时三件套：`evaluationTimeoutMillis` + `withTimeout` + `interruptEvaluation()`；块结束自动 `close()`。
+ * - 超时三件套：`evaluationTimeoutMillis` + `withTimeout` + `interruptEvaluation()`；`close()` 真关闭。
  * - polyfill 对齐 Venera `ComicSource` 形状（声明式设置 / sendMessage 同步桥 /
  *   `fetch` / `HtmlElement` / 受控定时器），只提炼设计，不复制 GPL 代码。
  */
@@ -63,8 +62,8 @@ class QuickJsEngine(
     private val platform: String = "common",
     private val nowMs: () -> Long = { 0L },
     /**
-     * v4 严格模式（E2b 最小原生语义）：RSA/GBK 与非 sha256 的 hmac
-     * 显式抛 CONTRACT 而不是回空串/回输入（禁静默桩，见 ADR-011 U1/U1b）；
+     * v4 严格模式：RSA/GBK 与非 sha256 的 hmac
+     * 显式抛 CONTRACT 而不是回空串/回输入（禁静默桩，见 `HOST-SDK.md §5`）；
      * AES-ECB/CBC/CFB/OFB 已转正，失败时（非法输入/填充错误）同样 CONTRACT。
      * 垫片（2/3）保持 false 保 34 源兼容；apiVersion=4 原生路由必须传 true。
      */
@@ -73,6 +72,16 @@ class QuickJsEngine(
 
     private var loadedScript: String? = null
     private var className: String? = null
+    private var js: com.dokar.quickjs.QuickJs? = null
+    // P0 计数器（验收：单源连续 N 次 invoke，create == 1、init == 1）。
+    private var createCount: Int = 0
+    private var initCount: Int = 0
+    // P3 可观测性：JS 纯求值段计时（宿主 IO 挂起不计入；见 Telemetry.kt）。
+    private var jsCalls: Long = 0
+    private var jsMsTotal: Long = 0
+    private var jsMsMax: Long = 0
+    private var jsTimeouts: Long = 0
+    private var jsErrors: Long = 0
     private val json = Json { ignoreUnknownKeys = true }
 
     private suspend fun dispatcher() = dispatchers.dispatcherFor(sourceKey)
@@ -80,8 +89,56 @@ class QuickJsEngine(
     override suspend fun load(script: String) {
         val name = findClass(script)
             ?: throw IllegalArgumentException("未找到 `class X extends ComicSource`")
-        // init 由 runCall 在每次求值的上下文里统一执行，这里只验证脚本可实例化。
-        runCall(name, script, "'ok';")
+        val d = dispatcher()
+        withContext(d) {
+            try {
+                withTimeout(evalTimeoutMs) {
+                    // 已有实例先关闭（重装/更新路径经 SourceRuntimeManager.invalidate 串行化）。
+                    try { js?.close() } catch (_: Throwable) { }
+                    js = null
+                    val q = com.dokar.quickjs.QuickJs.create(d, RejectModuleLoader)
+                    createCount++
+                    q.memoryLimit = memoryLimitMb * 1024 * 1024
+                    q.maxStackSize = 256L * 1024
+                    q.evaluationTimeoutMillis = evalTimeoutMs
+                    q.define("__host") {
+                        function("kv") { payload: String -> handleKv(payload) }
+                        function("html") { payload: String -> handleHtml(payload) }
+                        function("convert") { payload: String -> handleConvert(payload) }
+                        function("cookie") { payload: String -> handleCookie(payload) }
+                        function("utils") { payload: String -> handleUtils(payload) }
+                        function("ui") { payload: String -> handleUi(payload) }
+                        function("novel") { payload: String -> handleNovel(payload) }
+                        function("log") { msg: String ->
+                            host.utils.log(msg)
+                            msg.length
+                        }
+                        asyncFunction("request") { payload: String -> handleRequest(payload) }
+                        asyncFunction("requestAll") { payload: String -> handleRequestAll(payload) }
+                        asyncFunction("hostCall") { payload: String -> handleHostCall(payload) }
+                        asyncFunction("delay") { payload: String -> handleDelay(payload) }
+                    }
+                    evalSdkAndScript(q, name, script)
+                    q.evaluate<String>(
+                        "if (typeof __source.init === 'function') { await __source.init(); } 'ok';"
+                    )
+                    initCount++
+                    js = q
+                }
+            } catch (e: TimeoutCancellationException) {
+                try { js?.close() } catch (_: Throwable) { }
+                js = null
+                throw SourceBridgeException("源调用超时（${evalTimeoutMs}ms）：$sourceKey", e)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (t: Throwable) {
+                try { js?.close() } catch (_: Throwable) { }
+                js = null
+                if (isHostMissing(t)) throw HostMissingException("quickjs native 缺失：${t.message}")
+                if (t is Exception) throw asBridgeError(t)
+                throw t
+            }
+        }
         loadedScript = script
         className = name
     }
@@ -116,15 +173,24 @@ class QuickJsEngine(
     override suspend fun callAsync(method: String, payload: String, timeoutMs: Long): String =
         when (method) {
             "request" -> handleRequest(payload)
+            "requestAll" -> handleRequestAll(payload)
             "hostCall" -> handleHostCall(payload)
             "delay" -> handleDelay(payload)
             else -> throw SourceBridgeException("未知异步方法：$method")
         }
 
     override fun close() {
+        try { js?.close() } catch (_: Throwable) { }
+        js = null
         loadedScript = null
         className = null
     }
+
+    /** P0 验收口径：单测断言 create/init 各一次（直到 invalidate）。 */
+    internal fun stats(): Pair<Int, Int> = createCount to initCount
+
+    /** P3 可观测性：JS 段分段计时快照（调用方按源 key 聚合展示）。 */
+    fun telemetry(): EngineTelemetry = EngineTelemetry(jsCalls, jsMsTotal, jsMsMax, jsTimeouts, jsErrors)
 
     // ---------- 类型化调用（搜索/详情/章节；返回源原始 JSON，归一化在 provider 适配层） ----------
 
@@ -196,53 +262,24 @@ class QuickJsEngine(
     // ---------- 内部 ----------
 
     private suspend fun runCall(snippet: String): String {
-        val name = className
+        val q = js
             ?: throw IllegalStateException("引擎未加载（先调 load）: $sourceKey")
-        val script = loadedScript
-            ?: throw IllegalStateException("引擎未加载（先调 load）: $sourceKey")
-        return runCall(name, script, snippet)
-    }
-
-    private suspend fun runCall(className: String, script: String, snippet: String): String =
-        withContext(dispatcher()) {
+        // className 仅用于错误信息，实例已在 load() 内创建并 init()。
+        className ?: throw IllegalStateException("引擎未加载（先调 load）: $sourceKey")
+        return withContext(dispatcher()) {
+            val mark = TimeSource.Monotonic.markNow()
             try {
-                withTimeout(evalTimeoutMs) {
-                    quickJs(RejectModuleLoader) {
-                        memoryLimit = memoryLimitMb * 1024 * 1024
-                        maxStackSize = 256L * 1024
-                        evaluationTimeoutMillis = evalTimeoutMs
-                        define("__host") {
-                            function("kv") { payload: String -> handleKv(payload) }
-                            function("html") { payload: String -> handleHtml(payload) }
-                            function("convert") { payload: String -> handleConvert(payload) }
-                            function("cookie") { payload: String -> handleCookie(payload) }
-                            function("utils") { payload: String -> handleUtils(payload) }
-                            function("ui") { payload: String -> handleUi(payload) }
-                            function("novel") { payload: String -> handleNovel(payload) }
-                            function("log") { msg: String ->
-                                host.utils.log(msg)
-                                msg.length
-                            }
-                            asyncFunction("request") { payload: String -> handleRequest(payload) }
-                            asyncFunction("hostCall") { payload: String -> handleHostCall(payload) }
-                            asyncFunction("delay") { payload: String -> handleDelay(payload) }
-                        }
-                        evaluate<String>(polyfillOf(appVersion, locale, platform))
-                        // 源脚本顶层可能有 for 循环/赋值（其完成值是 number/object），
-                        // quickjs-kt 的 evaluate<String> 没有对应类型转换器；
-                        // 末尾追加字符串表达式，保证求值结果恒为 String，且不改变脚本语义。
-                        evaluate<String>(script + "\n;'';")
-                        evaluate<String>("const __source = new $className();")
-                        // 单发模型每次求值都重建实例：init() 必须在本次上下文重跑，
-                        // 否则源在 init 中挂载的实例方法/域名配置会丢失（Venera 常驻 Isolate
-                        // 只跑一次，这里必须每次自洽；重状态仍应经 loadData/saveData 落 KV）。
-                        evaluate<String>(
-                            "if (typeof __source.init === 'function') { await __source.init(); } 'ok';"
-                        )
-                        evaluate<String>(snippet)
-                    }
+                val r = withTimeout(evalTimeoutMs) {
+                    q.evaluate<String>(snippet)
                 }
+                jsCalls++
+                val ms = mark.elapsedNow().inWholeMilliseconds
+                jsMsTotal += ms
+                if (ms > jsMsMax) jsMsMax = ms
+                r
             } catch (e: TimeoutCancellationException) {
+                jsCalls++
+                jsTimeouts++
                 throw SourceBridgeException("源调用超时（${evalTimeoutMs}ms）：$sourceKey", e)
             } catch (e: CancellationException) {
                 // 调用方取消（协程 teardown）永不包装，结构化并发不断。
@@ -250,11 +287,36 @@ class QuickJsEngine(
             } catch (t: Throwable) {
                 // native 缺失是 Error 分支（UnsatisfiedLinkError 等 JVM 专有类型，
                 // commonMain 不可直引），按类名识别；其余 Errors 原样抛出（M1 同式）。
+                // 取消不计数（调用方 teardown，非源错误）；宿主缺 native 不计 errors（环境缺失）。
+                if (t !is CancellationException && !isHostMissing(t)) {
+                    jsCalls++
+                    jsErrors++
+                }
                 if (isHostMissing(t)) throw HostMissingException("quickjs native 缺失：${t.message}")
                 if (t is Exception) throw asBridgeError(t)
                 throw t
             }
         }
+    }
+
+    /**
+     * SDK + 源脚本一次性求值（P0：字符串求值一次；bytecode 缓存见 `SdkBytecode`，P1 再落盘持久化）。
+     * 源脚本顶层可能有 for 循环/赋值（其完成值是 number/object），
+     * quickjs-kt 的 evaluate<String> 没有对应类型转换器；
+     * 末尾追加字符串表达式，保证求值结果恒为 String，且不改变脚本语义。
+     */
+    private suspend fun evalSdkAndScript(
+        q: com.dokar.quickjs.QuickJs,
+        name: String,
+        script: String,
+    ) {
+        val sdk = polyfillOf(appVersion, locale, platform)
+        val sdkBytes = runCatching { q.compile(sdk, "sdk.js") }.getOrNull()
+        if (sdkBytes != null) q.evaluate<String>(sdkBytes) else q.evaluate<String>(sdk)
+        val scriptBytes = runCatching { q.compile(script + "\n;'';", "source.js") }.getOrNull()
+        if (scriptBytes != null) q.evaluate<String>(scriptBytes) else q.evaluate<String>(script + "\n;'';")
+        q.evaluate<String>("const __source = new $name();")
+    }
 
     private fun findClass(script: String): String? =
         Regex("""class\s+(\w+)\s+extends\s+ComicSource""")
@@ -317,31 +379,32 @@ class QuickJsEngine(
                 val doc = o["doc"]?.jsonPrimitive?.contentOrNull?.toIntOrNull()
                     ?: return """{"error":"disposed-or-unknown"}"""
                 try {
-                    // 压平输出：与 HostHtml 契约键一致（"text"/"html"/"attr:*"），
-                    // JS 侧 `els[0]["attr:src"]` 直取，不做二次整形。
-                    val els = host.html.select(doc, o["css"]?.jsonPrimitive?.contentOrNull.orEmpty())
+                    encodeElements(host.html.select(doc, o["css"]?.jsonPrimitive?.contentOrNull.orEmpty()))
+                } catch (e: Exception) {
+                    // disposed 复用抛 IllegalStateException；Ksoup 选择器解析失败等一律收敛为同一错误面
+                    //（P6：JS 侧输入永不抛原生异常穿透，只返回错误 JSON）。
+                    """{"error":"disposed-or-unknown"}"""
+                }
+            }
+            "selectMany" -> {
+                val doc = o["doc"]?.jsonPrimitive?.contentOrNull?.toIntOrNull()
+                    ?: return """{"error":"disposed-or-unknown"}"""
+                try {
+                    val queries = (o["queries"] as? kotlinx.serialization.json.JsonArray)
+                        ?.mapNotNull { it.jsonPrimitive.contentOrNull }
+                        .orEmpty()
+                    if (queries.isEmpty()) return "[]"
+                    // P1：一次跨边界多选择器；Ksoup 侧复用同一 Document，结果与逐个 select 一致。
+                    val lists = host.html.selectMany(doc, queries)
                     buildString {
                         append('[')
-                        els.forEachIndexed { i, el ->
+                        lists.forEachIndexed { i, els ->
                             if (i > 0) append(',')
-                            append("{")
-                            append("\"text\":")
-                            append(Json.encodeToString(kotlinx.serialization.serializer<String>(), el["text"].orEmpty()))
-                            append(",\"html\":")
-                            append(Json.encodeToString(kotlinx.serialization.serializer<String>(), el["html"].orEmpty()))
-                            el.entries.filter { it.key.startsWith("attr:") }.forEach { e ->
-                                append(',')
-                                append(Json.encodeToString(kotlinx.serialization.serializer<String>(), e.key))
-                                append(':')
-                                append(Json.encodeToString(kotlinx.serialization.serializer<String>(), e.value))
-                            }
-                            append("}")
+                            append(encodeElements(els))
                         }
                         append(']')
                     }
                 } catch (e: Exception) {
-                    // disposed 复用抛 IllegalStateException；Ksoup 选择器解析失败等一律收敛为同一错误面
-                    //（P6：JS 侧输入永不抛原生异常穿透，只返回错误 JSON）。
                     """{"error":"disposed-or-unknown"}"""
                 }
             }
@@ -349,7 +412,7 @@ class QuickJsEngine(
                 o["doc"]?.jsonPrimitive?.contentOrNull?.toIntOrNull()?.let { host.html.dispose(it) }
                 """{"ok":true}"""
             }
-            else -> """{"error":"unknown-op"}"""
+            else -> """{"error":"unknown-op","code":"CONTRACT"}"""
         }
     }
 
@@ -361,7 +424,7 @@ class QuickJsEngine(
         val key = o["key"]?.jsonPrimitive?.contentOrNull.orEmpty()
         val iv = o["iv"]?.jsonPrimitive?.contentOrNull.orEmpty()
         val hash = o["hash"]?.jsonPrimitive?.contentOrNull.orEmpty()
-        // v4 严格模式：未转正能力显式 CONTRACT，禁静默桩（ADR-011 U1/U1b）。
+        // v4 严格模式：未转正能力显式 CONTRACT，禁静默桩（见 HOST-SDK.md § Codec）。
         // AES-ECB/CBC/CFB/OFB 已转正（Base64+PKCS7，见 AesCrypto），失败同样 CONTRACT。
         if (strictV4) {
             when (op) {
@@ -416,6 +479,46 @@ class QuickJsEngine(
                 append(digits[v ushr 4])
                 append(digits[v and 0x0f])
             }
+        }
+    }
+
+    /**
+     * 压平输出：与 HostHtml 契约键一致（"text"/"html"/"attr:*"），
+     * JS 侧 `els[0]["attr:src"]` 直取，不做二次整形。
+     */
+    private fun encodeElements(els: List<Map<String, String>>): String = buildString {
+        append('[')
+        els.forEachIndexed { i, el ->
+            if (i > 0) append(',')
+            append("{")
+            append("\"text\":")
+            append(Json.encodeToString(kotlinx.serialization.serializer<String>(), el["text"].orEmpty()))
+            append(",\"html\":")
+            append(Json.encodeToString(kotlinx.serialization.serializer<String>(), el["html"].orEmpty()))
+            el.entries.filter { it.key.startsWith("attr:") }.forEach { e ->
+                append(',')
+                append(Json.encodeToString(kotlinx.serialization.serializer<String>(), e.key))
+                append(':')
+                append(Json.encodeToString(kotlinx.serialization.serializer<String>(), e.value))
+            }
+            append("}")
+        }
+        append(']')
+    }
+
+    private fun encodeStringMap(map: Map<String, String>): String {
+        if (map.isEmpty()) return "{}"
+        return buildString {
+            append('{')
+            var first = true
+            map.entries.sortedBy { it.key }.forEach { (k, v) ->
+                if (!first) append(',')
+                first = false
+                append(Json.encodeToString(kotlinx.serialization.serializer<String>(), k))
+                append(':')
+                append(Json.encodeToString(kotlinx.serialization.serializer<String>(), v))
+            }
+            append('}')
         }
     }
 
@@ -538,20 +641,37 @@ class QuickJsEngine(
             val r: HostResponse = when (method) {
                 "GET" -> host.network.get(url, headers)
                 "POST" -> host.network.post(url, headers, data)
-                // 安全出口当前只开放 GET/POST（SourceHttpClient 的白名单/重定向/审计路径）。
-                else -> HostResponse(0, "UNSUPPORTED_METHOD:$method")
+                "PUT", "PATCH", "DELETE" -> host.network.sendRequest(method, url, headers, data)
+                else -> host.network.sendRequest(method, url, headers, data)
             }
-            val body = if (r.body.length > MAX_BODY_CHARS) {
+            var body = r.body
+            var truncated = r.truncated
+            if (body.length > MAX_BODY_CHARS) {
                 // U2 可观测性：只记源 key 与长度，不记 URL/正文（隐私：审计禁 Cookie 与正文）。
                 host.utils.log(
                     "[source-net] 响应截断：source=" + sourceKey +
-                        " 原长度=" + r.body.length + " 截断至=" + MAX_BODY_CHARS,
+                        " 原长度=" + body.length + " 截断至=" + MAX_BODY_CHARS,
                 )
-                r.body.take(MAX_BODY_CHARS)
-            } else r.body
-            """{"status":${r.status},"body":${
-                Json.encodeToString(kotlinx.serialization.serializer<String>(), body)
-            },"headers":{}}"""
+                body = body.take(MAX_BODY_CHARS)
+                truncated = true
+            } else if (r.truncated) {
+                truncated = true
+            }
+            buildString {
+                append("""{"status":${r.status},"body":""")
+                append(Json.encodeToString(kotlinx.serialization.serializer<String>(), body))
+                append(""","headers":""")
+                append(encodeStringMap(r.headers))
+                append(""","finalUrl":""")
+                append(Json.encodeToString(kotlinx.serialization.serializer<String>(), r.finalUrl))
+                append(""","verdict":""")
+                val v = r.verdict
+                if (v == null) append("null")
+                else append(Json.encodeToString(kotlinx.serialization.serializer<String>(), v))
+                append(""","truncated":""")
+                append(if (truncated) "true" else "false")
+                append("}")
+            }
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -561,23 +681,113 @@ class QuickJsEngine(
                     kotlinx.serialization.serializer<String>(),
                     "HOST_ERROR:${e.message.orEmpty()}",
                 )
-            },"headers":{}}"""
+            },"headers":{},"finalUrl":"","verdict":null,"truncated":false}"""
+        }
+    }
+
+    private fun encodeNetResponse(r: HostResponse): String {
+        var body = r.body
+        var truncated = r.truncated
+        if (body.length > MAX_BODY_CHARS) {
+            host.utils.log(
+                "[source-net] 响应截断：source=" + sourceKey +
+                    " 原长度=" + body.length + " 截断至=" + MAX_BODY_CHARS,
+            )
+            body = body.take(MAX_BODY_CHARS)
+            truncated = true
+        } else if (r.truncated) {
+            truncated = true
+        }
+        return buildString {
+            append("""{"status":${r.status},"body":""")
+            append(Json.encodeToString(kotlinx.serialization.serializer<String>(), body))
+            append(""","headers":""")
+            append(encodeStringMap(r.headers))
+            append(""","finalUrl":""")
+            append(Json.encodeToString(kotlinx.serialization.serializer<String>(), r.finalUrl))
+            append(""","verdict":""")
+            val v = r.verdict
+            if (v == null) append("null")
+            else append(Json.encodeToString(kotlinx.serialization.serializer<String>(), v))
+            append(""","truncated":""")
+            append(if (truncated) "true" else "false")
+            append("}")
+        }
+    }
+
+    /**
+     * 批量请求（P1）：`{requests:[{method,url,headers,data}]}` → 保序 JSON 数组。
+     * 空数组直接回 `[]`，不触网络；单条失败不整体失败（该条按 status 0 + HOST_ERROR 落盘，
+     * 调用方按条处理，与 `handleRequest` 错误面一致）。
+     */
+    private suspend fun handleRequestAll(payload: String): String {
+        val o = runCatching { json.parseToJsonElement(payload).jsonObject }.getOrNull()
+            ?: return """{"error":"BAD_PAYLOAD"}"""
+        val arr = (o["requests"] as? kotlinx.serialization.json.JsonArray) ?: return "[]"
+        if (arr.isEmpty()) return "[]"
+        if (arr.size > 20) return """{"error":"too-many-requests","code":"CONTRACT"}"""
+        return try {
+            val reqs = arr.mapNotNull { el ->
+                val jo = el as? kotlinx.serialization.json.JsonObject ?: return@mapNotNull null
+                val method = (jo["method"]?.jsonPrimitive?.contentOrNull ?: "GET").uppercase()
+                val url = jo["url"]?.jsonPrimitive?.contentOrNull ?: return@mapNotNull null
+                val headers = (jo["headers"] as? kotlinx.serialization.json.JsonObject)
+                    ?.entries?.associate { (k, v) -> k to (v.jsonPrimitive.contentOrNull.orEmpty()) }
+                    .orEmpty()
+                val data = jo["data"]?.jsonPrimitive?.contentOrNull
+                source.hostapi.HostRequest(method = method, url = url, headers = headers, data = data)
+            }
+            if (reqs.isEmpty()) return "[]"
+            val res = host.network.requestAll(reqs)
+            buildString {
+                append('[')
+                res.forEachIndexed { i, r ->
+                    if (i > 0) append(',')
+                    append(encodeNetResponse(r))
+                }
+                append(']')
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            """{"error":"HOST_ERROR:${e.message.orEmpty()}"}"""
         }
     }
 
     private suspend fun handleHostCall(payload: String): String {
         val o = runCatching { json.parseToJsonElement(payload).jsonObject }.getOrNull()
             ?: return """{"error":"BAD_PAYLOAD"}"""
-        return when (o["method"]?.jsonPrimitive?.contentOrNull) {
-            "network.get", "network.post", "network.put", "network.patch", "network.delete",
-            "network.sendRequest", "network.fetchBytes", "http" -> handleRequest(payload)
+        return when (val m = o["method"]?.jsonPrimitive?.contentOrNull) {
+            "network.get" -> handleRequest(rewriteHostCallMethod(payload, "GET"))
+            "network.post" -> handleRequest(rewriteHostCallMethod(payload, "POST"))
+            "network.put" -> handleRequest(rewriteHostCallMethod(payload, "PUT"))
+            "network.patch" -> handleRequest(rewriteHostCallMethod(payload, "PATCH"))
+            "network.delete" -> handleRequest(rewriteHostCallMethod(payload, "DELETE"))
+            "network.requestAll" -> handleRequestAll(payload)
+            "network.sendRequest", "network.fetchBytes", "http" -> {
+                // 兼容旧载荷：HTTP 方法可能放在 httpMethod/http_method，或调用方直接透传 {method:"GET",...}。
+                val inner = o["httpMethod"]?.jsonPrimitive?.contentOrNull
+                    ?: o["http_method"]?.jsonPrimitive?.contentOrNull
+                    ?: "GET"
+                handleRequest(rewriteHostCallMethod(payload, inner))
+            }
             "delay" -> handleDelay(payload)
             "ui.showMessage" -> {
                 host.ui.showMessage(o["text"]?.jsonPrimitive?.contentOrNull.orEmpty())
                 """{"ok":true}"""
             }
-            else -> """{"error":"unsupported-hostcall"}"""
+            else -> """{"error":"unsupported-hostcall","code":"PERMISSION"}"""
         }
+    }
+
+    private fun rewriteHostCallMethod(payload: String, httpMethod: String): String {
+        // hostCall 载荷形如 {method:"network.get",url,headers,data}，handleRequest 只认 HTTP 方法，
+        // 此处仅替换顶层 method 字段，其余原样透传（字符串替换足以，白名单外字符由下游 JSON 解析兜底）。
+        return runCatching {
+            val o = json.parseToJsonElement(payload).jsonObject.toMutableMap()
+            o["method"] = kotlinx.serialization.json.JsonPrimitive(httpMethod)
+            kotlinx.serialization.json.JsonObject(o).toString()
+        }.getOrElse { payload }
     }
 
     companion object {
@@ -797,6 +1007,34 @@ class QuickJsEngine(
               return __host.novel(JSON.stringify({ op: 'clean', html: String(html) }));
             }
 
+            /**
+             * Store.cache.getOrPut(ttl) 的 JS 可见面（HOST-SDK.md § Store）。
+             * TTL 记忆化：命中走宿主 KV（源私有命名空间），未命中/过期调 loader() 重算。
+             * 只缓存字符串（源内 HTML/JSON 载荷）；ttlMs <= 0 视为不缓存，直接求值。
+             * 时间源用 JS Date.now（单调性不保证，过期判断只做" now - t < ttl "，时钟回拨即失效重算）。
+             */
+            const Cache = {
+              getOrPut: async function (key, ttlMs, loader) {
+                const ttl = Number(ttlMs);
+                if (typeof loader !== 'function') throw 'Cache.getOrPut loader must be a function';
+                if (!(ttl > 0)) {
+                  return String(await loader());
+                }
+                const k = String(key);
+                const t = __host.kv(JSON.stringify({ op: 'load', key: 'cache:' + k + ':t' })) || null;
+                const v = __host.kv(JSON.stringify({ op: 'load', key: 'cache:' + k + ':v' })) || null;
+                const age = Number(t);
+                if (v !== null && t !== null && !isNaN(age) && (Date.now() - age) < ttl) {
+                  return v;
+                }
+                const fresh = String(await loader());
+                const now = String(Date.now());
+                __host.kv(JSON.stringify({ op: 'save', key: 'cache:' + k + ':v', value: fresh }));
+                __host.kv(JSON.stringify({ op: 'save', key: 'cache:' + k + ':t', value: now }));
+                return fresh;
+              }
+            };
+
             const Network = {
               get: async function (url, headers) {
                 const r = await __host.request(JSON.stringify({ method: 'GET', url: url, headers: headers || {} }));
@@ -833,6 +1071,18 @@ class QuickJsEngine(
                 const o = JSON.parse(r);
                 return { status: o.status, headers: o.headers || {}, body: o.body || '' };
               },
+              requestAll: async function (requests) {
+                const list = (requests || []).map(function (q) {
+                  return {
+                    method: String((q && q.method) || 'GET').toUpperCase(),
+                    url: String((q && q.url) || ''),
+                    headers: (q && q.headers) || {},
+                    data: ((q && (q.data === undefined || q.data === null)) ? null : String(q.data))
+                  };
+                });
+                const r = await __host.requestAll(JSON.stringify({ requests: list }));
+                return JSON.parse(r);
+              },
               getCookies: function (url) {
                 return JSON.parse(__host.cookie(JSON.stringify({ op: 'get', url: url })));
               },
@@ -854,7 +1104,7 @@ class QuickJsEngine(
               return {
                 ok: parsed.status >= 200 && parsed.status < 300,
                 status: parsed.status,
-                url: url,
+                url: parsed.finalUrl || url,
                 headers: parsed.headers || {},
                 text: async function () { return parsed.body || ''; },
                 json: async function () { return JSON.parse(parsed.body || '{}'); }

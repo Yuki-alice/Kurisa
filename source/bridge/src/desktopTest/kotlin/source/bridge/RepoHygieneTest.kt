@@ -5,7 +5,7 @@ import kotlin.test.Test
 import kotlin.test.assertTrue
 
 /**
- * C1 门禁（ADR-011 §8 验收项“主仓零站点 URL”）：
+ * C1 门禁（主仓零站点 URL）：
  * 扫描仓库内 `*.kt` 的 http(s) 字面量，宿主只允许保留/测试域名。
  *
  * 允许：example.com/net/org（及子域名）、example.invalid、保留顶级域 .example 下任意主机

@@ -88,6 +88,7 @@ object ContractPolicy {
             m.contains("timeout") || m.contains("超时") || m.contains("timed out") ->
                 SourceErrorKind.TIMEOUT
             m.contains("disposed-or-unknown") || m.contains("bad_payload") ||
+                m.contains("unknown-op") || m.contains("too-many-requests") ||
                 m.contains("目录缺失") || m.contains("契约") -> SourceErrorKind.CONTRACT
             else -> SourceErrorKind.EXECUTION
         }
@@ -115,11 +116,14 @@ object ContractPolicy {
         index.sources.forEachIndexed { i, s ->
             val hasUrl = !s.url.isNullOrBlank()
             val hasFile = !s.filename.isNullOrBlank()
-            if (hasUrl == hasFile) add("sources[$i] 须 url/filename 二选一（key=${s.key}）")
+            if (hasUrl == hasFile) add("sources[$i] 须 url/filename 二选一（key=${s.key})")
             if (!KEY_RE.matches(s.key)) add("sources[$i].key 非法: ${s.key}")
             if (!SEMVER_RE.matches(s.version)) add("sources[$i].version 非 semver: ${s.version}")
             if (s.kind.isEmpty()) add("sources[$i].kind 为空")
             if (s.domains.isEmpty()) add("sources[$i].domains 为空")
+            if (s.format != "js/v1" && s.format != "rules/v1") {
+                add("sources[$i].format 不受支持（期望 js/v1|rules/v1，实际 ${s.format}）")
+            }
             s.capabilities.forEach { c ->
                 if (SourceCapability.of(c) == null) {
                     add("sources[$i].capabilities 含未知能力: $c")

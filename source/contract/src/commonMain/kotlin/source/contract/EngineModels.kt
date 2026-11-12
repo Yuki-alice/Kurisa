@@ -36,11 +36,11 @@ enum class SourceCapability(val serial: String) {
     NOVEL_CHAPTER("novelChapter"),
     /** v4 新增：Html.list/text/attr 自动 dispose helper 可用。 */
     HTML_HELPER("htmlHelper"),
-    /** v4 新增：AES 转正（U1 定案后），转正前宿主显式拒绝。 */
+    /** v4 新增：AES 已转正；未转正密码学宿主显式拒绝（禁静默桩，见 `HOST-SDK.md` § Codec）。 */
     CRYPTO_AES("cryptoAes"),
-    /** v4 预留：视频源（渲染 deferred，见 ADR-011 D4；仅类型与能力扩展点）。 */
+    /** v4 预留：视频源（渲染未接线；仅类型与能力扩展点）。 */
     VIDEO("video"),
-    /** v4 预留：音频源（渲染 deferred，见 ADR-011 D4；仅类型与能力扩展点）。 */
+    /** v4 预留：音频源（渲染未接线；仅类型与能力扩展点）。 */
     AUDIO("audio");
 
     companion object {
@@ -49,7 +49,7 @@ enum class SourceCapability(val serial: String) {
     }
 }
 
-/** JS 字符串异常在桥边界的分类；重放策略见 docs/plugin-engine.md §6。 */
+/** JS 字符串异常在桥边界的分类；重放策略见 `docs/plugin-system/DESIGN.md` §10。 */
 @Serializable
 enum class SourceErrorKind {
     LOGIN_EXPIRED,
@@ -143,7 +143,7 @@ data class StreamSubtitle(
 )
 
 /**
- * v4 预留：流媒体播放描述（U6 字段冻结；渲染 deferred，见 ADR-011 D4）。
+ * v4 预留：流媒体播放描述（字段冻结；渲染未接线）。
  * 仅类型与归一化语义先行，不接播放器、不触发播放依赖（T4 编译门）。
  * 未知 streamType 在解析侧显式拒绝，不静默降级。
  */
@@ -185,7 +185,7 @@ data class SourceDescriptor(
     val hasSearchNext: Boolean = false,
     /** v4 统一分页入口（源可只实现 page；宿主有 page 时优先调用）。 */
     val hasSearchPage: Boolean = false,
-    /** v4 小说双位：缺一半的实现 ADR-011 要求报 CONTRACT（对标 hasSearchLoad/Next）。 */
+    /** v4 小说双位：缺一半的实现宿主报 CONTRACT（对标 hasSearchLoad/Next）。 */
     val hasNovelLoadInfo: Boolean = false,
     val hasNovelLoadChapter: Boolean = false,
     /** 文内图解析存在位（novel.onImageResolve）；缺位时宿主不调用。 */

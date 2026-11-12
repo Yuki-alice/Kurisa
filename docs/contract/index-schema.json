@@ -37,6 +37,12 @@
             }
           },
           "sha256": { "type": "string", "pattern": "^[0-9a-fA-F]{64}$" },
+          "format": {
+            "type": "string",
+            "description": "源形态（SOURCE-PACKAGE.md）：js/v1 缺省，rules/v1 走 Kotlin 规则执行器；未知 format 旧客户端 fail-closed",
+            "enum": ["js/v1", "rules/v1"],
+            "default": "js/v1"
+          },
           "signature": {
             "type": "string",
             "description": "base64 ed25519 签名；缺失时宿主标记未验证"

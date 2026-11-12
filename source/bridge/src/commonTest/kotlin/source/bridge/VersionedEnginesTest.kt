@@ -103,7 +103,7 @@ class VersionedEnginesTest {
         val f = VersionedPluginEngineFactory(legacyFactory(mutableListOf()))
         val e = assertFailsWith<SourcePluginException> { f.create(spec(4), StubHost()) }
         assertEquals(SourceErrorKind.CONTRACT, e.kind)
-        assertTrue(e.message!!.contains("E2b"))
+        assertTrue(e.message!!.contains("apiVersion=4"))
     }
 
     @Test

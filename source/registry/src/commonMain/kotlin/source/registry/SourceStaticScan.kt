@@ -75,6 +75,29 @@ object SourceStaticScan {
         return Verdict(false, "", warnings, confirm)
     }
 
+    /**
+     * 规则包扫描（`rules/v1` JSON，无代码可执行）。
+     * 只校验：体积上限、声明域名覆盖模板内主机、未知顶层字段提示（前向兼容，不拒绝）。
+     */
+    fun scanRules(script: String, declaredDomains: List<String>): Verdict {
+        val bytes = script.toUtf8BytesLen()
+        if (bytes > SourceSignature.MAX_SCRIPT_BYTES) {
+            return Verdict(true, "规则包超大（>${SourceSignature.MAX_SCRIPT_BYTES}B，拒绝）")
+        }
+        val warnings = mutableListOf<String>()
+        // 模板内主机：baseUrl + request.url 里的 http(s) 主机 + @Miru-Url 风格头暂不计（规则层无自定义头）。
+        val hosts = Regex("""https?://([A-Za-z0-9.\-]+)""").findAll(script)
+            .map { it.groupValues[1].lowercase() }.distinct().toList()
+        val declared = declaredDomains.map { it.lowercase().removePrefix(".") }.toSet()
+        val outsiders = hosts.filter { h ->
+            declared.none { d -> h == d || h.endsWith(".$d") }
+        }
+        if (outsiders.isNotEmpty()) {
+            warnings += "规则内出现白名单外域名：${outsiders.take(5).joinToString(",")}"
+        }
+        return Verdict(false, "", warnings, warnings.isNotEmpty())
+    }
+
     private fun String.toUtf8BytesLen(): Int {
         // 近似字节数（ASCII 占多数场景足够判定 512KB；精确值由调用方按 UTF-8 计算）
         var n = 0

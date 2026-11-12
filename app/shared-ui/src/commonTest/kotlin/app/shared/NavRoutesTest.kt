@@ -8,6 +8,7 @@ import feature.reader.ReaderRoute
 import feature.search.SearchRoute
 import feature.settings.SettingsRoute
 import feature.shelf.ShelfRoute
+import feature.sources.RuleTestRoute
 import feature.sources.SourcesRoute
 import kotlinx.serialization.PolymorphicSerializer
 import kotlinx.serialization.json.Json
@@ -15,7 +16,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 
 /**
- * 路由多态注册锁门：8 个目的地全部经 appSerializersModule 往返。
+ * 路由多态注册锁门：9 个目的地全部经 appSerializersModule 往返。
  * 少注册一个，就是一次真机启动崩溃（M3 实录：ShelfRoute 未注册 → FATAL）。
  */
 class NavRoutesTest {
@@ -32,6 +33,7 @@ class NavRoutesTest {
         DetailRoute("w"),
         ReaderRoute("w", "c"),
         SourcesRoute,
+        RuleTestRoute,
         DownloadsRoute,
         SettingsRoute,
     )
@@ -48,6 +50,6 @@ class NavRoutesTest {
     @Test
     fun routeCountGuard() {
         // 加新目的地必须同步注册（数对不上就去补 appSerializersModule）。
-        assertEquals(8, routes.size)
+        assertEquals(9, routes.size)
     }
 }

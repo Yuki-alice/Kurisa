@@ -15,19 +15,44 @@ import source.contract.ImageLoadConfig
 import source.contract.SourceCapability
 import source.contract.SourceDescriptor
 import source.contract.SourceErrorKind
+import kotlin.time.TimeSource
 
 /**
- * 单个已装配源的运行时门面（docs/plugin-engine.md §3/§4/§5/§6/§7）。
+ * 单个已装配源的运行时门面（`docs/plugin-system/DESIGN.md` §4 生命周期 / §10 错误模型）。
  *
  * 职责：能力门 → 引擎调用 → 错误分类 → `LOGIN_EXPIRED` 重放一次 → 原始 JSON；
  * 另负责声明式设置预热、图片加载配置归一化与翻译。
  * 不持有 Repository / Database，脚本字节与宿主配置由装配层传入（架构 §3.1.4）。
  */
+/**
+ * 单次调用 trace（P3 可观测性：`DESIGN.md` §10 每次调用产出 trace）。
+ * 只记源 key / 调用路径 / 耗时 / 结果分类，不记参数/正文/Cookie（审计脱敏红线）。
+ * `errorKind == null` 表示成功；取消与宿主缺 native 不产出（调用方 teardown，非源错误）。
+ */
+data class SourceCallTrace(
+    val sourceKey: String,
+    val path: String,
+    val durationMs: Long,
+    val ok: Boolean,
+    val errorKind: SourceErrorKind?,
+)
+
 class SourceRuntime(
     val descriptor: SourceDescriptor,
     private val engine: SourcePluginEngine,
     private val onRelogin: suspend () -> Boolean = { false },
     private val onError: (SourcePluginException) -> Unit = {},
+    /**
+     * 调用 trace 接收器（P3 可观测性；UI 日志/面板消费，默认丢弃）。
+     * 与 `onError` 同步触发：成功一次、失败一次（含重放后的终态）。
+     */
+    private val onTrace: (SourceCallTrace) -> Unit = {},
+    /**
+     * 纯函数结果缓存（`DESIGN.md` §8：`onImageLoad` / `translate` 按 URL+章节键控）。
+     * null = 不缓存（单测默认，行为零变）；生产由 `SourceRuntimeManager` 注入共享实例。
+     * `LOGIN_EXPIRED` 重放路径不走缓存（重放的是副作用调用结果，见 `withPolicy`）。
+     */
+    private val pureCache: PureResultCache? = null,
 ) : SourceCalls, AutoCloseable {
 
     /**
@@ -83,7 +108,15 @@ class SourceRuntime(
             add(kotlinx.serialization.json.JsonPrimitive(workId))
             add(kotlinx.serialization.json.JsonPrimitive(chapterId))
         }.toString()
-        return parseImageConfig(invoke("comic.onImageLoad", args))
+        val cache = pureCache
+        val raw = if (cache == null) {
+            invoke("comic.onImageLoad", args)
+        } else {
+            cache.getOrPut("img|${descriptor.key}|$url|$workId|$chapterId") {
+                invoke("comic.onImageLoad", args)
+            }
+        }
+        return parseImageConfig(raw)
     }
 
     /** `novel.onImageResolve` → 归一化配置（与图片共用剥离/复核语义）。未声明时返回 null。 */
@@ -92,16 +125,34 @@ class SourceRuntime(
         val args = buildJsonArray {
             add(kotlinx.serialization.json.JsonPrimitive(url))
         }.toString()
-        return parseImageConfig(invoke("novel.onImageResolve", args))
+        val cache = pureCache
+        val raw = if (cache == null) {
+            invoke("novel.onImageResolve", args)
+        } else {
+            cache.getOrPut("img|${descriptor.key}|$url") {
+                invoke("novel.onImageResolve", args)
+            }
+        }
+        return parseImageConfig(raw)
     }
 
     /** 源内 i18n；未声明 translation 时返回 key 本身。 */
     suspend fun translate(key: String): String {
         if (!descriptor.has(SourceCapability.TRANSLATION)) return key
-        val raw = invoke(
-            "translate",
-            buildJsonArray { add(kotlinx.serialization.json.JsonPrimitive(key)) }.toString(),
-        )
+        val cache = pureCache
+        val raw = if (cache == null) {
+            invoke(
+                "translate",
+                buildJsonArray { add(kotlinx.serialization.json.JsonPrimitive(key)) }.toString(),
+            )
+        } else {
+            cache.getOrPut("tr|${descriptor.key}|$key") {
+                invoke(
+                    "translate",
+                    buildJsonArray { add(kotlinx.serialization.json.JsonPrimitive(key)) }.toString(),
+                )
+            }
+        }
         return runCatching { Json.parseToJsonElement(raw).jsonPrimitive.content }.getOrDefault(key)
     }
 
@@ -154,11 +205,11 @@ class SourceRuntime(
         ContentKind.NOVEL -> "novel.loadInfo"
         ContentKind.MANGA -> "comic.loadInfo"
         ContentKind.VIDEO -> throw SourcePluginException(
-            "视频源渲染 deferred（ADR-011 D4）：仅类型与能力扩展点已落地",
+            "视频源渲染未接线：仅类型与能力扩展点已落地",
             SourceErrorKind.CONTRACT,
         )
         ContentKind.AUDIO -> throw SourcePluginException(
-            "音频源渲染 deferred（ADR-011 D4）：仅类型与能力扩展点已落地",
+            "音频源渲染未接线：仅类型与能力扩展点已落地",
             SourceErrorKind.CONTRACT,
         )
     }
@@ -167,17 +218,42 @@ class SourceRuntime(
         ContentKind.NOVEL -> "novel.loadChapter"
         ContentKind.MANGA -> "comic.loadEp"
         ContentKind.VIDEO -> throw SourcePluginException(
-            "视频源渲染 deferred（ADR-011 D4）：仅类型与能力扩展点已落地",
+            "视频源渲染未接线：仅类型与能力扩展点已落地",
             SourceErrorKind.CONTRACT,
         )
         ContentKind.AUDIO -> throw SourcePluginException(
-            "音频源渲染 deferred（ADR-011 D4）：仅类型与能力扩展点已落地",
+            "音频源渲染未接线：仅类型与能力扩展点已落地",
             SourceErrorKind.CONTRACT,
         )
     }
 
     override suspend fun invoke(path: String, argsJson: String): String =
         withPolicy(path) { engine.invoke(path, argsJson) }
+
+    /**
+     * 规则测试面板后端（P3 工具链；三步 diagnose 的调用方入口）。
+     * 仅规则源可用（`RulesEngine`）；JS 源抛 CONTRACT，提示改走日志排查。
+     * 失败走结果 JSON 的 `{error,code}` 通道，不抛异常（面板可直接渲染）。
+     */
+    suspend fun diagnoseSearch(keyword: String, page: Int): String {
+        val rules = engine as? RulesEngine
+            ?: throw SourcePluginException("测试面板仅支持规则源", SourceErrorKind.CONTRACT)
+        return rules.diagnose(keyword, page)
+    }
+
+    /** 见 [diagnoseSearch]；第二步（详情/目录）。 */
+    suspend fun diagnoseDetail(workId: String): String {
+        val rules = engine as? RulesEngine
+            ?: throw SourcePluginException("测试面板仅支持规则源", SourceErrorKind.CONTRACT)
+        return rules.diagnoseDetail(workId)
+    }
+
+    /** 见 [diagnoseSearch]；第三步（内容/正文/图片）。 */
+    suspend fun diagnoseContent(workId: String, chapterId: String): String {
+        val rules = engine as? RulesEngine
+            ?: throw SourcePluginException("测试面板仅支持规则源", SourceErrorKind.CONTRACT)
+        return rules.diagnoseContent(workId, chapterId)
+    }
 
     override fun close() = engine.close()
 
@@ -188,27 +264,41 @@ class SourceRuntime(
     private suspend fun withPolicy(path: String, block: suspend () -> String): String {
         val needed = ContractPolicy.capabilityForPath(path)
         if (needed != null && !descriptor.has(needed)) {
-            throw SourcePluginException(
+            val rejection = SourcePluginException(
                 "能力未声明：$path（需 ${needed.serial}）",
                 SourceErrorKind.CONTRACT,
             )
+            onTrace(SourceCallTrace(descriptor.key, path, 0, false, SourceErrorKind.CONTRACT))
+            throw rejection
+        }
+        val mark = TimeSource.Monotonic.markNow()
+        fun done(ok: Boolean, kind: SourceErrorKind?): Long {
+            val ms = mark.elapsedNow().inWholeMilliseconds
+            onTrace(SourceCallTrace(descriptor.key, path, ms, ok, kind))
+            return ms
         }
         return try {
-            block()
+            val r = block()
+            done(true, null)
+            r
         } catch (t: Throwable) {
             if (t is CancellationException || t is HostMissingException) throw t
             val error = t.asPluginError()
             if (error.kind == SourceErrorKind.LOGIN_EXPIRED && onRelogin()) {
                 try {
-                    block()
+                    val r = block()
+                    done(true, null)
+                    r
                 } catch (t2: Throwable) {
                     if (t2 is CancellationException || t2 is HostMissingException) throw t2
                     val replayError = t2.asPluginError()
                     onError(replayError)
+                    done(false, replayError.kind)
                     throw replayError
                 }
             } else {
                 onError(error)
+                done(false, error.kind)
                 throw error
             }
         }

@@ -217,7 +217,7 @@ class Flaky extends ComicSource {
             runtime.updateSettings("""{"quality":"low"}""")
             val translated = runtime.translate("hello")
             assertEquals("你好", translated)
-            // init() 在 load() 时执行，跨调用状态经 KV 而非 JS 全局（单发模型）。
+            // init() 在 load() 长驻实例内执行一次，跨调用状态经 KV 持久化（P0 长驻语义）。
             assertEquals("1", b.storage.get("com.example.full", "inited"))
         } catch (mh: HostMissingException) {
             println("SKIP（无 quickjs native）: " + mh.message)

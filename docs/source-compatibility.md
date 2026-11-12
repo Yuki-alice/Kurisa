@@ -78,7 +78,7 @@ HTML 结构等），表现为源内部的 `cannot read property 'map' of undefin
 
 测试内置动态断言：扫描到 ≥20 个源，且 `L1 成功数 ≥ 源数 - 1`（允许 jm 这一个
 已知外部依赖失败）。引擎改动若导致第 2 个源加载失败即红灯；源仓库增删条目不会误报。
-T1 收紧（ADR-011 前置）：API_GAP 必须为 0、静态扫描 MISSING 必须为空（此前只打印不锁门）；
+T1 收紧（v4 兼容门禁前置）：API_GAP 必须为 0、静态扫描 MISSING 必须为空（此前只打印不锁门）；
 提不出域名的脚本记 NO_DOMAINS 且不执行（fail-closed），逐源行带 domains 计数。
 HMAC 另有 RFC 4231 向量单测（`CryptoTest`），三端可跑。
 

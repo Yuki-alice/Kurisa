@@ -5,9 +5,12 @@ import io.ktor.client.HttpClient
 import io.ktor.client.call.body
 import io.ktor.client.plugins.HttpTimeout
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
+import io.ktor.client.request.delete
 import io.ktor.client.request.get
 import io.ktor.client.request.header
+import io.ktor.client.request.patch
 import io.ktor.client.request.post
+import io.ktor.client.request.put
 import io.ktor.client.request.setBody
 import io.ktor.client.statement.HttpResponse
 import io.ktor.client.statement.bodyAsBytes
@@ -40,6 +43,7 @@ class SourceHttpClient(
         val finalUrl: String,
         val verdict: Verdict,
         val audit: SourceAuditEvent,
+        val headers: Map<String, String> = emptyMap(),
     )
 
     /** 字节结果（图片/下载：与文本路径同一套白名单+Cookie+UA+审计不断言正文）。 */
@@ -81,6 +85,19 @@ class SourceHttpClient(
         body: String? = null,
         defaultUserAgent: String = DEFAULT_UA,
     ): FetchResult = request("POST", url, domains, headers, body, defaultUserAgent)
+
+    suspend fun send(
+        method: String,
+        url: String,
+        domains: Set<String>,
+        headers: Map<String, String> = emptyMap(),
+        body: String? = null,
+        defaultUserAgent: String = DEFAULT_UA,
+    ): FetchResult {
+        val m = method.uppercase()
+        require(m in setOf("GET", "POST", "PUT", "PATCH", "DELETE")) { "unsupported-method:$method" }
+        return request(m, url, domains, headers, body, defaultUserAgent)
+    }
 
     /**
      * 字节 GET（图片页/下载分片）。
@@ -143,8 +160,8 @@ class SourceHttpClient(
         // 手动跟随重定向：Ktor 引擎默认行为各端不一致，宿主统一复核每一跳
         while (true) {
             val ua = cookies.pairedUserAgentFor(current, nowMs()) ?: defaultUserAgent
-            val resp: HttpResponse = if (method == "POST") {
-                client.post(current) {
+            val resp: HttpResponse = when (method) {
+                "POST" -> client.post(current) {
                     header(HttpHeaders.UserAgent, ua)
                     cookies.headerFor(current, nowMs())?.let { header(HttpHeaders.Cookie, it) }
                     headers.forEach { (k, v) ->
@@ -155,8 +172,36 @@ class SourceHttpClient(
                     }
                     if (body != null) setBody(body)
                 }
-            } else {
-                client.get(current) {
+                "PUT" -> client.put(current) {
+                    header(HttpHeaders.UserAgent, ua)
+                    cookies.headerFor(current, nowMs())?.let { header(HttpHeaders.Cookie, it) }
+                    headers.forEach { (k, v) ->
+                        if (!k.equals(HttpHeaders.UserAgent, true) && !k.equals(HttpHeaders.Cookie, true)) {
+                            header(k, v)
+                        }
+                    }
+                    if (body != null) setBody(body)
+                }
+                "PATCH" -> client.patch(current) {
+                    header(HttpHeaders.UserAgent, ua)
+                    cookies.headerFor(current, nowMs())?.let { header(HttpHeaders.Cookie, it) }
+                    headers.forEach { (k, v) ->
+                        if (!k.equals(HttpHeaders.UserAgent, true) && !k.equals(HttpHeaders.Cookie, true)) {
+                            header(k, v)
+                        }
+                    }
+                    if (body != null) setBody(body)
+                }
+                "DELETE" -> client.delete(current) {
+                    header(HttpHeaders.UserAgent, ua)
+                    cookies.headerFor(current, nowMs())?.let { header(HttpHeaders.Cookie, it) }
+                    headers.forEach { (k, v) ->
+                        if (!k.equals(HttpHeaders.UserAgent, true) && !k.equals(HttpHeaders.Cookie, true)) {
+                            header(k, v)
+                        }
+                    }
+                }
+                else -> client.get(current) {
                     header(HttpHeaders.UserAgent, ua)
                     cookies.headerFor(current, nowMs())?.let { header(HttpHeaders.Cookie, it) }
                     headers.forEach { (k, v) ->
@@ -175,7 +220,12 @@ class SourceHttpClient(
                 current = v.reason
                 continue
             }
-            val text = runCatching { resp.bodyAsText() }.getOrElse { "" }
+            // 编码兜底：优先响应头 charset，其次 HTML meta；GBK 族走内置解码器，
+            // 其余（含 UTF-8）沿用 UTF-8 解码（KMP 公共 API 无平台 Charset，见 GbkCodec 注释）。
+            val bytes = runCatching { resp.bodyAsBytes() }.getOrElse { ByteArray(0) }
+            val text = runCatching {
+                decodeBody(bytes, resp.headers[HttpHeaders.ContentType])
+            }.getOrElse { "" }
             val headerMap = resp.headers.entries().associate { it.key to it.value.joinToString(",") }
             val verdict = CloudflareGuard.classify(status, headerMap, text)
             val audit = SourceAuditEvent(
@@ -184,8 +234,31 @@ class SourceHttpClient(
                 status = status,
                 atEpochMs = nowMs(),
             )
-            return FetchResult(status, text, current, verdict, audit)
+            return FetchResult(status, text, current, verdict, audit, headerMap)
         }
+    }
+
+    /** charset 判定与解码（GBK 族内置表，其余 UTF-8；均以 U+FFFD 替换非法序列，不抛异常）。 */
+    private fun decodeBody(bytes: ByteArray, contentType: String?): String {
+        val declared = charsetOf(contentType) ?: sniffMetaCharset(bytes)
+        return if (declared != null && GbkCodec.isGbkFamily(declared)) {
+            GbkCodec.decode(bytes)
+        } else {
+            bytes.decodeToString()
+        }
+    }
+
+    private fun charsetOf(contentType: String?): String? {
+        if (contentType.isNullOrBlank()) return null
+        val m = Regex("""charset\s*=\s*["']?([A-Za-z0-9_\-]+)""", RegexOption.IGNORE_CASE).find(contentType)
+        return m?.groupValues?.getOrNull(1)
+    }
+
+    /** 头里没有 charset 时嗅探 HTML 头部声明（只看前 2KB，按单字节映射避免误解码）。 */
+    private fun sniffMetaCharset(bytes: ByteArray): String? {
+        val head = bytes.take(2048).joinToString("") { (it.toInt() and 0xFF).toChar().toString() }
+        val m = Regex("""charset\s*=\s*["']?([A-Za-z0-9_\-]+)""", RegexOption.IGNORE_CASE).find(head)
+        return m?.groupValues?.getOrNull(1)
     }
 
     companion object {

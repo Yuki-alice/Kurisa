@@ -40,7 +40,8 @@ IMAGE_LOAD, ACCOUNT, SETTINGS, TRANSLATION] requests=2 settings=1 images=1`。
 
 ## 4. 兼容性结论
 
-真实生态源一次跑通，说明 `docs/plugin-engine.md` §8 的 polyfill 必备集是够用的：
+真实生态源一次跑通，说明旧版 polyfill 必备集是够用的
+（v1 说明见 `docs/_archive/2026-11-12/plugin-engine.md` §8，目标态见 `docs/plugin-system/DESIGN.md`）：
 
 - `fetch` / `res.ok` / `res.json()`、`Network` Cookie 三件套、`ComicDetails` 构造器；
 - `this.loadSetting()` 同步桥、`settings` 声明式配置、`onImageLoad` 对象返回；

@@ -94,9 +94,9 @@ class BridgeChapterProvider(
                 ?: throw SourceBridgeException("漫画章节缺 images")
             ChapterPayload.Images(urls)
         } else {
-            // VIDEO/AUDIO：类型与能力扩展点已落地，渲染接线 deferred（ADR-011 D4），
+            // VIDEO/AUDIO：类型与能力扩展点已落地，渲染未接线，
             // 此处显式失败，不伪装成漫画 images，避免误导调用方。
-            throw SourceBridgeException("视频/音频渲染 deferred（ADR-011 D4）：kind=${kind.serial}")
+            throw SourceBridgeException("视频/音频渲染未接线：kind=${kind.serial}")
         }
     }
 }

@@ -22,19 +22,21 @@ class SourceRegistry(private val db: ReaderDatabase, private val maxCache: Int =
         }
     }
 
+    private fun rowToRecord(row: data.db.Source): SourceRecord = SourceRecord(
+        key = row.key, name = row.name, version = row.version, apiVersion = row.api_version.toInt(),
+        kindsJson = row.kinds, capabilitiesJson = row.capabilities, domainsJson = row.domains,
+        installPath = row.install_path, sha256 = row.sha256,
+        signatureOk = row.signature_ok == 1L, enabled = row.enabled == 1L,
+        settingsJson = row.settings_json, updatedAtEpochMs = row.updated_at,
+    )
+
     fun get(key: String): SourceRecord? {
         cache.remove(key)?.let {
             cache[key] = it
             return it
         }
         val row = db.sourceQueries.selectSource(key).executeAsOneOrNull() ?: return null
-        val rec = SourceRecord(
-            key = row.key, name = row.name, version = row.version, apiVersion = row.api_version.toInt(),
-            kindsJson = row.kinds, capabilitiesJson = row.capabilities, domainsJson = row.domains,
-            installPath = row.install_path, sha256 = row.sha256,
-            signatureOk = row.signature_ok == 1L, enabled = row.enabled == 1L,
-            settingsJson = row.settings_json, updatedAtEpochMs = row.updated_at,
-        )
+        val rec = rowToRecord(row)
         cachePut(key, rec)
         return rec
     }
@@ -49,6 +51,19 @@ class SourceRegistry(private val db: ReaderDatabase, private val maxCache: Int =
         db.sourceQueries.setSourceEnabled(if (enabled) 1L else 0L, nowMs, key)
         cachePut(key, cur.copy(enabled = enabled, updatedAtEpochMs = nowMs))
         return true
+    }
+
+    /** 安装确认：写 `source` 表 + 进缓存（含回滚历史）。调用方负责先落盘脚本。 */
+    fun confirmInstall(
+        plan: SourceInstaller.InstallPlan,
+        script: String,
+        installPath: String,
+        settingsJson: String = "{}",
+        nowMs: Long,
+    ): SourceRecord {
+        val rec = SourceInstaller.confirm(db, plan, script, installPath, settingsJson, nowMs)
+        put(rec)
+        return rec
     }
 
     /** 回滚到上一个版本（保留当前为历史，调用方负责恢复脚本文件）。 */
@@ -69,4 +84,14 @@ class SourceRegistry(private val db: ReaderDatabase, private val maxCache: Int =
 
     fun enabledKeys(): List<String> =
         db.sourceQueries.selectEnabledSources().executeAsList().map { it.key }
+
+    /** 全量安装列表（含禁用，源管理页用；ORDER BY key 与 SQL 一致，保证三端同序）。 */
+    fun allKeys(): List<String> =
+        db.sourceQueries.selectAllSources().executeAsList().map { it.key }
+
+    /** 全量记录（读穿缓存；调用方在后台线程调用，避免阻塞主线程）。 */
+    fun all(): List<SourceRecord> =
+        db.sourceQueries.selectAllSources().executeAsList().map { row ->
+            cache[row.key] ?: rowToRecord(row).also { cachePut(row.key, it) }
+        }
 }

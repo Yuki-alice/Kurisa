@@ -160,6 +160,34 @@ class C extends ComicSource {
   probe = async () => { return this.loadData('initN') || '0'; };
 }
 """
+        const val CACHE_JS = """
+class CacheDemo extends ComicSource {
+  constructor() {
+    super();
+    this.name = 'Cache'; this.key = 'com.example.v4'; this.version = '1.0.0';
+    this.kind = ['manga']; this.domains = ['cdn.example.com'];
+  }
+  probe = async () => {
+    const n = Number(this.loadData('runs') || '0');
+    this.saveData('runs', String(n + 1));
+    return await Cache.getOrPut('k', 60000, async () => {
+      const m = Number(this.loadData('loads') || '0');
+      this.saveData('loads', String(m + 1));
+      return 'v' + String(m + 1);
+    });
+  };
+  probeNoCache = async () => {
+    return await Cache.getOrPut('k2', 0, async () => {
+      const m = Number(this.loadData('loads2') || '0');
+      this.saveData('loads2', String(m + 1));
+      return 'w' + String(m + 1);
+    });
+  };
+  probeBadLoader = async () => {
+    return await Cache.getOrPut('k3', 60000, 'not-a-function');
+  };
+}
+"""
         const val PAGE_ONLY_JS = """
 class P extends ComicSource {
   constructor() {
@@ -230,6 +258,30 @@ class P extends ComicSource {
         assertTrue(SourceCapability.HTML_HELPER in ContractPolicy.capabilitiesFor(4))
         assertTrue(SourceCapability.NOVEL_CHAPTER in ContractPolicy.capabilitiesFor(4))
         assertTrue(SourceCapability.CRYPTO_AES in ContractPolicy.capabilitiesFor(4))
+    }
+
+    @Test
+    fun cacheGetOrPutMemoizes() = runTest {
+        val b = Bundle()
+        val e = b.engine()
+        try {
+            e.load(CACHE_JS)
+            // TTL 内命中：loader 只跑一次，两次同值。
+            assertEquals("\"v1\"", e.invoke("probe", "[]"))
+            assertEquals("\"v1\"", e.invoke("probe", "[]"))
+            assertEquals("1", b.storage.get("com.example.v4", "loads"))
+            assertEquals("2", b.storage.get("com.example.v4", "runs"))
+            // ttl <= 0 视为不缓存：每次重算。
+            assertEquals("\"w1\"", e.invoke("probeNoCache", "[]"))
+            assertEquals("\"w2\"", e.invoke("probeNoCache", "[]"))
+            // 非函数 loader 显式拒绝（静默桩禁止）。
+            val err = runCatching { e.invoke("probeBadLoader", "[]") }.exceptionOrNull()
+            assertTrue(err != null)
+        } catch (mh: HostMissingException) {
+            println("SKIP（无 quickjs native）: " + mh.message)
+        } finally {
+            e.close()
+        }
     }
 
     @Test
@@ -620,15 +672,18 @@ class P extends ComicSource {
     }
 
     @Test
-    fun initRunsPerEvaluationSingleShot() = runTest {
+    fun initRunsOnceLongLived() = runTest {
         val b = Bundle()
         val e = b.engine()
         try {
-            // U3 决议：单发每次求值重建全新 context，init 在本次上下文重跑；
-            // KV 是唯一跨调用状态通道（load→1、invoke→2/3）。
+            // P0 长驻语义（DESIGN §4）：load() 内 init() 只跑一次；后续 invoke 不重跑，
+            // JS 内全局可缓存，KV 仍是重建后可恢复的主通道（load→1、invoke→1/1）。
             e.load(INIT_COUNT_JS)
-            assertEquals("\"2\"", e.invoke("probe", "[]"))
-            assertEquals("\"3\"", e.invoke("probe", "[]"))
+            assertEquals("\"1\"", e.invoke("probe", "[]"))
+            assertEquals("\"1\"", e.invoke("probe", "[]"))
+            val (creates, inits) = e.stats()
+            assertEquals(1, creates)
+            assertEquals(1, inits)
         } catch (mh: HostMissingException) {
             println("SKIP（无 quickjs native）: " + mh.message)
         }
@@ -674,7 +729,7 @@ class P extends ComicSource {
                 runtime.loadWorkDetails("w", ContentKind.VIDEO)
             }
             assertEquals(SourceErrorKind.CONTRACT, details.kind)
-            assertTrue(details.message!!.contains("deferred"), details.message)
+            assertTrue(details.message!!.contains("未接线"), details.message)
             val payload = assertFailsWith<SourcePluginException> {
                 runtime.loadChapterPayload("w", "c", ContentKind.AUDIO)
             }

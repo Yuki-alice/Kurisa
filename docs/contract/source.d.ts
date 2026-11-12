@@ -2,8 +2,8 @@
  * Kurisa 源契约 · TypeScript 定义（M1 冻结版 v1 的向后兼容扩展）。
  * 源作者用此文件获得编辑器提示；源仓库 CI 用它做静态校验。
  * 对齐 Venera `ComicSource` 形状，新增 `kind` / `apiVersion` / `novel` 命名空间。
- * 运行时以 `docs/architecture.md` 第 4 章与 `docs/plugin-engine.md` 为准，
- * 本文件只做形态声明。
+ * 运行时以 `docs/architecture.md` 第 4 章与 `docs/plugin-system/DESIGN.md` 为准
+ *（旧版 `docs/plugin-engine.md` 已归档，仅描述 v1 实现）；本文件只做形态声明。
  *
  * 版本策略：`apiVersion = 2` 为冻结基线；`apiVersion = 3` 声明使用扩展能力集
  * （settings / 错误语义 / onImageLoad / explore / category / 游标分页）。
@@ -44,7 +44,7 @@ export type SourceCapability =
   | 'search' | 'explore' | 'category' | 'comic' | 'novel'
   | 'account' | 'favorites' | 'settings' | 'translation' | 'imageLoad';
 
-/** 宿主把 JS 抛出的字符串按子串分类；见 plugin-engine.md §6。 */
+/** 宿主把 JS 抛出的字符串按子串分类；见 `docs/plugin-system/DESIGN.md` §10。 */
 export type SourceErrorMarker =
   | 'Login expired' | 'Rate limited' | 'Not found' | 'NotFound';
 
@@ -225,7 +225,7 @@ export declare class ComicSource {
   loadData(key: string): string | null;
   saveData(key: string, value: unknown): void;
   deleteData(key: string): void;
-  /** 声明式设置：用户值 → default → null（宿主同步桥，见 plugin-engine.md §5）。 */
+  /** 声明式设置：用户值 → default → null（宿主同步桥，见 `docs/plugin-system/HOST-SDK.md` § Store）。 */
   loadSetting(key: string): string | null;
   /** 是否已登录（account 能力存在且宿主有会话）。 */
   readonly isLogged: boolean;

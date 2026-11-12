@@ -48,6 +48,13 @@ kotlin {
             implementation(project(":core:reader"))
             implementation(project(":core:designsystem"))
             implementation(project(":data:repository"))
+            implementation(project(":data:network"))
+            implementation(project(":data:db"))
+            implementation(project(":source:bridge"))
+            implementation(project(":source:registry"))
+            implementation(project(":source:hostapi"))
+            implementation(project(":source:contract"))
+            implementation(libs.ktor.client.core)
             implementation(project(":feature:shelf"))
             implementation(project(":feature:explore"))
             implementation(project(":feature:search"))
@@ -59,6 +66,12 @@ kotlin {
         }
         commonTest.dependencies {
             implementation(kotlin("test"))
+            implementation(libs.kotlinx.coroutines.test)
+        }
+        getByName("desktopTest").dependencies {
+            implementation(kotlin("test-junit"))
+            implementation(libs.sqldelight.sqlite.driver)
+            implementation(libs.ktor.client.mock)
         }
     }
 }

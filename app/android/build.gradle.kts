@@ -35,7 +35,9 @@ dependencies {
     implementation(project(":app:shared-ui"))
     implementation(project(":data:db"))
     implementation(project(":data:repository"))
+    implementation(project(":data:network"))
     implementation(project(":core:reader"))
     implementation(libs.sqldelight.android.driver)
+    implementation(libs.ktor.client.core)
     implementation(libs.androidx.activity.compose)
 }

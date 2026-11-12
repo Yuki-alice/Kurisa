@@ -3,7 +3,7 @@ package source.contract
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
-/** 内容类型。`kind` 数组至少含一项；VIDEO/AUDIO 为 v4 预留（渲染 deferred，见 ADR-011 D4）。 */
+/** 内容类型。`kind` 数组至少含一项；VIDEO/AUDIO 为 v4 预留（渲染未接线，仅类型与能力扩展点）。 */
 @Serializable
 enum class ContentKind(val serial: String) {
     @SerialName("manga")
@@ -57,7 +57,7 @@ data class SearchPage(
     val maxPage: Int = 1,
 )
 
-/** 源元数据：`// ==SourceScript==` 注释块 + 类字段的规范化结果。 */
+/** 源元数据：`// ==SourceScript==` 注释块 + 类字段的规范化结果；规则包（`rules/v1`）由 JSON 头解析同样形状。 */
 @Serializable
 data class SourceMeta(
     val name: String,
@@ -69,6 +69,8 @@ data class SourceMeta(
     val domains: List<String> = emptyList(),
     val capabilities: List<String> = emptyList(),
     val url: String = "",
+    /** 源形态（`SOURCE-PACKAGE.md`）：`js/v1`（缺省）或 `rules/v1`。 */
+    val format: String = "js/v1",
 )
 
 /** 账号声明：`account.loginWithWebview` / `loginWithCookies` 的静态可读部分。 */
@@ -96,6 +98,8 @@ data class IndexedSource(
     val capabilities: List<String> = emptyList(),
     val sha256: String = "",
     val signature: String? = null,
+    /** 源形态（`SOURCE-PACKAGE.md`）：`js/v1`（缺省，老条目零改动）或 `rules/v1`。 */
+    val format: String = "js/v1",
 )
 
 @Serializable

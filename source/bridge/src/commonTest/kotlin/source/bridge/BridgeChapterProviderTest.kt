@@ -125,7 +125,7 @@ class BridgeChapterProviderTest {
             ContentKind.VIDEO,
         )
         val err = assertFailsWith<SourceBridgeException> { video.payload("w", "c") }
-        assertTrue(err.message!!.contains("deferred"), err.message)
+        assertTrue(err.message!!.contains("未接线"), err.message)
         val audio = BridgeChapterProvider(
             FakeCalls(chapter = """{"content":"body","format":"plain"}"""),
             ContentKind.AUDIO,

@@ -45,6 +45,8 @@ class SourceRuntimeUnitTest {
             private set
         var loaded = 0
             private set
+        var invokeCount = 0
+            private set
 
         override suspend fun load(script: String) { loaded++ }
         override fun callSync(method: String, payload: String): String = ""
@@ -60,7 +62,10 @@ class SourceRuntimeUnitTest {
             chapterId: String,
             kind: ContentKind,
         ): String = "{}"
-        override suspend fun invoke(path: String, argsJson: String): String = invokeBody(path, argsJson)
+        override suspend fun invoke(path: String, argsJson: String): String {
+            invokeCount++
+            return invokeBody(path, argsJson)
+        }
     }
 
     private fun descriptor(
@@ -199,6 +204,102 @@ class SourceRuntimeUnitTest {
         val runtime = SourceRuntime(descriptor(hasImageLoad = false), engine)
         assertNull(runtime.imageLoadConfig("u", "w", "c"))
         assertFalse(invoked)
+    }
+
+    @Test
+    fun pureResultCacheHitsAndExpires() = runTest {
+        var invokes = 0
+        val engine = FakeEngine { path, _ ->
+            invokes++
+            if (path == "translate") "\"你好\"" else """{"url":"https://cdn.example.com/1.jpg"}"""
+        }
+        var now = 1000L
+        val cache = PureResultCache(ttlMs = 500, nowMs = { now })
+        val runtime = SourceRuntime(
+            descriptor(
+                capabilities = setOf(SourceCapability.SEARCH, SourceCapability.COMIC, SourceCapability.TRANSLATION),
+                hasImageLoad = true,
+            ),
+            engine,
+            pureCache = cache,
+        )
+        runtime.imageLoadConfig("https://example.com/1.jpg", "w", "c")
+        runtime.imageLoadConfig("https://example.com/1.jpg", "w", "c")
+        assertEquals(1, invokes)
+        runtime.translate("hello")
+        runtime.translate("hello")
+        assertEquals(2, invokes)
+        assertEquals(2, cache.hits)
+        // TTL 到期后失效重算。
+        now = 2000L
+        runtime.imageLoadConfig("https://example.com/1.jpg", "w", "c")
+        assertEquals(3, invokes)
+    }
+
+    @Test
+    fun managerInvalidationClearsPureCache() = runTest {
+        val created = mutableListOf<FakeEngine>()
+        val manager = SourceRuntimeManager(
+            engines = object : PluginEngineFactory {
+                override fun create(spec: PluginRuntimeSpec, host: HostApi): SourcePluginEngine =
+                    FakeEngine(describeJson = IMAGE_PROBE).also { created += it }
+            },
+            hosts = PluginHostProvider { StubHost() },
+        )
+        val spec = PluginRuntimeSpec(
+            key = "com.example.img", script = "class T extends ComicSource {}",
+            domains = setOf("example.com"), apiVersion = 3, appVersion = "1.6.0",
+        )
+        val first = manager.acquire(spec)
+        first.imageLoadConfig("u", "w", "c")
+        assertEquals(1, created.sumOf { it.invokeCount })
+        // 同签名命中缓存（含纯函数缓存），不重复求值。
+        manager.acquire(spec).imageLoadConfig("u", "w", "c")
+        assertEquals(1, created.sumOf { it.invokeCount })
+        // 失效后重建并重算（纯函数缓存按源前缀同步失效）。
+        manager.invalidate("com.example.img")
+        manager.acquire(spec).imageLoadConfig("u", "w", "c")
+        assertEquals(2, created.sumOf { it.invokeCount })
+        manager.close()
+    }
+
+    @Test
+    fun tracesSuccessFailureAndGate() = runTest {
+        val traces = mutableListOf<SourceCallTrace>()
+        var calls = 0
+        val engine = FakeEngine { path, _ ->
+            calls++
+            if (path == "search.load") throw SourceBridgeException("Rate limited by site")
+            "{\"ok\":true}"
+        }
+        val runtime = SourceRuntime(
+            descriptor(),
+            engine,
+            onTrace = { traces += it },
+        )
+        assertEquals("{\"ok\":true}", runtime.call("comic.loadEp", "[\"w\",\"c\"]"))
+        assertFailsWith<SourcePluginException> { runtime.call("search.load", "[]") }
+        assertFailsWith<SourcePluginException> { runtime.call("novel.loadChapter", "[\"w\",\"c\"]") }
+        assertEquals(3, traces.size)
+        val ok = traces[0]
+        assertEquals("com.example.test", ok.sourceKey)
+        assertEquals("comic.loadEp", ok.path)
+        assertTrue(ok.ok && ok.errorKind == null && ok.durationMs >= 0)
+        assertEquals(listOf("search.load", "novel.loadChapter"), traces.drop(1).map { it.path })
+        assertTrue(traces.drop(1).all { !it.ok })
+        assertEquals(SourceErrorKind.RATE_LIMITED, traces[1].errorKind)
+        assertEquals(SourceErrorKind.CONTRACT, traces[2].errorKind)
+        assertEquals(0, traces[2].durationMs)
+        assertEquals(2, calls)
+    }
+
+    @Test
+    fun cancellationProducesNoTrace() = runTest {
+        val traces = mutableListOf<SourceCallTrace>()
+        val engine = FakeEngine { _, _ -> throw kotlinx.coroutines.CancellationException("torn down") }
+        val runtime = SourceRuntime(descriptor(), engine, onTrace = { traces += it })
+        assertFailsWith<kotlinx.coroutines.CancellationException> { runtime.call("search.load", "[]") }
+        assertTrue(traces.isEmpty())
     }
 
     @Test
@@ -351,6 +452,18 @@ class SourceRuntimeUnitTest {
           "translationLocales":["zh_CN"],
           "hasInit":false, "hasImageLoad":false, "hasSearchNext":false,
           "hasSearch":true, "hasComic":true, "hasExplore":true,
+          "hasCategory":false, "hasAccount":false, "hasFavorites":false
+        }
+        """
+        const val IMAGE_PROBE = """
+        {
+          "key":"img.claims", "name":"I", "version":"1.0.0", "minAppVersion":"1.6.0",
+          "apiVersion":3, "kinds":["manga"], "domains":["example.com"],
+          "capabilities":["search","comic","imageLoad"],
+          "settings":{},
+          "translationLocales":[],
+          "hasInit":false, "hasImageLoad":true, "hasSearchNext":false,
+          "hasSearch":true, "hasComic":true, "hasExplore":false,
           "hasCategory":false, "hasAccount":false, "hasFavorites":false
         }
         """

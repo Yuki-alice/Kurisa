@@ -31,6 +31,8 @@ object SourceInstaller {
         val requiresDoubleConfirm: Boolean,
         val isUpdate: Boolean,
         val isDowngrade: Boolean,
+        /** 源形态（`SOURCE-PACKAGE.md`）：`js/v1`（缺省）或 `rules/v1`；落盘扩展名据此选择。 */
+        val format: String = "js/v1",
     )
 
     sealed interface PlanResult {
@@ -48,8 +50,15 @@ object SourceInstaller {
         if (scriptBytes.size > SourceSignature.MAX_SCRIPT_BYTES) {
             return PlanResult.Rejected(listOf("脚本超大（${scriptBytes.size}B），拒绝"))
         }
-        val meta = SourceScriptHeader.parse(script)
-            ?: return PlanResult.Rejected(listOf("缺少合法的 ==SourceScript== 元数据块"))
+        // 一体包分派（`SOURCE-PACKAGE.md` §1）：JSON 首字符走规则头解析，其余走 JS 头块。
+        // 规则包无代码可执行，静态扫描走域名对照分支；签名/索引对照两形态一致。
+        val meta = if (script.trimStart().startsWith("{")) {
+            RulesHeader.parse(script)
+                ?: return PlanResult.Rejected(listOf("规则 JSON 非法或缺 key/name/kind（须 rules/v1）"))
+        } else {
+            SourceScriptHeader.parse(script)
+                ?: return PlanResult.Rejected(listOf("缺少合法的 ==SourceScript== 元数据块"))
+        }
         val violations = ContractPolicy.validateMeta(meta)
         if (violations.isNotEmpty()) return PlanResult.Rejected(violations)
 
@@ -57,6 +66,12 @@ object SourceInstaller {
             if (expected.key != meta.key) return PlanResult.Rejected(listOf("key 与仓库索引不一致"))
             if (expected.version != meta.version) {
                 return PlanResult.Rejected(listOf("version 与仓库索引不一致（脚本 ${meta.version} vs 索引 ${expected.version}）"))
+            }
+            if (expected.format != "js/v1" && expected.format != "rules/v1") {
+                return PlanResult.Rejected(listOf("仓库索引 format 非法：${expected.format}"))
+            }
+            if (meta.format != expected.format) {
+                return PlanResult.Rejected(listOf("format 与仓库索引不一致（脚本 ${meta.format} vs 索引 ${expected.format}）"))
             }
             if (!SourceSignature.verifySha256(scriptBytes, expected.sha256)) {
                 return PlanResult.Rejected(listOf("sha256 与仓库索引不一致，拒绝"))
@@ -76,7 +91,11 @@ object SourceInstaller {
             if (!signatureOk) return PlanResult.Rejected(listOf("ed25519 签名校验失败，拒绝并保留旧版本"))
         }
 
-        val scan = SourceStaticScan.scan(script, meta.domains)
+        val scan = if (meta.format == "rules/v1") {
+            SourceStaticScan.scanRules(script, meta.domains)
+        } else {
+            SourceStaticScan.scan(script, meta.domains)
+        }
         if (scan.blocked) return PlanResult.Rejected(listOf(scan.blockedReason))
 
         val cmp = installedVersion?.let { compareSemver(meta.version, it) } ?: 0
@@ -97,6 +116,7 @@ object SourceInstaller {
                 requiresDoubleConfirm = scan.requiresDoubleConfirm || signatureMissing || expected == null,
                 isUpdate = installedVersion != null && cmp > 0,
                 isDowngrade = installedVersion != null && cmp < 0,
+                format = meta.format,
             ),
         )
     }
@@ -110,21 +130,31 @@ object SourceInstaller {
         nowMs: Long,
     ): SourceRecord {
         val sha = SourceSignature.sha256OfScript(script.toUtf8Bytes())
+        // JSON 数组写库（元素加引号；裸 `[a.com]` 非法，读侧会解析失败）。
+        // 同一份编码同时进 DB 与返回记录：registry 缓存优先命中返回记录，两边必须一致。
+        val kindsJson = plan.kinds.jsonArray()
+        val capabilitiesJson = plan.capabilities.jsonArray()
+        val domainsJson = plan.domains.jsonArray()
         db.sourceQueries.upsertSource(
             plan.key, plan.name, plan.version, plan.apiVersion.toLong(),
-            plan.kinds.joinToString(",", "[", "]"),
-            plan.capabilities.joinToString(",", "[", "]"),
-            plan.domains.joinToString(",", "[", "]"),
+            kindsJson, capabilitiesJson, domainsJson,
             installPath, sha, if (plan.signatureOk) 1L else 0L, 1L, settingsJson, nowMs,
         )
         return SourceRecord(
             key = plan.key, name = plan.name, version = plan.version,
             apiVersion = plan.apiVersion,
+            kindsJson = kindsJson,
+            capabilitiesJson = capabilitiesJson,
+            domainsJson = domainsJson,
             installPath = installPath, sha256 = sha,
             signatureOk = plan.signatureOk, enabled = true,
             settingsJson = settingsJson, updatedAtEpochMs = nowMs,
         )
     }
+
+    /** JSON 字符串数组编码（kind/capability serial 与域名均不含引号，直接包引号即可）。 */
+    private fun List<String>.jsonArray(): String =
+        joinToString(separator = ",", prefix = "[", postfix = "]") { "\"$it\"" }
 
     /** semver 比较收敛到契约策略（宿主装配层与安装流程共用同一套规则）。 */
     fun compareSemver(a: String, b: String): Int = ContractPolicy.compareSemver(a, b)
