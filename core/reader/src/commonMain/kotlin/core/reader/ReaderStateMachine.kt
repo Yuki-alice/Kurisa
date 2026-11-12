@@ -66,6 +66,20 @@ data class ReadingConfig(
     val volumeKeysInverted: Boolean = false,
     /** 长按唤起菜单（对齐 Komikku readWithLongTap，默认开）。 */
     val readWithLongTap: Boolean = true,
+    /** 反色（对齐 Komikku invertedColors，与灰度可叠加）。 */
+    val invertedColors: Boolean = false,
+    /** 自动滚动（对齐 Komikku autoscroll；条漫 UI 侧循环，分页 ViewModel 侧推进）。 */
+    val autoScroll: Boolean = false,
+    /** 自动滚动间隔秒（对齐 Komikku autoscrollInterval，1~10s）。 */
+    val autoScrollIntervalSec: Float = 3f,
+    /** 颜色滤镜 ARGB（null=关；对齐 Komikku colorFilter，暂只 SrcOver）。 */
+    val tintColorArgb: Long? = null,
+    /** 翻页闪屏（对齐 Komikku flashOnPageChange）。 */
+    val flashOnPageChange: Boolean = false,
+    /** 闪屏时长毫秒（对齐 Komikku flashDuration，100~1500ms）。 */
+    val flashDurationMs: Int = 100,
+    /** 闪屏白色（false=黑；对齐 Komikku flashColor BLACK/WHITE）。 */
+    val flashWhite: Boolean = false,
 )
 
 /**

@@ -74,6 +74,13 @@ object ReaderContract {
         data object ToggleVolumeKeysInverted : Intent
         data object ToggleReadWithLongTap : Intent
         data object ToggleBookmark : Intent
+        data object ToggleInvertedColors : Intent
+        data object ToggleAutoScroll : Intent
+        data class AutoScrollIntervalChanged(val seconds: Float) : Intent
+        data class TintColorChanged(val argb: Long?) : Intent
+        data object ToggleFlashOnChange : Intent
+        data class FlashDurationChanged(val millis: Int) : Intent
+        data object ToggleFlashWhite : Intent
         data class ThemeChanged(val theme: core.reader.ReaderTheme) : Intent
         data object ToggleDoublePage : Intent
         data object ToggleGrayscale : Intent

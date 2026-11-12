@@ -102,6 +102,13 @@ private data class ReaderSettingsDto(
     val volumeKeysEnabled: Boolean = true,
     val volumeKeysInverted: Boolean = false,
     val readWithLongTap: Boolean = true,
+    val invertedColors: Boolean = false,
+    val autoScroll: Boolean = false,
+    val autoScrollIntervalSec: Float = 3f,
+    val tintColorArgb: Long? = null,
+    val flashOnPageChange: Boolean = false,
+    val flashDurationMs: Int = 100,
+    val flashWhite: Boolean = false,
 ) {
     fun toConfig(): ReadingConfig = ReadingConfig(
         mode = enumOr(mode, ReadingMode.PAGED),
@@ -121,6 +128,13 @@ private data class ReaderSettingsDto(
         volumeKeysEnabled = volumeKeysEnabled,
         volumeKeysInverted = volumeKeysInverted,
         readWithLongTap = readWithLongTap,
+        invertedColors = invertedColors,
+        autoScroll = autoScroll,
+        autoScrollIntervalSec = autoScrollIntervalSec.coerceIn(1f, 10f),
+        tintColorArgb = tintColorArgb,
+        flashOnPageChange = flashOnPageChange,
+        flashDurationMs = flashDurationMs.coerceIn(100, 1500),
+        flashWhite = flashWhite,
     )
 
     companion object {
@@ -142,6 +156,13 @@ private data class ReaderSettingsDto(
             volumeKeysEnabled = config.volumeKeysEnabled,
             volumeKeysInverted = config.volumeKeysInverted,
             readWithLongTap = config.readWithLongTap,
+            invertedColors = config.invertedColors,
+            autoScroll = config.autoScroll,
+            autoScrollIntervalSec = config.autoScrollIntervalSec,
+            tintColorArgb = config.tintColorArgb,
+            flashOnPageChange = config.flashOnPageChange,
+            flashDurationMs = config.flashDurationMs,
+            flashWhite = config.flashWhite,
         )
     }
 }

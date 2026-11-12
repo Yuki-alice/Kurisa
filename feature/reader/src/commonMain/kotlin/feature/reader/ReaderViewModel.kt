@@ -24,7 +24,10 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -189,6 +192,12 @@ class ReaderViewModel(
     private var windowChapter: String? = null
     private var prefetchingChapter: String? = null
     private val pageJobs = mutableMapOf<Int, Job>()
+    private var autoScrollJob: Job? = null
+
+    override fun onCleared() {
+        autoScrollJob?.cancel()
+        super.onCleared()
+    }
     private val pageCache = ByteBudgetLru<ByteArray>(pageCacheBytes)
     private val pagePermits = Semaphore(maxConcurrentPageLoads)
 
@@ -209,6 +218,24 @@ class ReaderViewModel(
                     _effect.send(ReaderContract.Effect.Toast("已是最后一章"))
                 }
             }
+        }
+        viewModelScope.launch {
+            settingsStore.settings
+                .map { Triple(it.autoScroll, it.autoScrollIntervalSec, it.mode) }
+                .distinctUntilChanged()
+                .collect { (enabled, intervalSec, mode) ->
+                    autoScrollJob?.cancel()
+                    if (enabled && mode == ReadingMode.PAGED) {
+                        autoScrollJob = viewModelScope.launch {
+                            while (true) {
+                                delay((intervalSec * 1000).toLong().coerceAtLeast(500))
+                                if (!local.value.menuVisible) {
+                                    onIntent(ReaderContract.Intent.NextPage)
+                                }
+                            }
+                        }
+                    }
+                }
         }
         viewModelScope.launch { open() }
     }
@@ -319,6 +346,27 @@ class ReaderViewModel(
             }
             is ReaderContract.Intent.ToggleReadWithLongTap -> settingsStore.update {
                 it.copy(readWithLongTap = !it.readWithLongTap)
+            }
+            is ReaderContract.Intent.ToggleInvertedColors -> settingsStore.update {
+                it.copy(invertedColors = !it.invertedColors)
+            }
+            is ReaderContract.Intent.ToggleAutoScroll -> settingsStore.update {
+                it.copy(autoScroll = !it.autoScroll)
+            }
+            is ReaderContract.Intent.AutoScrollIntervalChanged -> settingsStore.update {
+                it.copy(autoScrollIntervalSec = intent.seconds.coerceIn(1f, 10f))
+            }
+            is ReaderContract.Intent.TintColorChanged -> settingsStore.update {
+                it.copy(tintColorArgb = intent.argb)
+            }
+            is ReaderContract.Intent.ToggleFlashOnChange -> settingsStore.update {
+                it.copy(flashOnPageChange = !it.flashOnPageChange)
+            }
+            is ReaderContract.Intent.FlashDurationChanged -> settingsStore.update {
+                it.copy(flashDurationMs = intent.millis.coerceIn(100, 1500))
+            }
+            is ReaderContract.Intent.ToggleFlashWhite -> settingsStore.update {
+                it.copy(flashWhite = !it.flashWhite)
             }
             is ReaderContract.Intent.ToggleBookmark -> {
                 val id = machine.currentChapterId() ?: chapterId

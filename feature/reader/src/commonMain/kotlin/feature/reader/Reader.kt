@@ -45,10 +45,10 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.BookmarkBorder
-import androidx.compose.material.icons.filled.List
+import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.SkipPrevious
@@ -95,6 +95,8 @@ import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
@@ -265,6 +267,30 @@ fun ReaderContent(
                     .fillMaxSize()
                     .background(Color.Black.copy(alpha = settings.dimLevel / 100f)),
             )
+        }
+        // 颜色滤镜（对齐 Komikku colorFilter，暂只 SrcOver）。
+        settings.tintColorArgb?.let { argb ->
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .background(Color(argb)),
+            )
+        }
+        // 翻页闪屏（对齐 Komikku flashOnPageChange）。
+        if (settings.flashOnPageChange) {
+            var flashing by remember(state.chapterId) { mutableStateOf(false) }
+            LaunchedEffect(state.pageIndex, state.chapterId) {
+                flashing = true
+                kotlinx.coroutines.delay(settings.flashDurationMs.toLong())
+                flashing = false
+            }
+            if (flashing) {
+                Box(
+                    Modifier
+                        .fillMaxSize()
+                        .background(if (settings.flashWhite) Color.White else Color.Black),
+                )
+            }
         }
 
         if (state.menuVisible) {
@@ -518,6 +544,15 @@ private fun WebtoonReader(
         val focusRequester = remember { FocusRequester() }
         LaunchedEffect(Unit) { runCatching { focusRequester.requestFocus() } }
         var restored by remember(state.chapterId) { mutableStateOf(false) }
+        if (state.settings.autoScroll && !state.menuVisible) {
+            LaunchedEffect(state.settings.autoScrollIntervalSec, state.chapterId) {
+                while (true) {
+                    kotlinx.coroutines.delay((state.settings.autoScrollIntervalSec * 1000).toLong())
+                    if (!listState.canScrollForward) break
+                    listState.animateScrollBy(screenHeightPx * 0.75f)
+                }
+            }
+        }
 
         // 只在首次恢复进度时定位；用户后续滚动不反向覆盖。
         LaunchedEffect(state.pageIndex) {
@@ -636,6 +671,20 @@ private fun WebtoonReader(
                         state = state,
                         onIntent = onIntent,
                         horizontalPadding = padding,
+                        viewportSize = size,
+                        onTapAction = { action ->
+                            when (action) {
+                                TapAction.PREV -> scope.launch {
+                                    listState.animateScrollBy(-screenHeightPx * 0.75f)
+                                }
+                                TapAction.NEXT -> scope.launch {
+                                    listState.animateScrollBy(screenHeightPx * 0.75f)
+                                }
+                                TapAction.MENU -> onIntent(ReaderContract.Intent.ToggleMenu)
+                                TapAction.CLOSE_MENU -> onIntent(ReaderContract.Intent.CloseMenu)
+                                TapAction.NONE -> Unit
+                            }
+                        },
                     )
                 }
                 if (state.settings.chapterTransition && state.hasNextChapter) {
@@ -661,18 +710,46 @@ private fun WebtoonPageImage(
     state: ReaderContract.State,
     onIntent: (ReaderContract.Intent) -> Unit,
     horizontalPadding: androidx.compose.ui.unit.Dp,
+    onTapAction: (TapAction) -> Unit,
+    /** 视口尺寸（点按分区按全屏归一化，与外层 detector 一致）。 */
+    viewportSize: IntSize,
 ) {
     val bytes = state.pages[index]
     val pageState = state.pageStates[index]
+    // 图片在窗口中的 Y（点按分区按屏幕归一化，与外层 detector 一致）。
+    var itemWindowY by remember { mutableStateOf(0f) }
     when {
-        bytes != null -> AsyncImage(
+        bytes != null -> CoilZoomAsyncImage(
             model = bytes,
             contentDescription = "第 ${index + 1} 页",
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = horizontalPadding),
+                .padding(horizontal = horizontalPadding)
+                .onGloballyPositioned { itemWindowY = it.positionInWindow().y },
             contentScale = ContentScale.FillWidth,
             colorFilter = state.settings.imageColorFilter(),
+            zoomState = rememberCoilZoomState(),
+            scrollBar = null,
+            onTap = { offset ->
+                if (viewportSize.width > 0 && viewportSize.height > 0) {
+                    val screenY = itemWindowY + offset.y
+                    val action = tapActionAt(
+                        x = (offset.x / viewportSize.width).coerceIn(0f, 1f),
+                        y = (screenY / viewportSize.height).coerceIn(0f, 1f),
+                        mode = state.settings.tapZone,
+                        direction = state.settings.direction,
+                        menuVisible = state.menuVisible,
+                        smallerTapZone = state.settings.smallerTapZone,
+                        invert = state.settings.tapInvert,
+                    )
+                    onTapAction(action)
+                }
+            },
+            onLongPress = {
+                if (state.settings.readWithLongTap || state.menuVisible) {
+                    onIntent(ReaderContract.Intent.ToggleMenu)
+                }
+            },
         )
         pageState is ReaderContract.PageLoadState.Error -> PageErrorPlaceholder(
             message = pageState.message,
@@ -740,7 +817,7 @@ private fun ReaderTopBar(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             IconButton(onClick = onBack) {
-                Icon(Icons.Filled.ArrowBack, contentDescription = "返回", tint = primary)
+                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回", tint = primary)
             }
             Column(
                 Modifier.weight(1f),
@@ -797,7 +874,7 @@ private fun ReaderBottomBar(
             horizontalArrangement = Arrangement.SpaceEvenly,
         ) {
             IconButton(onClick = { onIntent(ReaderContract.Intent.OpenChapterList) }) {
-                Icon(Icons.Filled.List, contentDescription = "目录", tint = primary)
+                Icon(Icons.AutoMirrored.Filled.List, contentDescription = "目录", tint = primary)
             }
             IconButton(
                 onClick = { onIntent(ReaderContract.Intent.PrevChapter) },
@@ -1193,8 +1270,70 @@ private fun ReaderSettingsSheet(
                 valueRange = 0f..60f,
                 steps = 59,
             )
+            SettingsSwitch("反色", settings.invertedColors) {
+                onIntent(ReaderContract.Intent.ToggleInvertedColors)
+            }
+            SettingsSection("颜色滤镜") {
+                FilterChip(
+                    selected = settings.tintColorArgb == null,
+                    onClick = { onIntent(ReaderContract.Intent.TintColorChanged(null)) },
+                    label = { Text("无") },
+                )
+                TintChip("暖黄", 0x22FFB300, settings.tintColorArgb, onIntent)
+                TintChip("冷蓝", 0x223366FF, settings.tintColorArgb, onIntent)
+                TintChip("夜", 0x44000000, settings.tintColorArgb, onIntent)
+            }
+            SettingsSwitch("自动滚动", settings.autoScroll) {
+                onIntent(ReaderContract.Intent.ToggleAutoScroll)
+            }
+            Text(
+                "自滚间隔 ${settings.autoScrollIntervalSec} 秒",
+                style = MaterialTheme.typography.bodyMedium,
+                modifier = Modifier.padding(top = 12.dp),
+            )
+            Slider(
+                value = settings.autoScrollIntervalSec,
+                onValueChange = {
+                    onIntent(ReaderContract.Intent.AutoScrollIntervalChanged(it))
+                },
+                valueRange = 1f..10f,
+                steps = 8,
+            )
+            SettingsSwitch("翻页闪屏", settings.flashOnPageChange) {
+                onIntent(ReaderContract.Intent.ToggleFlashOnChange)
+            }
+            Text(
+                "闪屏时长 ${settings.flashDurationMs} 毫秒",
+                style = MaterialTheme.typography.bodyMedium,
+                modifier = Modifier.padding(top = 12.dp),
+            )
+            Slider(
+                value = settings.flashDurationMs.toFloat(),
+                onValueChange = {
+                    onIntent(ReaderContract.Intent.FlashDurationChanged(it.toInt()))
+                },
+                valueRange = 100f..1500f,
+                steps = 13,
+            )
+            SettingsSwitch("白色闪屏", settings.flashWhite) {
+                onIntent(ReaderContract.Intent.ToggleFlashWhite)
+            }
         }
     }
+}
+
+@Composable
+private fun TintChip(
+    label: String,
+    argb: Long,
+    current: Long?,
+    onIntent: (ReaderContract.Intent) -> Unit,
+) {
+    FilterChip(
+        selected = current == argb,
+        onClick = { onIntent(ReaderContract.Intent.TintColorChanged(argb)) },
+        label = { Text(label) },
+    )
 }
 
 @Composable
@@ -1389,11 +1528,22 @@ private fun ReadingDirection.displayName(): String = when (this) {
     ReadingDirection.VERTICAL -> "纵向"
 }
 
-private fun ReadingConfig.imageColorFilter(): ColorFilter? =
+private fun ReadingConfig.imageColorFilter(): ColorFilter? {
+    var matrix: ColorMatrix? = null
     if (grayscale) {
-        ColorFilter.colorMatrix(
-            ColorMatrix().apply { setToSaturation(0f) },
-        )
-    } else {
-        null
+        matrix = ColorMatrix().apply { setToSaturation(0f) }
     }
+    if (invertedColors) {
+        // 反色矩阵（对齐 Komikku invertedColors；与灰度矩阵相乘叠加）。
+        val invert = ColorMatrix(
+            floatArrayOf(
+                -1f, 0f, 0f, 0f, 255f,
+                0f, -1f, 0f, 0f, 255f,
+                0f, 0f, -1f, 0f, 255f,
+                0f, 0f, 0f, 1f, 0f,
+            ),
+        )
+        matrix = if (matrix == null) invert else matrix.apply { timesAssign(invert) }
+    }
+    return matrix?.let { ColorFilter.colorMatrix(it) }
+}
