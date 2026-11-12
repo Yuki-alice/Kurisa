@@ -32,6 +32,9 @@ class LocalChapterProvider(
         }
     }
 
+    override suspend fun rawBytes(workId: String, chapterId: String): ByteArray =
+        fs.readBytes(chapterId)
+
     override suspend fun payload(workId: String, chapterId: String): ChapterPayload {
         // 目录章节：含图片即是。
         val dirImages = runCatching {
@@ -41,6 +44,11 @@ class LocalChapterProvider(
                 .map { "$chapterId/${it.name}" }
         }.getOrNull()
         if (!dirImages.isNullOrEmpty()) return ChapterPayload.Images(dirImages)
+
+        // PDF 不走页管线（见 ChapterProvider.rawBytes + 专用 PDF 阅读器）。
+        if (chapterId.substringAfterLast('.', "").equals("pdf", ignoreCase = true)) {
+            throw IllegalStateException("PDF 章节请用专用阅读器打开：$chapterId")
+        }
 
         // 归档 / EPUB。
         val reader = try {

@@ -121,6 +121,13 @@ interface ChapterProvider {
      */
     suspend fun resolvePage(workId: String, chapterId: String, url: String): ReaderPageRequest =
         ReaderPageRequest(url)
+
+    /**
+     * 源内直读字节（PDF 等专用阅读器章节用；默认不支持）。
+     * @param chapterId 章节定位（本地源为 `"$manga/$entry"` 路径）。
+     */
+    suspend fun rawBytes(workId: String, chapterId: String): ByteArray =
+        throw UnsupportedOperationException("该源不支持直读：$chapterId")
 }
 
 /** payload → 可渲染页数（小说正文分页随 M4，此处 Text 计 1 页）。 */
@@ -210,6 +217,31 @@ class ReaderStateMachine {
         }
         chapterIndex = idx
         loadCurrent()
+    }
+
+    /**
+     * 仅装载目录并定位（不拉 payload；PDF 等专用阅读器章节用）。
+     * 成功时进入 Ready（pageCount 占位 1，调用方不走页管线）；失败走 Error。
+     */
+    suspend fun openChapterListOnly(workId: String, chapterId: String, provider: ChapterProvider): Boolean {
+        this.provider = provider
+        this.workId = workId
+        this.requestedChapterId = chapterId
+        resolve(workId, chapterId)
+        val chapters = runCatching { provider.chapters(workId) }.getOrElse {
+            fail("目录加载失败：${it.message}", true)
+            return false
+        }
+        chapterList = chapters.sortedBy { it.ordinal }
+        val idx = chapterList.indexOfFirst { it.id == chapterId }
+        if (idx < 0) {
+            fail("章节不存在：$chapterId", false)
+            return false
+        }
+        chapterIndex = idx
+        lastPayload = null
+        ready(workId, chapterId, 1)
+        return true
     }
 
     /**

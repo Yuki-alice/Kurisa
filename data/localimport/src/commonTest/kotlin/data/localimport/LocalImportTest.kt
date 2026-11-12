@@ -84,7 +84,7 @@ class ComicInfoTest {
     @Test
     fun parsesFields() {
         val info = ComicInfoParser.parse(
-            """<ComicInfo xmlns:xsd="http://x" xmlns:xsi="http://y">
+            """<ComicInfo xmlns:xsd="https://example.com/xsd" xmlns:xsi="https://example.com/xsi">
               <Title>Ch One</Title><Series>S</Series><Number>12.5</Number>
               <Summary>D</Summary><Writer>W</Writer><Penciller>P</Penciller>
               <Genre>Action</Genre><Publisher>Group</Publisher>
@@ -127,7 +127,7 @@ class EpubReaderTest {
                 """<container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
                   <rootfiles><rootfile full-path="OEBPS/content.opf"/></rootfiles></container>""",
             "OEBPS/content.opf" to
-                """<package xmlns="http://www.idpf.org/2007/opf" xmlns:dc="http://purl.org/dc/elements/1.1/">
+                """<package xmlns="https://example.com/opf" xmlns:dc="https://example.com/dc">
                   <metadata><dc:title>Book</dc:title><dc:creator>Auth</dc:creator>
                   <dc:description>D</dc:description><dc:publisher>Group</dc:publisher>
                   <meta property="dcterms:modified">2024-05-06T07:08:09Z</meta></metadata>

@@ -33,6 +33,7 @@ kotlin {
             implementation(libs.compose.material3)
             implementation(libs.compose.material.icons.core)
             implementation(libs.compose.material.icons.extended)
+            implementation(libs.pdfium)
             implementation(libs.navigation3.ui)
             implementation(libs.kotlinx.serialization.json)
             implementation(libs.kotlinx.coroutines.core)
@@ -57,6 +58,12 @@ kotlin {
         commonTest.dependencies {
             implementation(kotlin("test"))
             implementation(libs.kotlinx.coroutines.test)
+        }
+        getByName("desktopTest").dependencies {
+            implementation(kotlin("test-junit"))
+            implementation(libs.compose.ui.test.junit4)
+            implementation(compose.desktop.currentOs)
+                    implementation(libs.korlibs.image)
         }
     }
 }

@@ -74,6 +74,7 @@ class ReaderViewModel(
         val reachedEnd: Boolean = false,
         val pages: Map<Int, ByteArray> = emptyMap(),
         val pageSizes: Map<Int, core.reader.PageSize> = emptyMap(),
+        val pdfBytes: ByteArray? = null,
         val pageStates: Map<Int, ReaderContract.PageLoadState> = emptyMap(),
         val article: String? = null,
         val settings: ReadingConfig = ReadingConfig(),
@@ -170,6 +171,7 @@ class ReaderViewModel(
         error = error,
         reachedEnd = reachedEnd,
         pages = l.pages,
+        pdfBytes = l.pdfBytes,
         pageStates = l.pageStates,
         pageSizes = l.pageSizes,
         article = l.article,
@@ -291,12 +293,20 @@ class ReaderViewModel(
             }
             is ReaderContract.Intent.NextChapter -> launchNextChapter()
             is ReaderContract.Intent.PrevChapter -> viewModelScope.launch {
-                if (!machine.prevChapter()) {
+                val prevId = machine.previousChapterId()
+                if (prevId != null && isPdfChapter(prevId)) {
+                    openPdf(prevId)
+                } else if (!machine.prevChapter()) {
                     _effect.send(ReaderContract.Effect.Toast("已是第一章"))
                 }
             }
-            is ReaderContract.Intent.RetryClicked -> viewModelScope.launch {
-                machine.retry()
+            is ReaderContract.Intent.RetryClicked -> {
+                val id = machine.currentChapterId() ?: chapterId
+                if (isPdfChapter(id) && local.value.pdfBytes == null) {
+                    viewModelScope.launch { openPdf(id) }
+                } else {
+                    viewModelScope.launch { machine.retry() }
+                }
             }
             is ReaderContract.Intent.RefreshPage -> {
                 dropWindow()
@@ -393,8 +403,7 @@ class ReaderViewModel(
             is ReaderContract.Intent.CloseSettings -> local.update { it.copy(settingsVisible = false) }
             is ReaderContract.Intent.SelectChapter -> {
                 local.update { it.copy(chapterListVisible = false, menuVisible = false, reachedEnd = false) }
-                dropWindow()
-                viewModelScope.launch { machine.jumpToChapter(intent.chapterId) }
+                viewModelScope.launch { openChapterRoute(intent.chapterId, first = false) }
             }
             is ReaderContract.Intent.RetryPage -> {
                 local.update {
@@ -414,13 +423,52 @@ class ReaderViewModel(
         viewModelScope.launch {
             endNotifiedFor = null
             local.update { it.copy(reachedEnd = false) }
+            // 跨格式：下一章是 PDF 则走专用打开（machine 页管线不处理 PDF）。
+            val nextId = machine.nextChapterId()
+            if (nextId != null && isPdfChapter(nextId)) {
+                openPdf(nextId)
+                return@launch
+            }
             dropWindow()
             machine.nextChapter()
         }
     }
 
     private suspend fun open() {
-        machine.openChapter(workId, chapterId, chapters)
+        openChapterRoute(chapterId, first = true)
+    }
+
+    /** PDF 按扩展名识别（`xxx.pdf`），走专用阅读器，不进页管线。 */
+    private fun isPdfChapter(id: String): Boolean =
+        id.substringAfterLast('.', "").equals("pdf", ignoreCase = true)
+
+    private suspend fun openChapterRoute(id: String, first: Boolean) {
+        if (isPdfChapter(id)) {
+            openPdf(id)
+            return
+        }
+        local.update { it.copy(pdfBytes = null) }
+        if (first) {
+            machine.openChapter(workId, id, chapters)
+        } else {
+            dropWindow()
+            viewModelScope.launch { machine.jumpToChapter(id) }
+        }
+    }
+
+    private suspend fun openPdf(id: String) {
+        dropWindow()
+        local.update { it.copy(pdfBytes = null) }
+        try {
+            // 先确立 machine 章节（Ready 会触发 onReady→ensureWindow 的二次 dropWindow），
+            // 再写字节并同步 windowChapter，避免字节被滞后的窗口清空。
+            machine.openChapterListOnly(workId, id, chapters)
+            val bytes = chapters.rawBytes(workId, id)
+            windowChapter = id
+            local.update { it.copy(pdfBytes = bytes) }
+        } catch (e: Exception) {
+            machine.fail("PDF 打开失败：${e.message}", true)
+        }
     }
 
     private suspend fun onReady(w: String, c: String, pageCount: Int) {
@@ -568,7 +616,7 @@ class ReaderViewModel(
         windowVersion++
         pageJobs.values.forEach { it.cancel() }
         pageJobs.clear()
-        local.update { it.copy(pages = emptyMap(), pageStates = emptyMap()) }
+        local.update { it.copy(pages = emptyMap(), pageStates = emptyMap(), pageSizes = emptyMap(), pdfBytes = null) }
     }
 
     private fun cacheKey(chapter: String, request: ReaderPageRequest): String =

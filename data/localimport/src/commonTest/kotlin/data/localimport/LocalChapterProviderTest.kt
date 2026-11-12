@@ -13,10 +13,13 @@ import kotlin.test.assertTrue
 
 class LocalChapterProviderTest {
 
+    private val jpg1 = RealImageFixtures.mangaPage(64, 64, 200, 40, 40)
+    private val jpg2 = RealImageFixtures.mangaPage(96, 64, 40, 120, 200)
+
     private suspend fun seed(): LocalSourceFileSystem {
         val cbzSrc = MemoryVfsMix(
-            "p001.jpg" to byteArrayOf(1),
-            "p002.jpg" to byteArrayOf(2),
+            "p001.jpg" to jpg1,
+            "p002.jpg" to jpg2,
         )
         val epubSrc = MemoryVfsMix(
             "META-INF/container.xml" to
@@ -29,9 +32,9 @@ class LocalChapterProviderTest {
         )
         return LocalSourceFileSystem(
             MemoryVfsMix(
-                "M/ch02/p1.jpg" to byteArrayOf(1),
-                "M/ch02/p2.jpg" to byteArrayOf(2),
-                "M/ch01/p1.jpg" to byteArrayOf(3),
+                "M/ch02/p1.jpg" to jpg1,
+                "M/ch02/p2.jpg" to jpg2,
+                "M/ch01/p1.jpg" to jpg1,
                 "M/vol.cbz" to cbzSrc.createZipFromTree(),
                 "M/book.epub" to epubSrc.createZipFromTree(),
                 "M/notes.txt" to byteArrayOf(0),
@@ -74,8 +77,26 @@ class LocalChapterProviderTest {
     fun fetcherReadsDirectoryAndArchive() = runTest {
         val fs = seed()
         val fetcher = LocalImageFetcher(fs)
-        assertEquals(listOf<Byte>(1), fetcher.fetch(ImageRequest("M/ch02/p1.jpg", emptySet())).bytes.toList())
-        assertEquals(listOf<Byte>(2), fetcher.fetch(ImageRequest("M/vol.cbz!/p002.jpg", emptySet())).bytes.toList())
+        assertEquals(jpg1.toList(), fetcher.fetch(ImageRequest("M/ch02/p1.jpg", emptySet())).bytes.toList())
+        assertEquals(jpg2.toList(), fetcher.fetch(ImageRequest("M/vol.cbz!/p002.jpg", emptySet())).bytes.toList())
+    }
+
+    @Test
+    fun pdfChapterListedWithRawBytes() = runTest {
+        val fs = LocalSourceFileSystem(
+            MemoryVfsMix(
+                "Doc/book.pdf" to MinimalPdf.onePage(),
+                "Doc/ch01/p1.jpg" to byteArrayOf(1),
+            ),
+        )
+        val provider = LocalChapterProvider(fs) { "Doc" }
+        val chapters = provider.chapters("Doc")
+        assertTrue(chapters.any { it.id == "Doc/book.pdf" })
+        // PDF 不走页管线：payload 明确指引专用阅读器。
+        val err = runCatching { provider.payload("Doc", "Doc/book.pdf") }.exceptionOrNull()
+        assertTrue(err is IllegalStateException && err.message!!.contains("专用阅读器"))
+        // 直读字节完整。
+        assertTrue(provider.rawBytes("Doc", "Doc/book.pdf").isNotEmpty())
     }
 
     @Test

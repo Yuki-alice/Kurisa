@@ -326,6 +326,34 @@ class ReaderViewModelTest {
     }
 
     @Test
+    fun pdfChapterLoadsBytesWithoutPager() = runTest(dispatcher) {
+        val provider = object : ChapterProvider {
+            override suspend fun chapters(workId: String) =
+                listOf(ChapterRef("doc.pdf", "文档", 0))
+
+            override suspend fun payload(workId: String, chapterId: String): ChapterPayload =
+                throw IllegalStateException("PDF 章节请用专用阅读器打开")
+
+            override suspend fun rawBytes(workId: String, chapterId: String): ByteArray =
+                byteArrayOf(9, 9, 9)
+        }
+        val m = ReaderViewModel(
+            workId = "w", chapterId = "doc.pdf", machine = ReaderStateMachine(),
+            chapters = provider,
+            saveProgress = SaveReadingProgressUseCase(FakeProgress()),
+            loadProgress = LoadReadingProgressUseCase(FakeProgress()),
+            pages = LoadPageBytesUseCase(FakeImages()),
+            domains = emptySet(),
+            workScope = backgroundScope,
+        )
+        backgroundScope.launch { m.state.collect {} }
+        runCurrent()
+        assertEquals(listOf<Byte>(9, 9, 9), m.state.value.pdfBytes?.toList())
+        assertTrue(m.state.value.pages.isEmpty())
+        assertEquals("文档", m.state.value.chapters.single().title)
+    }
+
+    @Test
     fun prevNextTitlesExposed() = runTest(dispatcher) {
         val m = vm(saveScope = backgroundScope)
         backgroundScope.launch { m.state.collect {} }

@@ -70,6 +70,7 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
@@ -129,6 +130,8 @@ import data.images.ImageFetcher
 import data.images.SourceImageFetcher
 import data.localimport.LocalImageFetcher
 import data.localimport.LocalSourceFileSystem
+import dev.nucleusframework.pdfium.PdfReader
+import dev.nucleusframework.pdfium.rememberPdfReaderState
 import data.network.CookieStore
 import data.network.SourceHttpClient
 import data.network.defaultHttpClient
@@ -240,8 +243,10 @@ fun ReaderContent(
                 "${state.pageIndex + 1}"
             }
         }
-        when {
+        val pdfBytes = state.pdfBytes
+    when {
             state.article != null -> NovelContent(state.article, state.settings)
+            pdfBytes != null -> PdfReaderView(pdfBytes, state, onIntent, onBack)
             state.loading && state.pageCount == 0 -> LoadingScreen()
             state.error != null && state.pageCount == 0 -> ErrorScreen(
                 message = state.error,
@@ -299,6 +304,47 @@ fun ReaderContent(
             PageIndicator(pageLabel, state.pageCount)
         }
 
+        if (state.chapterListVisible) {
+            ChapterListSheet(state, onIntent)
+        }
+        if (state.settingsVisible) {
+            ReaderSettingsSheet(state, onIntent)
+        }
+    }
+}
+
+/* --------------------------------------------------------------------------------------------- */
+/* PDF viewer（ComposePdfReader；pdfium 文档 API 为 internal，只走公开组件）                        */
+/* --------------------------------------------------------------------------------------------- */
+
+@Composable
+private fun PdfReaderView(
+    bytes: ByteArray,
+    state: ReaderContract.State,
+    onIntent: (ReaderContract.Intent) -> Unit,
+    onBack: () -> Unit,
+) {
+    val pdfState = rememberPdfReaderState()
+    LaunchedEffect(bytes) {
+        pdfState.open(bytes)
+    }
+    DisposableEffect(Unit) {
+        onDispose { pdfState.dispose() }
+    }
+    Box(Modifier.fillMaxSize()) {
+        when {
+            pdfState.error != null -> ErrorScreen(
+                message = "PDF 打开失败：${pdfState.error}",
+                onRetry = { onIntent(ReaderContract.Intent.RetryClicked) },
+                onBack = onBack,
+            )
+            pdfState.isLoading -> LoadingScreen()
+            else -> PdfReader(pdfState, Modifier.fillMaxSize())
+        }
+        // 复用同一套 Chrome：菜单/目录/设置与图片章节一致。
+        if (state.menuVisible) {
+            ReaderChrome(state, onIntent, onBack, "")
+        }
         if (state.chapterListVisible) {
             ChapterListSheet(state, onIntent)
         }
@@ -721,12 +767,15 @@ private fun WebtoonPageImage(
     val pageState = state.pageStates[index]
     // 图片在窗口中的 Y（点按分区按屏幕归一化，与外层 detector 一致）。
     var itemWindowY by remember { mutableStateOf(0f) }
+    // 已知尺寸时先占位确定宽高比（防 LazyColumn 无界高度测成 0 + 滚动跳变）。
+    val knownAspect = state.pageSizes[index]?.let { it.width.toFloat() / it.height }
     when {
         bytes != null -> CoilZoomAsyncImage(
             model = bytes,
             contentDescription = "第 ${index + 1} 页",
             modifier = Modifier
                 .fillMaxWidth()
+                .then(if (knownAspect != null) Modifier.aspectRatio(knownAspect) else Modifier)
                 .padding(horizontal = horizontalPadding)
                 .onGloballyPositioned { itemWindowY = it.positionInWindow().y },
             contentScale = ContentScale.FillWidth,

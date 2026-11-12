@@ -82,7 +82,8 @@ class LocalSourceScanner(
         val format = FormatDetector.detect(entry.name, header, entry.isDirectory)
         if (entry.isDirectory) {
             if (format != LocalFormat.DIRECTORY) return null
-        } else if (!FormatDetector.isSupportedArchive(format)) {
+        } else if (!FormatDetector.isSupportedArchive(format) && format != LocalFormat.PDF) {
+            // PDF 走按页渲染分支（见 LocalChapterProvider），此处保留。
             return null
         }
         val url = "$mangaName/${entry.name}"

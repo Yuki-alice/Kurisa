@@ -11,10 +11,13 @@ import kotlin.test.assertFailsWith
 
 class ArchiveReaderTest {
 
+    private val jpg1 = RealImageFixtures.mangaPage(64, 64, 200, 40, 40)
+    private val jpg2 = RealImageFixtures.mangaPage(64, 96, 40, 120, 200)
+
     private suspend fun sampleZip(): ArchiveReader {
         val src = MemoryVfsMix(
-            "p002.png" to byteArrayOf(10, 20),
-            "p001.jpg" to byteArrayOf(1, 2, 3),
+            "p002.jpg" to jpg2,
+            "p001.jpg" to jpg1,
             "sub/p003.gif" to byteArrayOf(7, 8),
             "notes.txt" to byteArrayOf(9),
         )
@@ -35,7 +38,7 @@ class ArchiveReaderTest {
     fun readsEntryBytes() = runTest {
         val reader = sampleZip()
         val path = reader.imageEntries().first { it.endsWith("p001.jpg") }
-        assertEquals(listOf<Byte>(1, 2, 3), reader.readEntry(path).toList())
+        assertEquals(jpg1.toList(), reader.readEntry(path).toList())
     }
 
     @Test
