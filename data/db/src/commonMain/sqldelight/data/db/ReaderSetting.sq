@@ -1,0 +1,15 @@
+CREATE TABLE reader_setting (
+  scope TEXT NOT NULL PRIMARY KEY,
+  config_json TEXT NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+
+upsertReaderSetting:
+INSERT OR REPLACE INTO reader_setting(scope, config_json, updated_at)
+VALUES (?, ?, ?);
+
+selectReaderSetting:
+SELECT * FROM reader_setting WHERE scope = ?;
+
+deleteReaderSetting:
+DELETE FROM reader_setting WHERE scope = ?;

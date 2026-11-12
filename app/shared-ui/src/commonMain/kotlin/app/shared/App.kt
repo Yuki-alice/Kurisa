@@ -10,15 +10,20 @@ import kotlinx.serialization.modules.SerializersModule
 import kotlinx.serialization.modules.polymorphic
 import kotlinx.serialization.modules.subclass
 import core.designsystem.AppTheme
+import core.reader.ChapterProvider
+import core.reader.ReaderSettingsStore
+import data.repository.ProgressRepository
 import feature.detail.DetailRoute
 import feature.detail.DetailScreen
 import feature.downloads.DownloadsRoute
 import feature.downloads.DownloadsScreen
 import feature.explore.ExploreRoute
 import feature.explore.ExploreScreen
+import feature.reader.DefaultReaderSettingsStore
+import feature.reader.NoopChapterProvider
+import feature.reader.NoopProgressRepository
 import feature.reader.ReaderRoute
 import feature.reader.ReaderScreen
-import feature.reader.NoopChapterProvider
 import feature.search.SearchRoute
 import feature.search.SearchScreen
 import feature.settings.SettingsRoute
@@ -48,9 +53,17 @@ val appSerializersModule = SerializersModule {
 /**
  * 全 App 入口（ADR-008）。
  * ViewModel 工厂集中于此（配合 Koin，M5 接入）；各 feature 禁止自建 scope。
+ *
+ * [readerChapters]/[readerDomains] 是阅读器的真实源注入点：
+ * 平台壳/SourceRuntime 装配好后传入；默认 Noop 保证 C1（主仓零预置源）。
  */
 @Composable
-fun App() {
+fun App(
+    readerChapters: ChapterProvider = NoopChapterProvider,
+    readerDomains: Set<String> = emptySet(),
+    readerProgress: ProgressRepository = NoopProgressRepository,
+    readerSettings: ReaderSettingsStore = DefaultReaderSettingsStore,
+) {
     AppTheme {
         val backStack = rememberNavBackStack(
             SavedStateConfiguration { serializersModule = appSerializersModule },
@@ -81,8 +94,10 @@ fun App() {
                         ReaderScreen(
                             key.workId, key.chapterId,
                             onBack = { backStack.removeLastOrNull() },
-                            chapters = NoopChapterProvider,
-                            domains = emptySet(),
+                            chapters = readerChapters,
+                            domains = readerDomains,
+                            progress = readerProgress,
+                            settingsStore = readerSettings,
                         )
                     }
                     is SourcesRoute -> NavEntry(key) { SourcesScreen() }

@@ -23,10 +23,48 @@ enum class ReadingMode { PAGED, CONTINUOUS }
 /** 阅读方向（RTL 翻页方向、VERTICAL 长条滚动）。 */
 enum class ReadingDirection { LTR, RTL, VERTICAL }
 
+/** 图片缩放策略（对齐 Komikku 的 imageScaleType；UI 层映射为 ContentScale）。 */
+enum class ImageScaleType { FIT, FIT_WIDTH, FIT_HEIGHT, ORIGINAL, SMART_FIT }
+
+/** 阅读器画布主题（黑 / 深灰 / 白，对齐 Komikku readerTheme）。 */
+enum class ReaderTheme { BLACK, DARK, WHITE }
+
+/** 点按分区布局（对齐 Komikku 的导航模式）。 */
+enum class TapZoneMode { LEFT_RIGHT, L_SHAPE, EDGE, DISABLED }
+
+/** 点按动作（纯逻辑，可由单测锁定）。 */
+enum class TapAction { PREV, NEXT, MENU, CLOSE_MENU, NONE }
+
+/**
+ * 阅读配置。字段全部有默认值，旧调用方（M3 状态机测试）无需改动。
+ */
 data class ReadingConfig(
     val mode: ReadingMode = ReadingMode.PAGED,
     val direction: ReadingDirection = ReadingDirection.LTR,
+    val scaleType: ImageScaleType = ImageScaleType.FIT,
+    val tapZone: TapZoneMode = TapZoneMode.LEFT_RIGHT,
+    val doublePage: Boolean = false,
+    val showPageNumber: Boolean = true,
+    val webtoonSidePaddingPercent: Int = 0,
+    val theme: ReaderTheme = ReaderTheme.BLACK,
+    val grayscale: Boolean = false,
+    /** 亮度遮罩（0~60%，只压暗，不改系统亮度；对齐 Komikku customBrightness 的负值区间）。 */
+    val dimLevel: Int = 0,
+    val chapterTransition: Boolean = true,
 )
+
+/**
+ * 页请求（源图片经 `onImageLoad` 解析后的最终请求）。
+ * `rewriteUrl` 为源重写后的地址；`headers` 已由契约层剥离 UA/Cookie 等危险头。
+ */
+data class ReaderPageRequest(
+    val url: String,
+    val rewriteUrl: String? = null,
+    val headers: Map<String, String> = emptyMap(),
+    val maxRetries: Int = 1,
+) {
+    val effectiveUrl: String get() = rewriteUrl?.takeIf { it.isNotBlank() } ?: url
+}
 
 /** 章节元数据（bridge 实现时由源 chapters 映射；M3 以 fake 驱动）。 */
 data class ChapterRef(val id: String, val title: String, val ordinal: Int)
@@ -38,6 +76,14 @@ data class ChapterRef(val id: String, val title: String, val ordinal: Int)
 interface ChapterProvider {
     suspend fun chapters(workId: String): List<ChapterRef>
     suspend fun payload(workId: String, chapterId: String): ChapterPayload
+
+    /**
+     * 图片页请求解析（`comic.onImageLoad` 接线点）。
+     * 默认直通 URL；`BridgeChapterProvider` 覆盖为按源配置重写 URL / 附加头 / 重试次数。
+     * 每次取页时调用，避免在章节加载阶段对几十页逐一执行 JS。
+     */
+    suspend fun resolvePage(workId: String, chapterId: String, url: String): ReaderPageRequest =
+        ReaderPageRequest(url)
 }
 
 /** payload → 可渲染页数（小说正文分页随 M4，此处 Text 计 1 页）。 */
@@ -62,6 +108,7 @@ class ReaderStateMachine {
     private var workId: String? = null
     private var chapterList: List<ChapterRef> = emptyList()
     private var chapterIndex: Int = -1
+    private var requestedChapterId: String? = null
     private var lastPayload: ChapterPayload? = null
 
     fun setConfig(config: ReadingConfig) {
@@ -112,6 +159,7 @@ class ReaderStateMachine {
     suspend fun openChapter(workId: String, chapterId: String, provider: ChapterProvider) {
         this.provider = provider
         this.workId = workId
+        this.requestedChapterId = chapterId
         resolve(workId, chapterId)
         val chapters = runCatching { provider.chapters(workId) }.getOrElse {
             fail("目录加载失败：${it.message}", true)
@@ -127,10 +175,18 @@ class ReaderStateMachine {
         loadCurrent()
     }
 
-    /** 重试当前章节（Error → Loading）。 */
+    /**
+     * 重试当前章节（Error → Loading）。
+     * 目录加载失败时 chapterList 为空，必须重走 openChapter，否则重试是 no-op。
+     */
     suspend fun retry() {
         val w = workId ?: return
-        val c = currentChapterId() ?: return
+        val p = provider ?: return
+        val c = currentChapterId() ?: requestedChapterId ?: return
+        if (chapterList.isEmpty()) {
+            openChapter(w, c, p)
+            return
+        }
         loadCurrentInternal(w, c)
     }
 
@@ -161,8 +217,31 @@ class ReaderStateMachine {
     fun currentChapter(): ChapterRef? =
         chapterList.getOrNull(chapterIndex)
 
+    /** 章节目录快照（UI 目录/前后章判断用，不触发网络）。 */
+    fun chapters(): List<ChapterRef> = chapterList
+
     /** 当前章节下标（无章节时 -1，供 UI 角标与进度定位）。 */
     fun chapterIndex(): Int = chapterIndex
+
+    fun hasPreviousChapter(): Boolean = chapterIndex > 0
+
+    fun hasNextChapter(): Boolean = chapterIndex >= 0 && chapterIndex + 1 < chapterList.size
+
+    fun nextChapterId(): String? = chapterList.getOrNull(chapterIndex + 1)?.id
+
+    fun previousChapterId(): String? = chapterList.getOrNull(chapterIndex - 1)?.id
+
+    /** 目录跳转（复用已加载目录，不重新拉章节列表）。 */
+    suspend fun jumpToChapter(chapterId: String) {
+        val w = workId ?: return
+        val idx = chapterList.indexOfFirst { it.id == chapterId }
+        if (idx < 0) {
+            fail("章节不存在：$chapterId", false)
+            return
+        }
+        chapterIndex = idx
+        loadCurrentInternal(w, chapterId)
+    }
 
     /** 当前页下标（machine.state 的同步快照；ViewModel 防抖保存用，不读屏 State）。 */
     fun currentPageIndex(): Int = when (val cur = _state.value) {

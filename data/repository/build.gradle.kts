@@ -34,6 +34,7 @@ kotlin {
     sourceSets {
         commonMain.dependencies {
             implementation(project(":core:model"))
+            implementation(project(":core:reader"))
             implementation(project(":source:contract"))
             implementation(project(":source:hostapi"))
             implementation(project(":data:db"))

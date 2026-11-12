@@ -76,12 +76,12 @@ class SourceRuntime(
     }
 
     /** `comic.onImageLoad` → 归一化配置（危险头剥离、重试有界）。未声明时返回 null。 */
-    suspend fun imageLoadConfig(url: String, workId: String, epId: String): ImageLoadConfig? {
+    override suspend fun imageLoadConfig(url: String, workId: String, chapterId: String): ImageLoadConfig? {
         if (!descriptor.hasImageLoad) return null
         val args = buildJsonArray {
             add(kotlinx.serialization.json.JsonPrimitive(url))
             add(kotlinx.serialization.json.JsonPrimitive(workId))
-            add(kotlinx.serialization.json.JsonPrimitive(epId))
+            add(kotlinx.serialization.json.JsonPrimitive(chapterId))
         }.toString()
         return parseImageConfig(invoke("comic.onImageLoad", args))
     }

@@ -3,6 +3,7 @@ package source.bridge
 import core.model.ChapterPayload
 import core.reader.ChapterProvider
 import core.reader.ChapterRef
+import core.reader.ReaderPageRequest
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
@@ -54,6 +55,21 @@ class BridgeChapterProvider(
             }
             else -> throw SourceBridgeException("目录 chapters 形状未知")
         }
+    }
+
+    /** `comic.onImageLoad` 接线：重写 URL / 附加已脱敏头 / 重试次数。 */
+    override suspend fun resolvePage(
+        workId: String,
+        chapterId: String,
+        url: String,
+    ): ReaderPageRequest {
+        val cfg = calls.imageLoadConfig(url, workId, chapterId) ?: return ReaderPageRequest(url)
+        return ReaderPageRequest(
+            url = url,
+            rewriteUrl = cfg.url,
+            headers = cfg.headers,
+            maxRetries = cfg.maxRetries,
+        )
     }
 
     override suspend fun payload(workId: String, chapterId: String): ChapterPayload {

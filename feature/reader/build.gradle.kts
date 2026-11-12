@@ -39,7 +39,9 @@ kotlin {
             implementation(libs.lifecycle.runtime.compose)
             implementation(libs.zoomimage.compose)
             implementation(libs.zoomimage.compose.coil3)
+            implementation(libs.coil.compose)
             implementation(libs.ktor.client.core)
+            implementation(libs.kotlinx.datetime)
             implementation(project(":core:model"))
             implementation(project(":core:common"))
             implementation(project(":core:reader"))
@@ -47,6 +49,7 @@ kotlin {
             implementation(project(":data:repository"))
             implementation(project(":data:network"))
             implementation(project(":data:images"))
+            implementation(project(":data:cache"))
         }
         commonTest.dependencies {
             implementation(kotlin("test"))

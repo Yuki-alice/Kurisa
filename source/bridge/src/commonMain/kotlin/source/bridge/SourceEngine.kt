@@ -1,6 +1,7 @@
 package source.bridge
 
 import source.contract.ContentKind
+import source.contract.ImageLoadConfig
 import source.hostapi.HostApi
 
 /**
@@ -34,6 +35,12 @@ interface SourceCalls {
     suspend fun defaultSearchOptions(): String
     suspend fun loadWorkDetails(workId: String, kind: ContentKind): String
     suspend fun loadChapterPayload(workId: String, chapterId: String, kind: ContentKind): String
+
+    /**
+     * `comic.onImageLoad` 归一化配置（未声明 capability 时返回 null）。
+     * 默认空实现，垫片/测试 SourceCalls 无需改动；[SourceRuntime] 覆盖为真实调用。
+     */
+    suspend fun imageLoadConfig(url: String, workId: String, chapterId: String): ImageLoadConfig? = null
 
     /**
      * 通用调用（`await __source.<path>(...args)` → JSON；契约增长与工具调试入口）。

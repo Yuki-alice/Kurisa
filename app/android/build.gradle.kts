@@ -33,5 +33,9 @@ kotlin {
 
 dependencies {
     implementation(project(":app:shared-ui"))
+    implementation(project(":data:db"))
+    implementation(project(":data:repository"))
+    implementation(project(":core:reader"))
+    implementation(libs.sqldelight.android.driver)
     implementation(libs.androidx.activity.compose)
 }

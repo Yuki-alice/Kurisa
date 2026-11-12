@@ -47,6 +47,7 @@ kotlin {
             implementation(project(":core:model"))
             implementation(project(":core:reader"))
             implementation(project(":core:designsystem"))
+            implementation(project(":data:repository"))
             implementation(project(":feature:shelf"))
             implementation(project(":feature:explore"))
             implementation(project(":feature:search"))

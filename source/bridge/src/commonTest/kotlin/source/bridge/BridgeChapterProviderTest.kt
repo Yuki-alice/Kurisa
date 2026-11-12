@@ -3,6 +3,7 @@ package source.bridge
 import core.model.ChapterPayload
 import kotlinx.coroutines.test.runTest
 import source.contract.ContentKind
+import source.contract.ImageLoadConfig
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -148,6 +149,32 @@ class BridgeChapterProviderTest {
             FakeCalls(details = "not json"), ContentKind.MANGA
         )
         assertFailsWith<SourceBridgeException> { badJson.chapters("w") }
+    }
+
+    @Test
+    fun resolvePageAppliesOnImageLoadConfig() = runTest {
+        val calls = object : SourceCalls {
+            override suspend fun searchWorks(keyword: String, optionsJson: String, page: Int) = ""
+            override suspend fun defaultSearchOptions() = "[]"
+            override suspend fun loadWorkDetails(workId: String, kind: ContentKind) = ""
+            override suspend fun loadChapterPayload(workId: String, chapterId: String, kind: ContentKind) = ""
+            override suspend fun invoke(path: String, argsJson: String) = ""
+            override suspend fun imageLoadConfig(
+                url: String,
+                workId: String,
+                chapterId: String,
+            ) = ImageLoadConfig(
+                url = "https://cdn.example.com/rewritten.jpg",
+                headers = mapOf("Referer" to "https://example.com/"),
+                maxRetries = 2,
+            )
+        }
+        val p = BridgeChapterProvider(calls, ContentKind.MANGA)
+        val request = p.resolvePage("w", "c", "https://example.com/original.jpg")
+        assertEquals("https://example.com/original.jpg", request.url)
+        assertEquals("https://cdn.example.com/rewritten.jpg", request.effectiveUrl)
+        assertEquals("https://example.com/", request.headers["Referer"])
+        assertEquals(2, request.maxRetries)
     }
 
     @Test

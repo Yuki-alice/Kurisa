@@ -25,8 +25,8 @@ class LoadReadingProgressUseCase(
         repo.load(workId)
 }
 
-/** 空进度仓（壳/预览模式：不持久化；M3 接线传入真实仓）。 */
-internal object NoopProgressRepository : ProgressRepository {
+/** 空进度仓（壳/预览模式：不持久化；真实仓由平台装配层注入）。 */
+object NoopProgressRepository : ProgressRepository {
     override suspend fun save(progress: ReadingProgress) = Unit
     override suspend fun load(workId: String): ReadingProgress? = null
 }

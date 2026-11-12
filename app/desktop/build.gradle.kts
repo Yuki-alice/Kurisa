@@ -12,6 +12,10 @@ kotlin {
     sourceSets {
         getByName("desktopMain").dependencies {
             implementation(project(":app:shared-ui"))
+            implementation(project(":data:db"))
+            implementation(project(":data:repository"))
+            implementation(project(":core:reader"))
+            implementation(libs.sqldelight.sqlite.driver)
             implementation(compose.desktop.currentOs)
         }
     }
