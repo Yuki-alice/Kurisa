@@ -44,21 +44,27 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsDraggedAsState
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.Bookmark
-import androidx.compose.material.icons.filled.BookmarkBorder
-import androidx.compose.material.icons.automirrored.filled.List
-import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material.icons.filled.SkipNext
-import androidx.compose.material.icons.filled.SkipPrevious
-import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.automirrored.outlined.ArrowBack
+import androidx.compose.material.icons.automirrored.outlined.List
+import androidx.compose.material.icons.outlined.Bookmark
+import androidx.compose.material.icons.outlined.BookmarkBorder
+import androidx.compose.material.icons.outlined.Crop
+import androidx.compose.material.icons.outlined.FormatListNumbered
+import androidx.compose.material.icons.outlined.Info
+import androidx.compose.material.icons.outlined.Settings
+import androidx.compose.material.icons.outlined.SkipNext
+import androidx.compose.material.icons.outlined.SkipPrevious
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.OutlinedCard
 import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Scaffold
@@ -68,6 +74,7 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -80,6 +87,12 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.focus.FocusRequester
@@ -831,15 +844,23 @@ private fun ReaderChrome(
     onBack: () -> Unit,
     pageLabel: String,
 ) {
-    // 对齐 Komikku ReaderAppBars：surface 3dp  elevation 感知的半透明底。
-    val barBg = MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.92f)
+    // 对齐 Komikku ReaderAppBars：surface@3dp elevation 感知的半透明底（深色 .9 / 浅色 .95）。
+    val barBg = MaterialTheme.colorScheme.surfaceContainerHigh.copy(
+        alpha = if (isSystemInDarkTheme()) 0.9f else 0.95f,
+    )
     Column(Modifier.fillMaxSize()) {
         AnimatedVisibility(
             visible = state.menuVisible,
             enter = slideInVertically(animationSpec = tween(200)) { -it } + fadeIn(tween(150)),
             exit = slideOutVertically(animationSpec = tween(200)) { -it } + fadeOut(tween(150)),
         ) {
-            ReaderTopBar(state, onIntent, onBack, barBg)
+            Column(
+                Modifier
+                    .background(barBg)
+                    .clickable { onIntent(ReaderContract.Intent.ToggleMenu) },
+            ) {
+                ReaderTopBar(state, onIntent, onBack)
+            }
         }
         Spacer(Modifier.weight(1f))
         AnimatedVisibility(
@@ -847,57 +868,63 @@ private fun ReaderChrome(
             enter = slideInVertically(animationSpec = tween(200)) { it } + fadeIn(tween(150)),
             exit = slideOutVertically(animationSpec = tween(200)) { it } + fadeOut(tween(150)),
         ) {
-            ReaderBottomBar(state, onIntent, pageLabel, barBg)
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                ChapterNavigator(state, onIntent, pageLabel, barBg)
+                ReaderBottomBar(state, onIntent, barBg)
+            }
         }
     }
 }
 
+/**
+ * 对齐 Komikku ReaderTopBar：透明底（底色由外层统一给）+ 左对齐双行标题 +
+ * 仅书签 action（WebView/Browser/Share 原版即注释掉）。
+ */
 @Composable
 private fun ReaderTopBar(
     state: ReaderContract.State,
     onIntent: (ReaderContract.Intent) -> Unit,
     onBack: () -> Unit,
-    barBg: Color,
 ) {
-    val primary = MaterialTheme.colorScheme.primary
-    Surface(color = barBg, contentColor = MaterialTheme.colorScheme.onSurface) {
-        Row(
-            Modifier
-                .fillMaxWidth()
-                .statusBarsPadding()
-                .padding(horizontal = 4.dp, vertical = 2.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            IconButton(onClick = onBack) {
-                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回", tint = primary)
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .statusBarsPadding()
+            .padding(horizontal = 4.dp, vertical = 2.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        IconButton(onClick = onBack) {
+            Icon(
+                Icons.AutoMirrored.Outlined.ArrowBack,
+                contentDescription = "返回",
+                tint = MaterialTheme.colorScheme.primary,
+            )
+        }
+        Column(Modifier.weight(1f)) {
+            Text(
+                state.mangaTitle.ifEmpty { state.chapterTitle },
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            val subtitle = if (state.mangaTitle.isNotEmpty()) {
+                state.chapterTitle
+            } else {
+                "第 ${state.chapterIndex + 1} / ${state.chapterCount} 章"
             }
-            Column(
-                Modifier.weight(1f),
-                horizontalAlignment = Alignment.CenterHorizontally,
-            ) {
-                Text(
-                    state.mangaTitle.ifEmpty { state.chapterTitle },
-                    style = MaterialTheme.typography.titleSmall,
-                    maxLines = 1,
-                )
-                Text(
-                    if (state.mangaTitle.isNotEmpty()) {
-                        state.chapterTitle
-                    } else {
-                        "第 ${state.chapterIndex + 1} / ${state.chapterCount} 章"
-                    },
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
-                    maxLines = 1,
-                )
-            }
-            IconButton(onClick = { onIntent(ReaderContract.Intent.ToggleBookmark) }) {
-                Icon(
-                    if (state.bookmarked) Icons.Filled.Bookmark else Icons.Filled.BookmarkBorder,
-                    contentDescription = "书签",
-                    tint = primary,
-                )
-            }
+            Text(
+                subtitle,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        IconButton(onClick = { onIntent(ReaderContract.Intent.ToggleBookmark) }) {
+            Icon(
+                if (state.bookmarked) Icons.Outlined.Bookmark else Icons.Outlined.BookmarkBorder,
+                contentDescription = "书签",
+                tint = MaterialTheme.colorScheme.primary,
+            )
         }
     }
 }
@@ -906,15 +933,13 @@ private fun ReaderTopBar(
 private fun ReaderBottomBar(
     state: ReaderContract.State,
     onIntent: (ReaderContract.Intent) -> Unit,
-    pageLabel: String,
     barBg: Color,
 ) {
     val primary = MaterialTheme.colorScheme.primary
-    val rtl = state.settings.direction == ReadingDirection.RTL
     Surface(
         color = barBg,
         contentColor = MaterialTheme.colorScheme.onSurface,
-        // 吞掉点按，避免穿透到底层 Viewer 触发翻页。
+        // 吞掉点按，避免穿透到底层 Viewer 触发翻页（对齐 Komikku pointerInput{}）。
         modifier = Modifier.pointerInput(Unit) {},
     ) {
         Row(
@@ -926,104 +951,124 @@ private fun ReaderBottomBar(
             horizontalArrangement = Arrangement.SpaceEvenly,
         ) {
             IconButton(onClick = { onIntent(ReaderContract.Intent.OpenChapterList) }) {
-                Icon(Icons.AutoMirrored.Filled.List, contentDescription = "目录", tint = primary)
+                Icon(Icons.Outlined.FormatListNumbered, contentDescription = "目录", tint = primary)
             }
-            IconButton(
-                onClick = { onIntent(ReaderContract.Intent.PrevChapter) },
-                enabled = state.hasPreviousChapter,
-            ) {
+            // 本地可用的直接开关（在线源的 WebView/Browser/Share/阅读模式/旋转在此无意义）。
+            IconButton(onClick = { onIntent(ReaderContract.Intent.ToggleCropBorders) }) {
                 Icon(
-                    if (rtl) Icons.Filled.SkipNext else Icons.Filled.SkipPrevious,
-                    contentDescription = "上一章",
-                    tint = primary,
-                )
-            }
-            ChapterNavigatorPill(state, onIntent, pageLabel)
-            IconButton(
-                onClick = { onIntent(ReaderContract.Intent.NextChapter) },
-                enabled = state.hasNextChapter,
-            ) {
-                Icon(
-                    if (rtl) Icons.Filled.SkipPrevious else Icons.Filled.SkipNext,
-                    contentDescription = "下一章",
-                    tint = primary,
+                    Icons.Outlined.Crop,
+                    contentDescription = "裁边",
+                    tint = if (state.settings.cropBorders) primary
+                    else MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
             IconButton(onClick = { onIntent(ReaderContract.Intent.OpenSettings) }) {
-                Icon(Icons.Filled.Settings, contentDescription = "设置", tint = primary)
+                Icon(Icons.Outlined.Settings, contentDescription = "设置", tint = primary)
             }
         }
     }
 }
 
 /**
- * 章节导航器（对齐 Komikku ChapterNavigator 横版）：
- * 上一话 / [当前 •———• 总] / 下一话；total<=1 时占位保持布局。
+ * 对齐 Komikku ChapterNavigator（横版）：
+ * [上一话] [当前 •———• 总] [下一话]，RTL 互换；
+ * pill 内无按钮（之前版本误放了两颗，已删除），文字 onSurface，按钮 primary。
  */
 @Composable
-private fun RowScope.ChapterNavigatorPill(
+private fun ChapterNavigator(
     state: ReaderContract.State,
     onIntent: (ReaderContract.Intent) -> Unit,
     pageLabel: String,
+    barBg: Color,
 ) {
-    if (state.pageCount <= 1) {
-        Spacer(Modifier.weight(1f))
-        return
-    }
     val rtl = state.settings.direction == ReadingDirection.RTL
-    Surface(
-        modifier = Modifier.weight(1f),
-        shape = RoundedCornerShape(24.dp),
-        color = MaterialTheme.colorScheme.surfaceContainerHighest,
+    val buttonColors = IconButtonDefaults.filledIconButtonColors(
+        containerColor = barBg,
+        disabledContainerColor = barBg,
         contentColor = MaterialTheme.colorScheme.primary,
-    ) {
+    )
+    val haptic = LocalHapticFeedback.current
+    // 显式按阅读器方向处理，不跟随系统方向（对齐 Komikku CompositionLocalProvider Ltr）。
+    CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
         Row(
-            Modifier.padding(horizontal = 12.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            IconButton(
-                onClick = { onIntent(ReaderContract.Intent.PrevChapter) },
-                enabled = state.hasPreviousChapter,
-            ) {
-                Icon(
-                    if (rtl) Icons.Filled.SkipNext else Icons.Filled.SkipPrevious,
-                    contentDescription = "上一章",
-                )
-            }
-            Box(contentAlignment = Alignment.Center) {
-                // 透明总页数占宽，当前页变化时 pill 不抖动。
-                Text(
-                    "${state.pageCount}",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = Color.Transparent,
-                    maxLines = 1,
-                )
-                Text(
-                    pageLabel,
-                    style = MaterialTheme.typography.bodySmall,
-                    maxLines = 1,
-                )
-            }
-            Slider(
-                value = (state.pageIndex + 1).toFloat(),
-                onValueChange = {
-                    onIntent(ReaderContract.Intent.PageChanged(it.toInt() - 1))
+            FilledIconButton(
+                enabled = if (rtl) state.hasNextChapter else state.hasPreviousChapter,
+                onClick = {
+                    onIntent(
+                        if (rtl) ReaderContract.Intent.NextChapter
+                        else ReaderContract.Intent.PrevChapter,
+                    )
                 },
-                valueRange = 1f..state.pageCount.toFloat(),
-                modifier = Modifier.weight(1f),
-            )
-            Text(
-                "${state.pageCount}",
-                style = MaterialTheme.typography.bodySmall,
-                maxLines = 1,
-            )
-            IconButton(
-                onClick = { onIntent(ReaderContract.Intent.NextChapter) },
-                enabled = state.hasNextChapter,
+                colors = buttonColors,
             ) {
                 Icon(
-                    if (rtl) Icons.Filled.SkipPrevious else Icons.Filled.SkipNext,
-                    contentDescription = "下一章",
+                    Icons.Outlined.SkipPrevious,
+                    contentDescription = if (rtl) "下一章" else "上一章",
+                )
+            }
+
+            if (state.pageCount > 1) {
+                Row(
+                    modifier = Modifier
+                        .weight(1f)
+                        .clip(RoundedCornerShape(24.dp))
+                        .background(barBg)
+                        .padding(horizontal = 16.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Box(contentAlignment = Alignment.CenterEnd) {
+                        Text(pageLabel, color = MaterialTheme.colorScheme.onSurface)
+                        // 透明总页数占宽，当前页变化时 pill 不抖动。
+                        Text("${state.pageCount}", color = Color.Transparent)
+                    }
+                    val interactionSource = remember { MutableInteractionSource() }
+                    val sliderDragged by interactionSource.collectIsDraggedAsState()
+                    LaunchedEffect(state.pageIndex) {
+                        if (sliderDragged) {
+                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        }
+                    }
+                    Slider(
+                        value = (state.pageIndex + 1).toFloat(),
+                        onValueChange = {
+                            val target = it.toInt()
+                            if (target != state.pageIndex + 1) {
+                                onIntent(ReaderContract.Intent.PageChanged(target - 1))
+                            }
+                        },
+                        valueRange = 1f..state.pageCount.toFloat(),
+                        interactionSource = interactionSource,
+                        modifier = Modifier
+                            .weight(1f)
+                            .padding(horizontal = 8.dp),
+                    )
+                    Text(
+                        "${state.pageCount}",
+                        color = MaterialTheme.colorScheme.onSurface,
+                    )
+                }
+            } else {
+                Spacer(Modifier.weight(1f))
+            }
+
+            FilledIconButton(
+                enabled = if (rtl) state.hasPreviousChapter else state.hasNextChapter,
+                onClick = {
+                    onIntent(
+                        if (rtl) ReaderContract.Intent.PrevChapter
+                        else ReaderContract.Intent.NextChapter,
+                    )
+                },
+                colors = buttonColors,
+            ) {
+                Icon(
+                    Icons.Outlined.SkipNext,
+                    contentDescription = if (rtl) "上一章" else "下一章",
                 )
             }
         }
@@ -1090,7 +1135,7 @@ private fun TransitionCard(
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Icon(
-                            Icons.Filled.Info,
+                            Icons.Outlined.Info,
                             contentDescription = null,
                             tint = MaterialTheme.colorScheme.primary,
                         )

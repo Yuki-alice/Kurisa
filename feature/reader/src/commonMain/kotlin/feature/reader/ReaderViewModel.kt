@@ -249,8 +249,11 @@ class ReaderViewModel(
     fun onIntent(intent: ReaderContract.Intent) {
         when (intent) {
             is ReaderContract.Intent.PageChanged -> {
+                // 同页重发（collector 重建时的初始发射）不关菜单；
+                // 真正翻页才收起（对齐 Komikku 翻页隐藏菜单）。
+                val changed = intent.index != machine.currentPageIndex()
                 machine.pageTo(intent.index)
-                if (local.value.menuVisible) {
+                if (changed && local.value.menuVisible) {
                     local.update { it.copy(menuVisible = false) }
                 }
                 ensureWindow()

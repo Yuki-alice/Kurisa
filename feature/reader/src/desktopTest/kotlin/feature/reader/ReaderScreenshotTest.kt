@@ -191,6 +191,9 @@ class ReaderScreenshotTest {
         pages: List<ByteArray>,
         chapterId: String = "c1",
         mode: ReadingMode = ReadingMode.PAGED,
+        settingsStore: InMemoryReaderSettingsStore = InMemoryReaderSettingsStore(
+            ReadingConfig(mode = mode),
+        ),
     ) = ReaderViewModel(
         workId = "w",
         chapterId = chapterId,
@@ -200,7 +203,7 @@ class ReaderScreenshotTest {
         loadProgress = LoadReadingProgressUseCase(NoopProgress()),
         pages = LoadPageBytesUseCase(PngImages(pages)),
         domains = emptySet(),
-        settingsStore = InMemoryReaderSettingsStore(ReadingConfig(mode = mode)),
+        settingsStore = settingsStore,
     )
 
     /** JPEG 版漫画页（korlibs 现场编码；覆盖最常见的漫画图片格式）。 */
@@ -264,6 +267,46 @@ class ReaderScreenshotTest {
     }
 
 
+
+    @Test
+    fun landscapeDoublePageSpread() {
+        // 横屏双页（默认测试窗口即横屏）：首封面独占 + 后续两两配对。
+        val pages = listOf(
+            mangaJpeg(400, 600, 200, 40, 40),
+            mangaJpeg(400, 600, 40, 120, 200),
+            mangaJpeg(400, 600, 40, 160, 80),
+            mangaJpeg(400, 600, 160, 140, 40),
+        )
+        val m = vm(
+            pages,
+            settingsStore = InMemoryReaderSettingsStore(
+                ReadingConfig(mode = ReadingMode.PAGED, doublePage = true),
+            ),
+        )
+        rule.setContent { ReaderScreenVm(workId = "w", onBack = {}, vm = m) }
+        // 预载窗口为当前±（前 1 后 2），第 4 页翻到才加载。
+        rule.waitUntil(15_000) { m.state.value.pages.size >= 3 }
+        rule.waitUntil(15_000) { m.state.value.pageSizes.size >= 3 }
+        rule.waitForIdle()
+        // 跳到第 2 页所在的双页 spread [1,2]。
+        m.onIntent(ReaderContract.Intent.PageChanged(1))
+        rule.waitForIdle()
+        rule.mainClock.advanceTimeBy(2_000)
+        rule.waitForIdle()
+        val shot = rule.onRoot().captureToImage()
+        saveEvidence("reader-pager-double.png", shot)
+        // 左右半屏应为不同页（颜色不同）。
+        val map = shot.toPixelMap()
+        val w = map.width
+        val h = map.height
+        fun sample(x: Int, y: Int): Int {
+            val c = map[x.coerceIn(0, w - 1), y.coerceIn(0, h - 1)]
+            return (c.red * 255).toInt() shl 16 or ((c.green * 255).toInt() shl 8) or (c.blue * 255).toInt()
+        }
+        val left = sample(w / 4, h / 2)
+        val right = sample(3 * w / 4, h / 2)
+        assertTrue(left != right, "双页 spread 左右应为不同页面：$left vs $right")
+    }
 
     @Test
     fun pdfOpensRealDocument() {
