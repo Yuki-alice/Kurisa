@@ -19,7 +19,9 @@ import core.reader.TapZoneMode
 import data.cache.ByteBudgetLru
 import data.images.ImageFetcher
 import data.images.ImageLoadingConfig
+import data.images.CropBorders
 import data.images.ImageRequest
+import data.images.PageImageInfo
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -71,6 +73,7 @@ class ReaderViewModel(
         val mode: ReadingMode = ReadingMode.PAGED,
         val reachedEnd: Boolean = false,
         val pages: Map<Int, ByteArray> = emptyMap(),
+        val pageSizes: Map<Int, core.reader.PageSize> = emptyMap(),
         val pageStates: Map<Int, ReaderContract.PageLoadState> = emptyMap(),
         val article: String? = null,
         val settings: ReadingConfig = ReadingConfig(),
@@ -168,6 +171,7 @@ class ReaderViewModel(
         reachedEnd = reachedEnd,
         pages = l.pages,
         pageStates = l.pageStates,
+        pageSizes = l.pageSizes,
         article = l.article,
         chapters = machine.chapters(),
         previousChapterTitle = machine.chapters().getOrNull(machine.chapterIndex() - 1)?.title,
@@ -368,6 +372,9 @@ class ReaderViewModel(
             is ReaderContract.Intent.ToggleFlashWhite -> settingsStore.update {
                 it.copy(flashWhite = !it.flashWhite)
             }
+            is ReaderContract.Intent.ToggleCropBorders -> settingsStore.update {
+                it.copy(cropBorders = !it.cropBorders)
+            }
             is ReaderContract.Intent.ToggleBookmark -> {
                 val id = machine.currentChapterId() ?: chapterId
                 local.update {
@@ -457,8 +464,13 @@ class ReaderViewModel(
 
         val kept = local.value.pages.filterKeys { it in window }
         val keptStates = local.value.pageStates.filterKeys { it in window }
-        if (kept.size != local.value.pages.size || keptStates.size != local.value.pageStates.size) {
-            local.update { it.copy(pages = kept, pageStates = keptStates) }
+        val keptSizes = local.value.pageSizes.filterKeys { it in window }
+        if (kept.size != local.value.pages.size || keptStates.size != local.value.pageStates.size ||
+            keptSizes.size != local.value.pageSizes.size
+        ) {
+            local.update {
+                it.copy(pages = kept, pageStates = keptStates, pageSizes = keptSizes)
+            }
         }
 
         for (index in window) {
@@ -477,8 +489,15 @@ class ReaderViewModel(
                         val key = cacheKey(chapterForJob, request)
                         pageCache.get(key) ?: run {
                             val fetched = pages(request, domains)
-                            pageCache.put(key, fetched, fetched.size.toLong())
-                            fetched
+                            // 自动裁边（设置门控；失败回退原字节，永不阻断阅读）。
+                            val cropped = if (local.value.settings.cropBorders) {
+                                runCatching { CropBorders.crop(fetched) }.getOrNull()
+                            } else {
+                                null
+                            }
+                            val final = cropped ?: fetched
+                            pageCache.put(key, final, final.size.toLong())
+                            final
                         }
                     }
                 } catch (e: CancellationException) {
@@ -503,10 +522,12 @@ class ReaderViewModel(
                     return@launch
                 }
                 pageJobs.remove(index)
+                val size = PageImageInfo.sizeOf(bytes)
                 local.update {
                     it.copy(
                         pages = it.pages + (index to bytes),
                         pageStates = it.pageStates - index,
+                        pageSizes = if (size == null) it.pageSizes else it.pageSizes + (index to size),
                     )
                 }
             }

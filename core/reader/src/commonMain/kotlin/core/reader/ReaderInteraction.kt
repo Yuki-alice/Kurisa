@@ -9,14 +9,24 @@ data class PageSpread(val pages: List<Int>)
  * - 双页模式：首封面单页，其后两页一组（[(0), (1,2), (3,4)...]），
  *   与主流漫画阅读器一致，避免封面和第一页被强行拼在一起。
  */
-fun buildSpreads(pageCount: Int, doublePage: Boolean): List<PageSpread> {
+fun buildSpreads(
+    pageCount: Int,
+    doublePage: Boolean,
+    isWide: (pageIndex: Int) -> Boolean = { false },
+): List<PageSpread> {
     if (pageCount <= 0) return emptyList()
     if (!doublePage || pageCount == 1) return List(pageCount) { PageSpread(listOf(it)) }
     val result = ArrayList<PageSpread>((pageCount / 2) + 1)
     result += PageSpread(listOf(0))
     var i = 1
     while (i < pageCount) {
-        result += if (i + 1 < pageCount) {
+        // 宽页独占（尺寸未知时按非宽页配对；尺寸到达后重排）。
+        if (isWide(i)) {
+            result += PageSpread(listOf(i))
+            i += 1
+            continue
+        }
+        result += if (i + 1 < pageCount && !isWide(i + 1)) {
             PageSpread(listOf(i, i + 1)).also { i += 2 }
         } else {
             PageSpread(listOf(i)).also { i += 1 }
@@ -28,6 +38,12 @@ fun buildSpreads(pageCount: Int, doublePage: Boolean): List<PageSpread> {
 /** 页下标 → 所在 spread 下标；找不到时返回 0。 */
 fun spreadIndexOfPage(spreads: List<PageSpread>, pageIndex: Int): Int =
     spreads.indexOfFirst { pageIndex in it.pages }.coerceAtLeast(0)
+
+/** 页图尺寸（解码层 header-only 解析，见 `data.images.PageImageInfo`）。 */
+data class PageSize(val width: Int, val height: Int) {
+    /** 横图（宽 > 高）：双页模式下独占一个 spread（对齐 Komikku fullPage）。 */
+    val isWide: Boolean get() = width > height
+}
 
 /**
  * 双页页码文本（对齐 Komikku currentPageText）：

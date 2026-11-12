@@ -54,6 +54,7 @@ xmlutil-core = { module = "io.github.pdvrieze.xmlutil:core", version.ref = "xmlu
 korlibs-encoding = { module = "com.soywiz:korlibs-encoding", version.ref = "korlibsEncoding" }
 korlibs-crypto = { module = "com.soywiz:korlibs-crypto", version.ref = "korlibsEncoding" }
 korlibs-io = { module = "com.soywiz:korlibs-io", version.ref = "korlibsEncoding" }
+korlibs-image = { module = "com.soywiz:korlibs-image", version.ref = "korlibsEncoding" }
 
 # --- network / serialization ---
 ktor-client-core = { module = "io.ktor:ktor-client-core", version.ref = "ktor" }

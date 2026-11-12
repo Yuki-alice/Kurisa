@@ -80,6 +80,8 @@ data class ReadingConfig(
     val flashDurationMs: Int = 100,
     /** 闪屏白色（false=黑；对齐 Komikku flashColor BLACK/WHITE）。 */
     val flashWhite: Boolean = false,
+    /** 自动裁边（对齐 Komikku cropBorders；解码层按需裁剪并写回缓存）。 */
+    val cropBorders: Boolean = false,
 )
 
 /**

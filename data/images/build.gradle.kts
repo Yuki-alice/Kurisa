@@ -26,10 +26,12 @@ kotlin {
     sourceSets {
         commonMain.dependencies {
             implementation(project(":core:model"))
+            implementation(project(":core:reader"))
             implementation(project(":data:network"))
             implementation(libs.ktor.client.core)
             implementation(libs.kotlinx.coroutines.core)
             implementation(libs.kotlinx.serialization.json)
+            implementation(libs.korlibs.image)
         }
         commonTest.dependencies {
             implementation(kotlin("test"))

@@ -254,9 +254,6 @@ class ReaderViewModelTest {
         m.onIntent(ReaderContract.Intent.FlashDurationChanged(500))
         m.onIntent(ReaderContract.Intent.ToggleFlashWhite)
         runCurrent()
-        // 收尾关闭自滚，避免无限循环任务泄漏到共享测试调度器。
-        m.onIntent(ReaderContract.Intent.ToggleAutoScroll)
-        runCurrent()
         // 需额外收集一轮：settings 经 StateFlow 回写进 State。
         var last = m.state.value
         assertEquals(core.reader.TapInvertMode.HORIZONTAL, last.settings.tapInvert)
@@ -273,6 +270,10 @@ class ReaderViewModelTest {
         assertTrue(last.settings.flashWhite)
         m.onIntent(ReaderContract.Intent.ToggleVolumeKeys)
         runCurrent()
+        // 收尾关闭自滚，避免无限循环任务泄漏到共享测试调度器。
+        m.onIntent(ReaderContract.Intent.ToggleAutoScroll)
+        runCurrent()
+        assertEquals(false, m.state.value.settings.autoScroll)
         assertEquals(false, m.state.value.settings.volumeKeysEnabled)
     }
 
@@ -288,6 +289,40 @@ class ReaderViewModelTest {
         m.onIntent(ReaderContract.Intent.ToggleBookmark)
         runCurrent()
         assertEquals(false, m.state.value.bookmarked)
+    }
+
+    @Test
+    fun pageSizesFilledFromLoadedBytes() = runTest(dispatcher) {
+        // 2x1 灰度 PNG（手工 CRC，见生成脚本注释）。
+        val png = byteArrayOf(
+            0x89.toByte(), 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A,
+            0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52,
+            0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x01,
+            0x08, 0x00, 0x00, 0x00, 0x00, 0xD1.toByte(), 0x49, 0x20, 0x56,
+            0x00, 0x00, 0x00, 0x0B, 0x49, 0x44, 0x41, 0x54,
+            0x78, 0x9C.toByte(), 0x63, 0x60, 0x60, 0x00, 0x00, 0x00, 0x03, 0x00, 0x01,
+            0xB8.toByte(), 0xAD.toByte(), 0x3A, 0x63,
+            0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4E, 0x44,
+            0xAE.toByte(), 0x42, 0x60, 0x82.toByte(),
+        )
+        val images = object : ImageFetcher {
+            override suspend fun fetch(request: ImageRequest) = FetchedImage(png, request.url)
+        }
+        val m = vm(images = images, saveScope = backgroundScope)
+        backgroundScope.launch { m.state.collect {} }
+        runCurrent()
+        assertTrue(m.state.value.pages.isNotEmpty())
+        val sizes = m.state.value.pageSizes
+        assertTrue(sizes.isNotEmpty(), "pageSizes 应随字节入库")
+        val first = sizes.values.first()
+        assertEquals(2, first.width)
+        assertEquals(1, first.height)
+        assertTrue(first.isWide)
+        // 裁边开关意图。
+        assertEquals(false, m.state.value.settings.cropBorders)
+        m.onIntent(ReaderContract.Intent.ToggleCropBorders)
+        runCurrent()
+        assertEquals(true, m.state.value.settings.cropBorders)
     }
 
     @Test

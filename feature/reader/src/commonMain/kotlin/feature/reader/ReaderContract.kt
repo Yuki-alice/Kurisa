@@ -41,6 +41,8 @@ object ReaderContract {
         val reachedEnd: Boolean = false,
         /** 当前预加载窗口的字节（key=页下标；窗外已驱逐）。 */
         val pages: Map<Int, ByteArray> = emptyMap(),
+        /** 页图尺寸（header-only 解析；未知尺寸按非宽页处理）。 */
+        val pageSizes: Map<Int, core.reader.PageSize> = emptyMap(),
         /** 页级加载/错误状态（Ready 不在其中，见 [pages]）。 */
         val pageStates: Map<Int, PageLoadState> = emptyMap(),
         /** 小说正文（漫画为 null；M4 做排版分页）。 */
@@ -81,6 +83,7 @@ object ReaderContract {
         data object ToggleFlashOnChange : Intent
         data class FlashDurationChanged(val millis: Int) : Intent
         data object ToggleFlashWhite : Intent
+        data object ToggleCropBorders : Intent
         data class ThemeChanged(val theme: core.reader.ReaderTheme) : Intent
         data object ToggleDoublePage : Intent
         data object ToggleGrayscale : Intent

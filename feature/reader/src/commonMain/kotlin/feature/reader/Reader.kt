@@ -376,8 +376,11 @@ private fun PagedReader(
     ) {
         val landscape = maxWidth > maxHeight
         val doublePage = state.settings.doublePage && landscape
-        val spreads = remember(state.pageCount, doublePage) {
-            buildSpreads(state.pageCount, doublePage)
+        // 宽页独占 spread（尺寸随页到达渐进精确；未知按非宽页配对）。
+        val spreads = remember(state.pageCount, doublePage, state.pageSizes) {
+            buildSpreads(state.pageCount, doublePage) { index ->
+                state.pageSizes[index]?.isWide == true
+            }
         }
         val showTransition = state.settings.chapterTransition
         val items = remember(spreads, state.hasPreviousChapter, state.hasNextChapter, showTransition) {
@@ -1299,6 +1302,9 @@ private fun ReaderSettingsSheet(
                 valueRange = 1f..10f,
                 steps = 8,
             )
+            SettingsSwitch("自动裁边", settings.cropBorders) {
+                onIntent(ReaderContract.Intent.ToggleCropBorders)
+            }
             SettingsSwitch("翻页闪屏", settings.flashOnPageChange) {
                 onIntent(ReaderContract.Intent.ToggleFlashOnChange)
             }

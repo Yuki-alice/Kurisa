@@ -2,6 +2,7 @@ package core.reader
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertTrue
 
 class ReaderInteractionTest {
 
@@ -29,6 +30,32 @@ class ReaderInteractionTest {
             listOf(PageSpread(listOf(0)), PageSpread(listOf(1, 2)), PageSpread(listOf(3))),
             buildSpreads(4, doublePage = true),
         )
+    }
+
+    @Test
+    fun spreadsSkipWidePagesInDoubleMode() {
+        // 第 1 页宽图独占，普通页照常配对。
+        assertEquals(
+            listOf(
+                PageSpread(listOf(0)),
+                PageSpread(listOf(1)),
+                PageSpread(listOf(2, 3)),
+                PageSpread(listOf(4)),
+            ),
+            buildSpreads(5, doublePage = true, isWide = { it == 1 || it == 4 }),
+        )
+        // 未知尺寸（默认）保持旧行为。
+        assertEquals(
+            listOf(PageSpread(listOf(0)), PageSpread(listOf(1, 2)), PageSpread(listOf(3, 4))),
+            buildSpreads(5, doublePage = true),
+        )
+    }
+
+    @Test
+    fun pageSizeWideMeansLandscape() {
+        assertTrue(PageSize(800, 400).isWide)
+        assertEquals(false, PageSize(400, 800).isWide)
+        assertEquals(false, PageSize(400, 400).isWide)
     }
 
     @Test

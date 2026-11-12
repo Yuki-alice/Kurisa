@@ -109,6 +109,7 @@ private data class ReaderSettingsDto(
     val flashOnPageChange: Boolean = false,
     val flashDurationMs: Int = 100,
     val flashWhite: Boolean = false,
+    val cropBorders: Boolean = false,
 ) {
     fun toConfig(): ReadingConfig = ReadingConfig(
         mode = enumOr(mode, ReadingMode.PAGED),
@@ -135,6 +136,7 @@ private data class ReaderSettingsDto(
         flashOnPageChange = flashOnPageChange,
         flashDurationMs = flashDurationMs.coerceIn(100, 1500),
         flashWhite = flashWhite,
+        cropBorders = cropBorders,
     )
 
     companion object {
@@ -163,6 +165,7 @@ private data class ReaderSettingsDto(
             flashOnPageChange = config.flashOnPageChange,
             flashDurationMs = config.flashDurationMs,
             flashWhite = config.flashWhite,
+            cropBorders = config.cropBorders,
         )
     }
 }
