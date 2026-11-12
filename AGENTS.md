@@ -14,11 +14,18 @@
 | 导航（Route keys/backstack/深链接） | `kotlin-navigation-compose-multiplatform`（非官方 Navigation3 不引入）；深链接加 `kotlin-platform-app-links-and-deep-links` |
 | Ktor 网络/白名单/重定向/Cookie | `kmp-network-layer` + `kmp-repository-pattern`；**必须同时跑** `UrlPolicyTest` 对应断言 |
 | SQLDelight schema/迁移 | `kmp-sqldelight-setup`；migration 必须可回滚 |
-| ViewModel/StateFlow/MVI 状态机 | `kotlin-project-state-management` 或 `kmp-mvi`（二选一，不混用） |
+| ViewModel/StateFlow/MVI 状态机 | 选型/评审用 `kotlin-project-state-management`（契约与反模式检查，只读），落地实现用 `kmp-mvi`；两者分层使用，不是二选一 |
 | expect/actual 新增 | 先读 `kmp-expect-actual`；新增必须经架构评审（ADR-006），默认不加 |
 | 漫画长图/OOM/手势 | 先跑 `ZoomRenderTest`/`ZoomLongStripTest`，再按需 `compose-performance-skills` 子技能 |
 | 发版前评审 | mattpocock `code-review`（定点到 merge-base）+ `kotlin-kmp-code-review` |
 | 修 bug（含 Cloudflare/站点适配） | `kotlin-project-bugfix`：先根因最小复现，再最小改动 |
+
+> **状态管理口径（2026-11-12 定稿）**：MVI 是模式，`ViewModel`/`StateFlow` 是承载机制，可以且应当结合。
+> 全项目以 `feature/reader/ReaderViewModel` 为模板统一：`Contract(State/Intent/Effect)` + AndroidX KMP
+> `ViewModel` + `StateFlow` + `Channel<Effect>` + Koin 工厂。纯展示页 / 纯异步加载页按 `kmp-mvi` 的
+> thin 分档降级；**禁止同类页面混用裸 `StateHolder`（命令式 setState）与 reducer**。「不混用」指这个，
+> 不是禁止同时加载两个技能。`kmp-mvi` 假设的 `kmp-feature-scaffold` / Turbine / Wasm target 本项目
+> 不具备，落地按现有 `commonTest` + 三端（android / ios / jvm）验证，不引入 Turbine、不加 Wasm target。
 
 ## 2. 安全硬规则（违反即停）
 

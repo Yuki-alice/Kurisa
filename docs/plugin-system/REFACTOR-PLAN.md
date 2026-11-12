@@ -20,6 +20,9 @@
 
 ## 1. 差距矩阵
 
+> **历史基线**：本表是重构前（S0 之前）的差距记录，不是当前现状。
+> S0/P0/P1/P2/P3 已完工（见 §0）；当前实施依据见 `docs/comic-e2e-plan.md`。
+
 | # | 现状（源码事实） | 目标 | 影响面 |
 | --- | --- | --- | --- |
 | G1 | `QuickJsEngine.runCall()` 每次调用 `quickJs{}` 新建实例、重注入 11 个绑定、重编译约 350 行 polyfill + 源脚本、`new` + `await init()`，结束 `close()` | 每源长驻实例，`init()` 一次 | 性能最大瓶颈；`load/describe/defaultSearchOptions` 装配期至少重建 3 次 |
