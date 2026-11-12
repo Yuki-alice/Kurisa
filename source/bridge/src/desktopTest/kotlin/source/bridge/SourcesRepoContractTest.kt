@@ -3,6 +3,7 @@ package source.bridge
 import source.contract.ContractJson
 import source.contract.ContractPolicy
 import source.contract.SourceScriptHeader
+import source.registry.RulesHeader
 import java.io.File
 import java.security.MessageDigest
 import kotlin.test.Test
@@ -11,13 +12,14 @@ import kotlin.test.assertTrue
 /**
  * 源仓库安装级门禁（desktopTest，按 `-Dkurisa.sourcesRepoDir=<dir>` 启用）。
  *
- * 用**真实契约代码**（[SourceScriptHeader] + [ContractPolicy]）校验仓库内容，
+ * 用**真实契约代码**（[SourceScriptHeader] / [RulesHeader] + [ContractPolicy]）校验仓库内容，
  * 而不是只看引擎能否加载——引擎能 load 的源仍可能被安装器拒绝（例如 key 不是反向域名）。
  *
  * 校验项：
- * - 每个 `<key>.js` 的头块可解析且通过 `validateMeta`（key/version/apiVersion/kind/domains）；
- * - 文件名与头块 `@key` 一致（仓库布局约定）；
- * - `index.json` 条目：key 唯一、版本/kind/domains 与头块一致、sha256 与文件字节一致；
+ * - 每个 `<key>.js` 的头块 / `<key>.rules.json` 的 JSON 头可解析且通过 `validateMeta`；
+ * - 文件名与头块 key 一致，扩展名与形态一致（`.js`↔js/v1，`.rules.json`↔rules/v1）；
+ * - `index.json` 条目：key 唯一、版本/kind/domains 与头块一致、sha256 与文件字节一致、
+ *   filename 指向实际文件、format 与文件形态一致；
  * - 索引中不存在的多余脚本（除 `_template` 前缀）视为违规。
  *
  * 未提供目录时 SKIP（CI 与其它机器零影响）。
@@ -51,19 +53,27 @@ class SourcesRepoContractTest {
         val indexViolations = ContractPolicy.validateIndex(index)
         assertTrue(indexViolations.isEmpty(), "index.json 违规：\n" + indexViolations.take(10).joinToString("\n"))
 
-        val files = (scriptsDir.listFiles { f -> f.isFile && f.name.endsWith(".js") && !f.name.startsWith("_") } ?: emptyArray())
-            .sortedBy { it.name }
+        val files = (scriptsDir.listFiles { f ->
+            f.isFile && !f.name.startsWith("_") &&
+                (f.name.endsWith(".js") || f.name.endsWith(".rules.json"))
+        } ?: emptyArray()).sortedBy { it.name }
         assertTrue(files.isNotEmpty(), "scripts 下无源脚本")
 
         val problems = mutableListOf<String>()
         val indexByKey = index.sources.associateBy { it.key }
 
         files.forEach { file ->
-            val key = file.nameWithoutExtension
+            val isRules = file.name.endsWith(".rules.json")
+            val key = if (isRules) file.name.removeSuffix(".rules.json") else file.nameWithoutExtension
+            val wantFormat = if (isRules) "rules/v1" else "js/v1"
             val script = file.readText()
-            val meta = SourceScriptHeader.parse(script)
+            val meta = if (isRules) RulesHeader.parse(script) else SourceScriptHeader.parse(script)
             if (meta == null) {
-                problems += "$key: 头块不可解析（==SourceScript== 缺失或字段不全）"
+                problems += if (isRules) {
+                    "$key: 规则 JSON 不可解析或缺 key/name/kind（须 rules/v1）"
+                } else {
+                    "$key: 头块不可解析（==SourceScript== 缺失或字段不全）"
+                }
                 return@forEach
             }
             val metaViolations = ContractPolicy.validateMeta(meta)
@@ -71,15 +81,24 @@ class SourcesRepoContractTest {
                 problems += "$key: " + metaViolations.joinToString("; ")
             }
             if (meta.key != key) {
-                problems += "$key: 文件名与头块 @key 不一致（${meta.key}）"
+                problems += "$key: 文件名与头块 key 不一致（${meta.key}）"
+            }
+            if (meta.format != wantFormat) {
+                problems += "$key: 文件扩展名与形态不一致（${file.name} 应为 $wantFormat）"
             }
             val entry = indexByKey[key]
             if (entry == null) {
                 problems += "$key: 脚本未登记进 index.json"
             } else {
-                if (entry.version != meta.version) problems += "$key: 索引版本 ${entry.version} ≠ 头块 ${meta.version}"
+                if (entry.version != meta.version) problems += "$key: 索引版本 ${entry.version} ≠ 脚本 ${meta.version}"
                 if (entry.kind.sortedBy { it.serial } != meta.kind.sortedBy { it.serial }) {
-                    problems += "$key: 索引 kind 与头块不一致"
+                    problems += "$key: 索引 kind 与脚本不一致"
+                }
+                if (entry.filename != file.name) {
+                    problems += "$key: 索引 filename 与实际文件不一致（${entry.filename} vs ${file.name}）"
+                }
+                if (entry.format != wantFormat) {
+                    problems += "$key: 索引 format ${entry.format} ≠ 文件形态 $wantFormat"
                 }
                 val fileHash = sha256(file.readBytes())
                 if (entry.sha256.lowercase() != fileHash) {
@@ -88,7 +107,9 @@ class SourcesRepoContractTest {
             }
         }
 
-        val fileKeys = files.map { it.nameWithoutExtension }.toSet()
+        val fileKeys = files.map {
+            if (it.name.endsWith(".rules.json")) it.name.removeSuffix(".rules.json") else it.nameWithoutExtension
+        }.toSet()
         index.sources.forEach { e ->
             if (e.key !in fileKeys) problems += "${e.key}: 索引条目在 scripts/ 下无对应文件"
         }
@@ -99,6 +120,6 @@ class SourcesRepoContractTest {
             problems.isEmpty(),
             "源仓库安装级门禁失败（${problems.size} 项）：\n" + problems.take(20).joinToString("\n"),
         )
-        println("源仓库门禁通过：${files.size} 个源、${index.sources.size} 条索引")
+        println("源仓库门禁通过：${files.size} 个源（js/v1 ${files.count { it.name.endsWith(".js") }} + rules/v1 ${files.count { it.name.endsWith(".rules.json") }}）、${index.sources.size} 条索引")
     }
 }

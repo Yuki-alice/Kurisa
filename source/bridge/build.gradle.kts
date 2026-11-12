@@ -46,6 +46,8 @@ kotlin {
         }
         getByName("desktopTest").dependencies {
             implementation(kotlin("test-junit"))
+            // 仓库门禁需真实安装路径（RulesHeader + SourceInstaller 语义），仅 desktopTest 引用。
+            implementation(project(":source:registry"))
         }
     }
 }
