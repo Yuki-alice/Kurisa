@@ -1,7 +1,14 @@
 package data.localimport
 
-/** 本地书格式（M4 扩展解析器；识别层先行）。 */
-enum class LocalFormat { EPUB, TXT, CBZ, ZIP, PDF, IMAGE_DIR, UNKNOWN }
+/**
+ * 本地书格式。对齐 Komikku `source-local/io/Format.kt` + `Archive.kt`：
+ * DIRECTORY（漫画/章节目录）/ EPUB（优先于 Archive 判定）/ ZIP 系归档 /
+ * RAR / 7Z / TAR（识别但暂不支持解包，见 [isSupportedArchive]）。
+ */
+enum class LocalFormat { DIRECTORY, EPUB, TXT, CBZ, ZIP, PDF, IMAGE_DIR, RAR, SEVEN_ZIP, TAR, UNKNOWN }
+
+/** 非目录、非已知格式时抛出（对齐 Komikku `UnknownFormatException`）。 */
+class UnknownFormatException(name: String) : IllegalArgumentException("Unknown local format: $name")
 
 /** 格式识别：扩展名优先，魔数兜底（纯 Kotlin，三端一致）。 */
 object FormatDetector {
@@ -13,6 +20,9 @@ object FormatDetector {
             "cbz" -> LocalFormat.CBZ
             "zip" -> LocalFormat.ZIP
             "pdf" -> LocalFormat.PDF
+            "rar", "cbr" -> LocalFormat.RAR
+            "7z", "cb7" -> LocalFormat.SEVEN_ZIP
+            "tar", "cbt" -> LocalFormat.TAR
             else -> LocalFormat.UNKNOWN
         }
     }
@@ -32,11 +42,29 @@ object FormatDetector {
         ) {
             return LocalFormat.PDF // %PDF-
         }
+        if (header.size >= 6 &&
+            header[0] == 0x52.toByte() && header[1] == 0x61.toByte() &&
+            header[2] == 0x72.toByte() && header[3] == 0x21.toByte() &&
+            header[4] == 0x1A.toByte() && header[5] == 0x07.toByte()
+        ) {
+            return LocalFormat.RAR // Rar!
+        }
+        if (header.size >= 6 &&
+            header[0] == 0x37.toByte() && header[1] == 0x7A.toByte() &&
+            header[2] == 0xBC.toByte() && header[3] == 0xAF.toByte() &&
+            header[4] == 0x27.toByte() && header[5] == 0x1C.toByte()
+        ) {
+            return LocalFormat.SEVEN_ZIP // 7z
+        }
         return LocalFormat.UNKNOWN
     }
 
-    /** 综合判定：扩展名未知时用魔数；zip 容器以扩展名细分。 */
-    fun detect(name: String, header: ByteArray): LocalFormat {
+    /**
+     * 综合判定：目录直接 DIRECTORY；扩展名未知时用魔数；zip 容器以扩展名细分。
+     * 对齐 Komikku `LocalSource.getFormat`（EPUB 优先于 Archive）。
+     */
+    fun detect(name: String, header: ByteArray, isDirectory: Boolean = false): LocalFormat {
+        if (isDirectory) return LocalFormat.DIRECTORY
         val ext = byExtension(name)
         if (ext != LocalFormat.UNKNOWN && ext != LocalFormat.ZIP) return ext
         val magic = byMagic(header)
@@ -46,5 +74,21 @@ object FormatDetector {
         }
         if (magic != LocalFormat.UNKNOWN) return magic
         return ext
+    }
+
+    /** 当前可解包的归档：zip 系（korlibs-io ZipVfs 纯 Kotlin 三端一致）。 */
+    fun isSupportedArchive(format: LocalFormat): Boolean =
+        format == LocalFormat.ZIP || format == LocalFormat.CBZ || format == LocalFormat.EPUB
+
+    /** 图片扩展名（对齐 Komikku `ImageUtil.isImage` 的展示面）。 */
+    fun isImageName(name: String): Boolean {
+        val ext = name.substringAfterLast('.', "").lowercase()
+        return ext in setOf("jpg", "jpeg", "png", "gif", "webp", "bmp", "avif", "jxl", "heif", "heic")
+    }
+
+    /** 要求可读格式，否则抛 [UnknownFormatException]。 */
+    fun requireKnown(name: String, format: LocalFormat): LocalFormat {
+        if (format == LocalFormat.UNKNOWN) throw UnknownFormatException(name)
+        return format
     }
 }

@@ -51,6 +51,7 @@ ksoup = { module = "com.fleeksoft.ksoup:ksoup", version.ref = "ksoup" }
 xmlutil-core = { module = "io.github.pdvrieze.xmlutil:core", version.ref = "xmlutil" }
 korlibs-encoding = { module = "com.soywiz:korlibs-encoding", version.ref = "korlibsEncoding" }
 korlibs-crypto = { module = "com.soywiz:korlibs-crypto", version.ref = "korlibsEncoding" }
+korlibs-io = { module = "com.soywiz:korlibs-io", version.ref = "korlibsEncoding" }
 
 # --- network / serialization ---
 ktor-client-core = { module = "io.ktor:ktor-client-core", version.ref = "ktor" }

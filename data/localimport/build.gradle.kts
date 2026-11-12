@@ -26,10 +26,15 @@ kotlin {
     sourceSets {
         commonMain.dependencies {
             implementation(project(":core:model"))
+            implementation(project(":core:reader"))
+            implementation(project(":data:images"))
+            implementation(libs.korlibs.io)
+            implementation(libs.xmlutil.core)
+            implementation(libs.ksoup)
         }
         commonTest.dependencies {
             implementation(kotlin("test"))
-
+            implementation(libs.kotlinx.coroutines.test)
         }
     }
 }

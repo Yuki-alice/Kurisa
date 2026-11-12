@@ -95,7 +95,10 @@ import core.reader.TapZoneMode
 import core.reader.buildSpreads
 import core.reader.spreadIndexOfPage
 import core.reader.tapActionAt
+import data.images.ImageFetcher
 import data.images.SourceImageFetcher
+import data.localimport.LocalImageFetcher
+import data.localimport.LocalSourceFileSystem
 import data.network.CookieStore
 import data.network.SourceHttpClient
 import data.network.defaultHttpClient
@@ -117,12 +120,15 @@ fun ReaderScreen(
     domains: Set<String>,
     progress: ProgressRepository = NoopProgressRepository,
     settingsStore: ReaderSettingsStore = DefaultReaderSettingsStore,
+    /** 本地库文件系统（非空时图片出口自动叠加本地抓取，`local://` 隐式 scheme）。 */
+    localFs: LocalSourceFileSystem? = null,
 ) {
     // 网络栈装配（Koin M5 前手写：CookieStore 按 composition 记忆；
     // 会话级共享随 M5 DI 落地；demo 源无鉴权需求）。
     val cookies = remember { CookieStore() }
-    val images = remember {
-        SourceImageFetcher(SourceHttpClient(defaultHttpClient(), cookies) { 0L })
+    val images: ImageFetcher = remember(localFs) {
+        val network = SourceImageFetcher(SourceHttpClient(defaultHttpClient(), cookies) { 0L })
+        localFs?.let { LocalImageFetcher(it, network) } ?: network
     }
     val vm: ReaderViewModel = viewModel(
         key = "reader:$workId:$chapterId",

@@ -50,6 +50,7 @@ kotlin {
             implementation(project(":data:network"))
             implementation(project(":data:images"))
             implementation(project(":data:cache"))
+            implementation(project(":data:localimport"))
         }
         commonTest.dependencies {
             implementation(kotlin("test"))
