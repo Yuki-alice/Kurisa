@@ -30,10 +30,30 @@ fun spreadIndexOfPage(spreads: List<PageSpread>, pageIndex: Int): Int =
     spreads.indexOfFirst { pageIndex in it.pages }.coerceAtLeast(0)
 
 /**
- * 点按分区判定（对齐 Komikku 的 RightAndLeft / LNavigation / EdgeNavigation）。
+ * 双页页码文本（对齐 Komikku currentPageText）：
+ * 单页显示 number；双页显示 `"n-n+1"`，顺序由 `LTR xor invert` 决定。
+ */
+fun currentPageText(spread: PageSpread, rtl: Boolean, invertDoublePages: Boolean = false): String {
+    if (spread.pages.size == 1) return "${spread.pages.first() + 1}"
+    val ordered = if (rtl xor invertDoublePages) spread.pages.reversed() else spread.pages
+    return ordered.joinToString("-") { "${it + 1}" }
+}
+
+/**
+ * 点按分区判定（对齐 Komikku ViewerNavigation 五实现 + TappingInvertMode）。
  *
- * 坐标归一化到 [0,1]。RTL 时物理左/右互换；纵向模式改按上/下判定。
- * 菜单打开时任意点按先关闭菜单（避免误翻页）。
+ * 坐标归一化到 [0,1]。判定顺序：
+ * 1. 菜单打开 → CLOSE_MENU；DISABLED → MENU；
+ * 2. 顶部 5% 恒为菜单（`constantMenu`，对齐 Komikku）；
+ * 3. invert 镜像坐标（HORIZONTAL 镜像 x，VERTICAL 镜像 y）；
+ * 4. 按 mode + direction（RTL 仅影响 LEFT_RIGHT / L_SHAPE 的左右）分区。
+ *
+ * 分区几何（s1 = smallerTapZone ? 0.25 : 0.33，s2 = 1 - s1）：
+ * - LEFT_RIGHT（RightAndLeft）：左带 PREV / 右带 NEXT（RTL 互换），中部 MENU；
+ * - L_SHAPE：顶带 PREV / 底带 NEXT；中部左 PREV / 右 NEXT（RTL 互换），中 MENU；
+ * - EDGE：左全高 NEXT / 右全高 NEXT / 底部中条 PREV，其余 MENU；
+ * - KINDLISH：左下 PREV / 右下 NEXT（固定，不跟随 RTL），顶部 s1 MENU；
+ * - 纵向 direction：所有模式统一上 PREV / 下 NEXT / 中 MENU。
  */
 fun tapActionAt(
     x: Float,
@@ -41,63 +61,54 @@ fun tapActionAt(
     mode: TapZoneMode,
     direction: ReadingDirection,
     menuVisible: Boolean,
+    smallerTapZone: Boolean = false,
+    invert: TapInvertMode = TapInvertMode.NONE,
 ): TapAction {
     if (menuVisible) return TapAction.CLOSE_MENU
     if (mode == TapZoneMode.DISABLED) return TapAction.MENU
-    val nx = x.coerceIn(0f, 1f)
-    val ny = y.coerceIn(0f, 1f)
+    var nx = x.coerceIn(0f, 1f)
+    var ny = y.coerceIn(0f, 1f)
+    if (invert == TapInvertMode.HORIZONTAL || invert == TapInvertMode.BOTH) nx = 1f - nx
+    if (invert == TapInvertMode.VERTICAL || invert == TapInvertMode.BOTH) ny = 1f - ny
+    // 顶部恒菜单条。
+    if (ny < 0.05f) return TapAction.MENU
+
+    val s1 = if (smallerTapZone) 0.25f else 1f / 3f
+    val s2 = 1f - s1
     val rtl = direction == ReadingDirection.RTL
 
-    fun horizontal(left: TapAction, right: TapAction): TapAction =
-        if (rtl) {
-            when {
-                nx < 1f / 3f -> right
-                nx > 2f / 3f -> left
-                else -> TapAction.MENU
-            }
-        } else {
-            when {
-                nx < 1f / 3f -> left
-                nx > 2f / 3f -> right
-                else -> TapAction.MENU
-            }
+    if (direction == ReadingDirection.VERTICAL) {
+        return when {
+            ny < s1 -> TapAction.PREV
+            ny > s2 -> TapAction.NEXT
+            else -> TapAction.MENU
         }
+    }
 
     return when (mode) {
         TapZoneMode.DISABLED -> TapAction.MENU
-        TapZoneMode.LEFT_RIGHT -> {
-            if (direction == ReadingDirection.VERTICAL) {
-                when {
-                    ny < 1f / 3f -> TapAction.PREV
-                    ny > 2f / 3f -> TapAction.NEXT
-                    else -> TapAction.MENU
-                }
-            } else {
-                horizontal(TapAction.PREV, TapAction.NEXT)
-            }
+        TapZoneMode.LEFT_RIGHT -> when {
+            nx < s1 -> if (rtl) TapAction.NEXT else TapAction.PREV
+            nx > s2 -> if (rtl) TapAction.PREV else TapAction.NEXT
+            else -> TapAction.MENU
         }
-        TapZoneMode.L_SHAPE -> {
-            if (direction == ReadingDirection.VERTICAL) {
-                when {
-                    ny < 1f / 3f -> TapAction.PREV
-                    ny > 2f / 3f -> TapAction.NEXT
-                    nx < 1f / 3f -> TapAction.PREV
-                    nx > 2f / 3f -> TapAction.NEXT
-                    else -> TapAction.MENU
-                }
-            } else {
-                when {
-                    ny < 1f / 3f -> TapAction.PREV
-                    ny > 2f / 3f -> TapAction.NEXT
-                    nx < 1f / 3f -> if (rtl) TapAction.NEXT else TapAction.PREV
-                    nx > 2f / 3f -> if (rtl) TapAction.PREV else TapAction.NEXT
-                    else -> TapAction.MENU
-                }
-            }
+        TapZoneMode.L_SHAPE -> when {
+            ny < s1 -> TapAction.PREV
+            ny > s2 -> TapAction.NEXT
+            nx < s1 -> if (rtl) TapAction.NEXT else TapAction.PREV
+            nx > s2 -> if (rtl) TapAction.PREV else TapAction.NEXT
+            else -> TapAction.MENU
         }
         TapZoneMode.EDGE -> when {
-            nx < 0.1f -> if (rtl) TapAction.NEXT else TapAction.PREV
-            nx > 0.9f -> if (rtl) TapAction.PREV else TapAction.NEXT
+            nx < s1 -> TapAction.NEXT
+            nx > s2 -> TapAction.NEXT
+            ny > s2 -> TapAction.PREV
+            else -> TapAction.MENU
+        }
+        TapZoneMode.KINDLISH -> when {
+            ny < s1 -> TapAction.MENU
+            nx < s1 -> TapAction.PREV
+            nx > s2 -> TapAction.NEXT
             else -> TapAction.MENU
         }
     }

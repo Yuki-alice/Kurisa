@@ -23,9 +23,16 @@ object ReaderContract {
     data class State(
         val workId: String = "",
         val chapterId: String = "",
+        /** 作品名（顶栏主标题；调用方传入，未知时为空）。 */
+        val mangaTitle: String = "",
         val chapterTitle: String = "",
         val chapterIndex: Int = 0,
         val chapterCount: Int = 0,
+        /** 相邻章节标题（过渡卡用；无则回退默认文案）。 */
+        val previousChapterTitle: String? = null,
+        val nextChapterTitle: String? = null,
+        /** 当前章节书签（内存态；持久化随 BookmarkRepository 落地）。 */
+        val bookmarked: Boolean = false,
         val pageIndex: Int = 0,
         val pageCount: Int = 0,
         val mode: ReadingMode = ReadingMode.PAGED,
@@ -60,6 +67,13 @@ object ReaderContract {
         data class DirectionChanged(val direction: core.reader.ReadingDirection) : Intent
         data class ScaleChanged(val scaleType: core.reader.ImageScaleType) : Intent
         data class TapZoneChanged(val mode: core.reader.TapZoneMode) : Intent
+        data class TapInvertChanged(val mode: core.reader.TapInvertMode) : Intent
+        data object ToggleSmallerTapZone : Intent
+        data object ToggleInvertDoublePages : Intent
+        data object ToggleVolumeKeys : Intent
+        data object ToggleVolumeKeysInverted : Intent
+        data object ToggleReadWithLongTap : Intent
+        data object ToggleBookmark : Intent
         data class ThemeChanged(val theme: core.reader.ReaderTheme) : Intent
         data object ToggleDoublePage : Intent
         data object ToggleGrayscale : Intent

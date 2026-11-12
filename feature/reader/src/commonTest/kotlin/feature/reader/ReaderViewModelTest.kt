@@ -235,4 +235,55 @@ class ReaderViewModelTest {
         assertTrue(got.none { it.contains("c1u") }, "stale c1 bytes leaked: $got")
         assertTrue(got.any { it.contains("c2u") }, "c2 window missing: $got")
     }
+
+    @Test
+    fun gestureSettingsIntentsUpdateStore() = runTest(dispatcher) {
+        val m = vm(saveScope = backgroundScope)
+        backgroundScope.launch { m.state.collect {} }
+        runCurrent()
+        m.onIntent(ReaderContract.Intent.TapInvertChanged(core.reader.TapInvertMode.HORIZONTAL))
+        m.onIntent(ReaderContract.Intent.ToggleSmallerTapZone)
+        m.onIntent(ReaderContract.Intent.ToggleInvertDoublePages)
+        m.onIntent(ReaderContract.Intent.ToggleVolumeKeysInverted)
+        m.onIntent(ReaderContract.Intent.ToggleReadWithLongTap)
+        runCurrent()
+        // 需额外收集一轮：settings 经 StateFlow 回写进 State。
+        var last = m.state.value
+        assertEquals(core.reader.TapInvertMode.HORIZONTAL, last.settings.tapInvert)
+        assertTrue(last.settings.smallerTapZone)
+        assertTrue(last.settings.invertDoublePages)
+        assertTrue(last.settings.volumeKeysInverted)
+        assertEquals(false, last.settings.readWithLongTap)
+        m.onIntent(ReaderContract.Intent.ToggleVolumeKeys)
+        runCurrent()
+        assertEquals(false, m.state.value.settings.volumeKeysEnabled)
+    }
+
+    @Test
+    fun bookmarkTogglesPerChapter() = runTest(dispatcher) {
+        val m = vm(saveScope = backgroundScope)
+        backgroundScope.launch { m.state.collect {} }
+        runCurrent()
+        assertEquals(false, m.state.value.bookmarked)
+        m.onIntent(ReaderContract.Intent.ToggleBookmark)
+        runCurrent()
+        assertEquals(true, m.state.value.bookmarked)
+        m.onIntent(ReaderContract.Intent.ToggleBookmark)
+        runCurrent()
+        assertEquals(false, m.state.value.bookmarked)
+    }
+
+    @Test
+    fun prevNextTitlesExposed() = runTest(dispatcher) {
+        val m = vm(saveScope = backgroundScope)
+        backgroundScope.launch { m.state.collect {} }
+        runCurrent()
+        // c1：无上一章，有下一章。
+        assertEquals(null, m.state.value.previousChapterTitle)
+        assertEquals("第2话", m.state.value.nextChapterTitle)
+        m.onIntent(ReaderContract.Intent.NextChapter)
+        runCurrent()
+        assertEquals("第1话", m.state.value.previousChapterTitle)
+        assertEquals(null, m.state.value.nextChapterTitle)
+    }
 }

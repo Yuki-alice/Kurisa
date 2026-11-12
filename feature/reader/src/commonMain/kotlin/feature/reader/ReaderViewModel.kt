@@ -61,6 +61,7 @@ class ReaderViewModel(
     private val nowMs: () -> Long = { Clock.System.now().toEpochMilliseconds() },
     private val pageCacheBytes: Long = 32L * 1024 * 1024,
     private val maxConcurrentPageLoads: Int = 3,
+    private val mangaTitle: String = "",
 ) : ViewModel() {
 
     private data class Local(
@@ -73,6 +74,8 @@ class ReaderViewModel(
         val menuVisible: Boolean = false,
         val chapterListVisible: Boolean = false,
         val settingsVisible: Boolean = false,
+        /** 章节书签（内存态；持久化随 BookmarkRepository 落地）。 */
+        val bookmarks: Set<String> = emptySet(),
     )
 
     private val _effect = Channel<ReaderContract.Effect>(Channel.BUFFERED)
@@ -164,6 +167,10 @@ class ReaderViewModel(
         pageStates = l.pageStates,
         article = l.article,
         chapters = machine.chapters(),
+        previousChapterTitle = machine.chapters().getOrNull(machine.chapterIndex() - 1)?.title,
+        nextChapterTitle = machine.chapters().getOrNull(machine.chapterIndex() + 1)?.title,
+        bookmarked = (machine.currentChapterId() ?: chapterId) in l.bookmarks,
+        mangaTitle = mangaTitle,
         settings = l.settings,
         menuVisible = l.menuVisible,
         chapterListVisible = l.chapterListVisible,
@@ -294,6 +301,30 @@ class ReaderViewModel(
             }
             is ReaderContract.Intent.DimLevelChanged -> settingsStore.update {
                 it.copy(dimLevel = intent.percent.coerceIn(0, 60))
+            }
+            is ReaderContract.Intent.TapInvertChanged -> settingsStore.update {
+                it.copy(tapInvert = intent.mode)
+            }
+            is ReaderContract.Intent.ToggleSmallerTapZone -> settingsStore.update {
+                it.copy(smallerTapZone = !it.smallerTapZone)
+            }
+            is ReaderContract.Intent.ToggleInvertDoublePages -> settingsStore.update {
+                it.copy(invertDoublePages = !it.invertDoublePages)
+            }
+            is ReaderContract.Intent.ToggleVolumeKeys -> settingsStore.update {
+                it.copy(volumeKeysEnabled = !it.volumeKeysEnabled)
+            }
+            is ReaderContract.Intent.ToggleVolumeKeysInverted -> settingsStore.update {
+                it.copy(volumeKeysInverted = !it.volumeKeysInverted)
+            }
+            is ReaderContract.Intent.ToggleReadWithLongTap -> settingsStore.update {
+                it.copy(readWithLongTap = !it.readWithLongTap)
+            }
+            is ReaderContract.Intent.ToggleBookmark -> {
+                val id = machine.currentChapterId() ?: chapterId
+                local.update {
+                    it.copy(bookmarks = if (id in it.bookmarks) it.bookmarks - id else it.bookmarks + id)
+                }
             }
             is ReaderContract.Intent.ToggleMenu -> local.update { it.copy(menuVisible = !it.menuVisible) }
             is ReaderContract.Intent.CloseMenu -> local.update { it.copy(menuVisible = false) }
@@ -530,6 +561,7 @@ class ReaderViewModelFactory(
     private val domains: Set<String>,
     private val machine: ReaderStateMachine = ReaderStateMachine(),
     private val settingsStore: ReaderSettingsStore = DefaultReaderSettingsStore,
+    private val mangaTitle: String = "",
 ) : androidx.lifecycle.ViewModelProvider.Factory {
     @Suppress("UNCHECKED_CAST")
     override fun <T : ViewModel> create(
@@ -541,6 +573,7 @@ class ReaderViewModelFactory(
             workId, chapterId, machine, chapters,
             saveProgress, loadProgress, pages, domains,
             settingsStore = settingsStore,
+            mangaTitle = mangaTitle,
         ) as T
     }
 }

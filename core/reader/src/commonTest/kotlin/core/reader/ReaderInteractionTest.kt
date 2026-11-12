@@ -71,10 +71,75 @@ class ReaderInteractionTest {
     }
 
     @Test
-    fun edgeZonesOnlyNearScreenEdges() {
-        assertEquals(TapAction.PREV, tap(0.05f, 0.5f, TapZoneMode.EDGE, ReadingDirection.LTR))
+    fun edgeZonesMatchKomikkuGeometry() {
+        // 左/右全高带 NEXT，底部中条 PREV，其余 MENU。
+        assertEquals(TapAction.NEXT, tap(0.05f, 0.5f, TapZoneMode.EDGE, ReadingDirection.LTR))
         assertEquals(TapAction.NEXT, tap(0.95f, 0.5f, TapZoneMode.EDGE, ReadingDirection.LTR))
-        assertEquals(TapAction.MENU, tap(0.2f, 0.5f, TapZoneMode.EDGE, ReadingDirection.LTR))
+        assertEquals(TapAction.PREV, tap(0.5f, 0.95f, TapZoneMode.EDGE, ReadingDirection.LTR))
+        assertEquals(TapAction.MENU, tap(0.5f, 0.5f, TapZoneMode.EDGE, ReadingDirection.LTR))
+    }
+
+    @Test
+    fun kindlishZonesAreFixed() {
+        assertEquals(TapAction.PREV, tap(0.1f, 0.5f, TapZoneMode.KINDLISH, ReadingDirection.LTR))
+        assertEquals(TapAction.NEXT, tap(0.9f, 0.5f, TapZoneMode.KINDLISH, ReadingDirection.LTR))
+        assertEquals(TapAction.MENU, tap(0.5f, 0.1f, TapZoneMode.KINDLISH, ReadingDirection.LTR))
+        assertEquals(TapAction.MENU, tap(0.5f, 0.5f, TapZoneMode.KINDLISH, ReadingDirection.LTR))
+        // Kindlish 不跟随 RTL。
+        assertEquals(TapAction.PREV, tap(0.1f, 0.5f, TapZoneMode.KINDLISH, ReadingDirection.RTL))
+    }
+
+    @Test
+    fun topStripIsAlwaysMenu() {
+        assertEquals(TapAction.MENU, tap(0.5f, 0.02f, TapZoneMode.LEFT_RIGHT, ReadingDirection.LTR))
+        assertEquals(TapAction.MENU, tap(0.1f, 0.02f, TapZoneMode.EDGE, ReadingDirection.LTR))
+    }
+
+    @Test
+    fun smallerTapZoneShrinksHotAreas() {
+        assertEquals(TapAction.PREV, tap(0.3f, 0.5f, TapZoneMode.LEFT_RIGHT, ReadingDirection.LTR))
+        assertEquals(
+            TapAction.MENU,
+            tap(
+                0.3f, 0.5f, TapZoneMode.LEFT_RIGHT, ReadingDirection.LTR,
+                smallerTapZone = true,
+            ),
+        )
+    }
+
+    @Test
+    fun invertMirrorsCoordinates() {
+        assertEquals(
+            TapAction.NEXT,
+            tap(
+                0.1f, 0.5f, TapZoneMode.LEFT_RIGHT, ReadingDirection.LTR,
+                invert = TapInvertMode.HORIZONTAL,
+            ),
+        )
+        assertEquals(
+            TapAction.NEXT,
+            tap(
+                0.5f, 0.1f, TapZoneMode.LEFT_RIGHT, ReadingDirection.VERTICAL,
+                invert = TapInvertMode.VERTICAL,
+            ),
+        )
+    }
+
+    @Test
+    fun lShapeRtlSwapsSides() {
+        assertEquals(TapAction.NEXT, tap(0.1f, 0.5f, TapZoneMode.L_SHAPE, ReadingDirection.RTL))
+        assertEquals(TapAction.PREV, tap(0.9f, 0.5f, TapZoneMode.L_SHAPE, ReadingDirection.RTL))
+    }
+
+    @Test
+    fun currentPageTextFormatsSpreads() {
+        assertEquals("5", currentPageText(PageSpread(listOf(4)), rtl = false))
+        assertEquals("3-4", currentPageText(PageSpread(listOf(2, 3)), rtl = false))
+        assertEquals("4-3", currentPageText(PageSpread(listOf(2, 3)), rtl = true))
+        assertEquals(
+            "4-3",
+            currentPageText(PageSpread(listOf(2, 3)), rtl = false, invertDoublePages = true),
+        )
     }
 
     @Test
@@ -96,5 +161,7 @@ class ReaderInteractionTest {
         mode: TapZoneMode,
         direction: ReadingDirection,
         menuVisible: Boolean = false,
-    ): TapAction = tapActionAt(x, y, mode, direction, menuVisible)
+        smallerTapZone: Boolean = false,
+        invert: TapInvertMode = TapInvertMode.NONE,
+    ): TapAction = tapActionAt(x, y, mode, direction, menuVisible, smallerTapZone, invert)
 }

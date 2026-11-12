@@ -5,6 +5,7 @@ import app.cash.sqldelight.coroutines.mapToOneOrNull
 import core.reader.ImageScaleType
 import core.reader.ReaderSettingsStore
 import core.reader.ReaderTheme
+import core.reader.TapInvertMode
 import core.reader.ReadingConfig
 import core.reader.ReadingDirection
 import core.reader.ReadingMode
@@ -95,6 +96,12 @@ private data class ReaderSettingsDto(
     val grayscale: Boolean = false,
     val dimLevel: Int = 0,
     val chapterTransition: Boolean = true,
+    val tapInvert: String = "NONE",
+    val smallerTapZone: Boolean = false,
+    val invertDoublePages: Boolean = false,
+    val volumeKeysEnabled: Boolean = true,
+    val volumeKeysInverted: Boolean = false,
+    val readWithLongTap: Boolean = true,
 ) {
     fun toConfig(): ReadingConfig = ReadingConfig(
         mode = enumOr(mode, ReadingMode.PAGED),
@@ -108,6 +115,12 @@ private data class ReaderSettingsDto(
         grayscale = grayscale,
         dimLevel = dimLevel.coerceIn(0, 60),
         chapterTransition = chapterTransition,
+        tapInvert = enumOr(tapInvert, TapInvertMode.NONE),
+        smallerTapZone = smallerTapZone,
+        invertDoublePages = invertDoublePages,
+        volumeKeysEnabled = volumeKeysEnabled,
+        volumeKeysInverted = volumeKeysInverted,
+        readWithLongTap = readWithLongTap,
     )
 
     companion object {
@@ -123,6 +136,12 @@ private data class ReaderSettingsDto(
             grayscale = config.grayscale,
             dimLevel = config.dimLevel,
             chapterTransition = config.chapterTransition,
+            tapInvert = config.tapInvert.name,
+            smallerTapZone = config.smallerTapZone,
+            invertDoublePages = config.invertDoublePages,
+            volumeKeysEnabled = config.volumeKeysEnabled,
+            volumeKeysInverted = config.volumeKeysInverted,
+            readWithLongTap = config.readWithLongTap,
         )
     }
 }

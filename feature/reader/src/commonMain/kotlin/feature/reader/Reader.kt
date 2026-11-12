@@ -1,5 +1,11 @@
 package feature.reader
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -12,6 +18,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.aspectRatio
@@ -19,6 +26,8 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -35,7 +44,21 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.Bookmark
+import androidx.compose.material.icons.filled.BookmarkBorder
+import androidx.compose.material.icons.filled.List
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.SkipNext
+import androidx.compose.material.icons.filled.SkipPrevious
+import androidx.compose.material.icons.filled.Info
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.OutlinedCard
+import androidx.compose.material3.FilledIconButton
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Scaffold
@@ -62,6 +85,8 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.graphics.ColorMatrix
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
@@ -72,6 +97,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
@@ -91,8 +117,10 @@ import core.reader.ReadingConfig
 import core.reader.ReadingDirection
 import core.reader.ReadingMode
 import core.reader.TapAction
+import core.reader.TapInvertMode
 import core.reader.TapZoneMode
 import core.reader.buildSpreads
+import core.reader.currentPageText
 import core.reader.spreadIndexOfPage
 import core.reader.tapActionAt
 import data.images.ImageFetcher
@@ -122,6 +150,8 @@ fun ReaderScreen(
     settingsStore: ReaderSettingsStore = DefaultReaderSettingsStore,
     /** 本地库文件系统（非空时图片出口自动叠加本地抓取，`local://` 隐式 scheme）。 */
     localFs: LocalSourceFileSystem? = null,
+    /** 作品名（顶栏主标题；未知时回退章节名）。 */
+    mangaTitle: String = "",
 ) {
     // 网络栈装配（Koin M5 前手写：CookieStore 按 composition 记忆；
     // 会话级共享随 M5 DI 落地；demo 源无鉴权需求）。
@@ -141,6 +171,7 @@ fun ReaderScreen(
             pages = LoadPageBytesUseCase(images),
             domains = domains,
             settingsStore = settingsStore,
+            mangaTitle = mangaTitle,
         ),
     )
     ReaderScreenVm(workId = workId, onBack = onBack, vm = vm)
@@ -185,11 +216,28 @@ fun ReaderContent(
     modifier: Modifier = Modifier,
 ) {
     val settings = state.settings
-    Box(
+    BoxWithConstraints(
         modifier
             .fillMaxSize()
             .background(settings.theme.canvasColor()),
     ) {
+        // 双页页码语义（对齐 Komikku currentPageText；仅横屏双页时组 spread）。
+        val landscape = maxWidth > maxHeight
+        val pageLabel = remember(
+            state.pageIndex, state.pageCount, settings.doublePage, landscape,
+            settings.direction, settings.invertDoublePages,
+        ) {
+            if (settings.doublePage && landscape && state.pageCount > 1) {
+                val spreads = buildSpreads(state.pageCount, doublePage = true)
+                currentPageText(
+                    spreads[spreadIndexOfPage(spreads, state.pageIndex)],
+                    rtl = settings.direction == ReadingDirection.RTL,
+                    invertDoublePages = settings.invertDoublePages,
+                )
+            } else {
+                "${state.pageIndex + 1}"
+            }
+        }
         when {
             state.article != null -> NovelContent(state.article, state.settings)
             state.loading && state.pageCount == 0 -> LoadingScreen()
@@ -220,9 +268,9 @@ fun ReaderContent(
         }
 
         if (state.menuVisible) {
-            ReaderChrome(state, onIntent, onBack)
+            ReaderChrome(state, onIntent, onBack, pageLabel)
         } else if (state.article == null && settings.showPageNumber && state.pageCount > 0) {
-            PageIndicator(state)
+            PageIndicator(pageLabel, state.pageCount)
         }
 
         if (state.chapterListVisible) {
@@ -261,15 +309,36 @@ private fun PagedReader(
             .onPreviewKeyEvent { event ->
                 if (event.type != KeyEventType.KeyUp) return@onPreviewKeyEvent false
                 when (event.key) {
-                    Key.DirectionLeft, Key.DirectionUp, Key.PageUp, Key.VolumeUp -> {
+                    Key.DirectionLeft, Key.DirectionUp, Key.PageUp -> {
                         onIntent(ReaderContract.Intent.PrevPage)
                         true
                     }
-                    Key.DirectionRight, Key.DirectionDown, Key.PageDown, Key.Spacebar,
-                    Key.VolumeDown,
-                    -> {
+                    Key.DirectionRight, Key.DirectionDown, Key.PageDown, Key.Spacebar -> {
                         onIntent(ReaderContract.Intent.NextPage)
                         true
+                    }
+                    // 音量键：开关门控 + 反转（对齐 Komikku；菜单打开时由意图侧关闭菜单）。
+                    Key.VolumeUp -> {
+                        if (state.settings.volumeKeysEnabled) {
+                            onIntent(
+                                if (state.settings.volumeKeysInverted) ReaderContract.Intent.NextPage
+                                else ReaderContract.Intent.PrevPage,
+                            )
+                            true
+                        } else {
+                            false
+                        }
+                    }
+                    Key.VolumeDown -> {
+                        if (state.settings.volumeKeysEnabled) {
+                            onIntent(
+                                if (state.settings.volumeKeysInverted) ReaderContract.Intent.PrevPage
+                                else ReaderContract.Intent.NextPage,
+                            )
+                            true
+                        } else {
+                            false
+                        }
                     }
                     Key.Menu -> {
                         onIntent(ReaderContract.Intent.ToggleMenu)
@@ -353,20 +422,23 @@ private fun PagerPage(
 ) {
     when (item) {
         PagerItem.PrevTransition -> TransitionCard(
-            title = previousTitle(state),
+            currentTitle = state.chapterTitle.takeIf { it.isNotEmpty() },
+            targetTitle = state.previousChapterTitle,
             label = "上一章",
             onClick = { onIntent(ReaderContract.Intent.PrevChapter) },
             contentColor = state.settings.theme.onCanvasColor(),
         )
         PagerItem.NextTransition -> TransitionCard(
-            title = nextTitle(state),
+            currentTitle = state.chapterTitle.takeIf { it.isNotEmpty() },
+            targetTitle = state.nextChapterTitle,
             label = "下一章",
             onClick = { onIntent(ReaderContract.Intent.NextChapter) },
             contentColor = state.settings.theme.onCanvasColor(),
         )
         is PagerItem.Spread -> Row(Modifier.fillMaxSize()) {
-            // RTL 双页：页 1 应在右侧，页 2 在左侧。
-            val pages = if (state.settings.direction == ReadingDirection.RTL) {
+            // 显示顺序与页码文本一致：RTL xor invertDoublePages 时反转。
+            val rtl = state.settings.direction == ReadingDirection.RTL
+            val pages = if (rtl xor state.settings.invertDoublePages) {
                 item.spread.pages.reversed()
             } else {
                 item.spread.pages
@@ -409,7 +481,11 @@ private fun PagedPageImage(
                     handleTap(offset, size, state, onIntent)
                 }
             },
-            onLongPress = { onIntent(ReaderContract.Intent.ToggleMenu) },
+            onLongPress = {
+                if (state.settings.readWithLongTap || state.menuVisible) {
+                    onIntent(ReaderContract.Intent.ToggleMenu)
+                }
+            },
         )
     } else if (pageState is ReaderContract.PageLoadState.Error) {
         PageErrorPlaceholder(
@@ -473,13 +549,31 @@ private fun WebtoonReader(
                 .onPreviewKeyEvent { event ->
                     if (event.type != KeyEventType.KeyUp) return@onPreviewKeyEvent false
                     when (event.key) {
-                        Key.DirectionUp, Key.PageUp, Key.VolumeUp -> {
+                        Key.DirectionUp, Key.PageUp -> {
                             scope.launch { listState.animateScrollBy(-screenHeightPx * 0.75f) }
                             true
                         }
-                        Key.DirectionDown, Key.PageDown, Key.Spacebar, Key.VolumeDown -> {
+                        Key.DirectionDown, Key.PageDown, Key.Spacebar -> {
                             scope.launch { listState.animateScrollBy(screenHeightPx * 0.75f) }
                             true
+                        }
+                        Key.VolumeUp -> {
+                            if (!state.settings.volumeKeysEnabled) {
+                                false
+                            } else {
+                                val dir = if (state.settings.volumeKeysInverted) 1f else -1f
+                                scope.launch { listState.animateScrollBy(dir * screenHeightPx * 0.75f) }
+                                true
+                            }
+                        }
+                        Key.VolumeDown -> {
+                            if (!state.settings.volumeKeysEnabled) {
+                                false
+                            } else {
+                                val dir = if (state.settings.volumeKeysInverted) -1f else 1f
+                                scope.launch { listState.animateScrollBy(dir * screenHeightPx * 0.75f) }
+                                true
+                            }
                         }
                         Key.Menu -> {
                             onIntent(ReaderContract.Intent.ToggleMenu)
@@ -498,6 +592,8 @@ private fun WebtoonReader(
                             mode = state.settings.tapZone,
                             direction = state.settings.direction,
                             menuVisible = state.menuVisible,
+                            smallerTapZone = state.settings.smallerTapZone,
+                            invert = state.settings.tapInvert,
                         )) {
                             TapAction.PREV -> scope.launch {
                                 listState.animateScrollBy(-screenHeightPx * 0.75f)
@@ -522,7 +618,8 @@ private fun WebtoonReader(
                 if (state.settings.chapterTransition && state.hasPreviousChapter) {
                     item(key = "prev-transition") {
                         TransitionCard(
-                            title = previousTitle(state),
+                            currentTitle = state.chapterTitle.takeIf { it.isNotEmpty() },
+                            targetTitle = state.previousChapterTitle,
                             label = "上一章",
                             onClick = { onIntent(ReaderContract.Intent.PrevChapter) },
                             modifier = Modifier.fillMaxWidth().height(220.dp),
@@ -544,7 +641,8 @@ private fun WebtoonReader(
                 if (state.settings.chapterTransition && state.hasNextChapter) {
                     item(key = "next-transition") {
                         TransitionCard(
-                            title = nextTitle(state),
+                            currentTitle = state.chapterTitle.takeIf { it.isNotEmpty() },
+                            targetTitle = state.nextChapterTitle,
                             label = "下一章",
                             onClick = { onIntent(ReaderContract.Intent.NextChapter) },
                             modifier = Modifier.fillMaxWidth().height(220.dp),
@@ -602,94 +700,242 @@ private fun ReaderChrome(
     state: ReaderContract.State,
     onIntent: (ReaderContract.Intent) -> Unit,
     onBack: () -> Unit,
+    pageLabel: String,
 ) {
+    // 对齐 Komikku ReaderAppBars：surface 3dp  elevation 感知的半透明底。
+    val barBg = MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.92f)
     Column(Modifier.fillMaxSize()) {
-        Surface(color = Color.Black.copy(alpha = 0.82f), contentColor = Color.White) {
-            Row(
-                Modifier
-                    .fillMaxWidth()
-                    .statusBarsPadding()
-                    .padding(horizontal = 4.dp, vertical = 2.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                TextButton(onClick = onBack) { Text("返回") }
-                Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text(
-                        state.chapterTitle.ifEmpty { "第 ${state.chapterIndex + 1} 章" },
-                        style = MaterialTheme.typography.titleSmall,
-                        maxLines = 1,
-                    )
-                    Text(
-                        "${state.chapterIndex + 1} / ${state.chapterCount} 章",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = Color.White.copy(alpha = 0.7f),
-                    )
-                }
-                TextButton(onClick = { onIntent(ReaderContract.Intent.OpenChapterList) }) { Text("目录") }
-                TextButton(onClick = { onIntent(ReaderContract.Intent.OpenSettings) }) { Text("设置") }
-            }
+        AnimatedVisibility(
+            visible = state.menuVisible,
+            enter = slideInVertically(animationSpec = tween(200)) { -it } + fadeIn(tween(150)),
+            exit = slideOutVertically(animationSpec = tween(200)) { -it } + fadeOut(tween(150)),
+        ) {
+            ReaderTopBar(state, onIntent, onBack, barBg)
         }
         Spacer(Modifier.weight(1f))
-        Surface(color = Color.Black.copy(alpha = 0.82f), contentColor = Color.White) {
-            Row(
-                Modifier
-                    .fillMaxWidth()
-                    .navigationBarsPadding()
-                    .padding(horizontal = 4.dp, vertical = 2.dp),
-                verticalAlignment = Alignment.CenterVertically,
+        AnimatedVisibility(
+            visible = state.menuVisible,
+            enter = slideInVertically(animationSpec = tween(200)) { it } + fadeIn(tween(150)),
+            exit = slideOutVertically(animationSpec = tween(200)) { it } + fadeOut(tween(150)),
+        ) {
+            ReaderBottomBar(state, onIntent, pageLabel, barBg)
+        }
+    }
+}
+
+@Composable
+private fun ReaderTopBar(
+    state: ReaderContract.State,
+    onIntent: (ReaderContract.Intent) -> Unit,
+    onBack: () -> Unit,
+    barBg: Color,
+) {
+    val primary = MaterialTheme.colorScheme.primary
+    Surface(color = barBg, contentColor = MaterialTheme.colorScheme.onSurface) {
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .statusBarsPadding()
+                .padding(horizontal = 4.dp, vertical = 2.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            IconButton(onClick = onBack) {
+                Icon(Icons.Filled.ArrowBack, contentDescription = "返回", tint = primary)
+            }
+            Column(
+                Modifier.weight(1f),
+                horizontalAlignment = Alignment.CenterHorizontally,
             ) {
-                TextButton(
-                    onClick = { onIntent(ReaderContract.Intent.PrevChapter) },
-                    enabled = state.hasPreviousChapter,
-                ) { Text("上一章") }
-                Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text(
-                        if (state.pageCount > 0) {
-                            "${state.pageIndex + 1} / ${state.pageCount}"
-                        } else {
-                            "—"
-                        },
-                        style = MaterialTheme.typography.titleSmall,
-                    )
-                    Text(
-                        state.settings.mode.displayName() + " · " +
-                            state.settings.direction.displayName(),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = Color.White.copy(alpha = 0.7f),
-                    )
-                }
-                TextButton(
-                    onClick = { onIntent(ReaderContract.Intent.NextChapter) },
-                    enabled = state.hasNextChapter,
-                ) { Text("下一章") }
+                Text(
+                    state.mangaTitle.ifEmpty { state.chapterTitle },
+                    style = MaterialTheme.typography.titleSmall,
+                    maxLines = 1,
+                )
+                Text(
+                    if (state.mangaTitle.isNotEmpty()) {
+                        state.chapterTitle
+                    } else {
+                        "第 ${state.chapterIndex + 1} / ${state.chapterCount} 章"
+                    },
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
+                    maxLines = 1,
+                )
+            }
+            IconButton(onClick = { onIntent(ReaderContract.Intent.ToggleBookmark) }) {
+                Icon(
+                    if (state.bookmarked) Icons.Filled.Bookmark else Icons.Filled.BookmarkBorder,
+                    contentDescription = "书签",
+                    tint = primary,
+                )
             }
         }
     }
 }
 
 @Composable
-private fun PageIndicator(state: ReaderContract.State) {
-    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.BottomCenter) {
-        Surface(
-            modifier = Modifier
+private fun ReaderBottomBar(
+    state: ReaderContract.State,
+    onIntent: (ReaderContract.Intent) -> Unit,
+    pageLabel: String,
+    barBg: Color,
+) {
+    val primary = MaterialTheme.colorScheme.primary
+    val rtl = state.settings.direction == ReadingDirection.RTL
+    Surface(
+        color = barBg,
+        contentColor = MaterialTheme.colorScheme.onSurface,
+        // 吞掉点按，避免穿透到底层 Viewer 触发翻页。
+        modifier = Modifier.pointerInput(Unit) {},
+    ) {
+        Row(
+            Modifier
+                .fillMaxWidth()
                 .navigationBarsPadding()
-                .padding(bottom = 12.dp),
-            color = Color.Black.copy(alpha = 0.55f),
-            contentColor = Color.White,
-            shape = RoundedCornerShape(12.dp),
+                .padding(horizontal = 4.dp, vertical = 2.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceEvenly,
         ) {
-            Text(
-                text = "${state.pageIndex + 1} / ${state.pageCount}",
-                modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
-                style = MaterialTheme.typography.labelMedium,
+            IconButton(onClick = { onIntent(ReaderContract.Intent.OpenChapterList) }) {
+                Icon(Icons.Filled.List, contentDescription = "目录", tint = primary)
+            }
+            IconButton(
+                onClick = { onIntent(ReaderContract.Intent.PrevChapter) },
+                enabled = state.hasPreviousChapter,
+            ) {
+                Icon(
+                    if (rtl) Icons.Filled.SkipNext else Icons.Filled.SkipPrevious,
+                    contentDescription = "上一章",
+                    tint = primary,
+                )
+            }
+            ChapterNavigatorPill(state, onIntent, pageLabel)
+            IconButton(
+                onClick = { onIntent(ReaderContract.Intent.NextChapter) },
+                enabled = state.hasNextChapter,
+            ) {
+                Icon(
+                    if (rtl) Icons.Filled.SkipPrevious else Icons.Filled.SkipNext,
+                    contentDescription = "下一章",
+                    tint = primary,
+                )
+            }
+            IconButton(onClick = { onIntent(ReaderContract.Intent.OpenSettings) }) {
+                Icon(Icons.Filled.Settings, contentDescription = "设置", tint = primary)
+            }
+        }
+    }
+}
+
+/**
+ * 章节导航器（对齐 Komikku ChapterNavigator 横版）：
+ * 上一话 / [当前 •———• 总] / 下一话；total<=1 时占位保持布局。
+ */
+@Composable
+private fun RowScope.ChapterNavigatorPill(
+    state: ReaderContract.State,
+    onIntent: (ReaderContract.Intent) -> Unit,
+    pageLabel: String,
+) {
+    if (state.pageCount <= 1) {
+        Spacer(Modifier.weight(1f))
+        return
+    }
+    val rtl = state.settings.direction == ReadingDirection.RTL
+    Surface(
+        modifier = Modifier.weight(1f),
+        shape = RoundedCornerShape(24.dp),
+        color = MaterialTheme.colorScheme.surfaceContainerHighest,
+        contentColor = MaterialTheme.colorScheme.primary,
+    ) {
+        Row(
+            Modifier.padding(horizontal = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            IconButton(
+                onClick = { onIntent(ReaderContract.Intent.PrevChapter) },
+                enabled = state.hasPreviousChapter,
+            ) {
+                Icon(
+                    if (rtl) Icons.Filled.SkipNext else Icons.Filled.SkipPrevious,
+                    contentDescription = "上一章",
+                )
+            }
+            Box(contentAlignment = Alignment.Center) {
+                // 透明总页数占宽，当前页变化时 pill 不抖动。
+                Text(
+                    "${state.pageCount}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Color.Transparent,
+                    maxLines = 1,
+                )
+                Text(
+                    pageLabel,
+                    style = MaterialTheme.typography.bodySmall,
+                    maxLines = 1,
+                )
+            }
+            Slider(
+                value = (state.pageIndex + 1).toFloat(),
+                onValueChange = {
+                    onIntent(ReaderContract.Intent.PageChanged(it.toInt() - 1))
+                },
+                valueRange = 1f..state.pageCount.toFloat(),
+                modifier = Modifier.weight(1f),
             )
+            Text(
+                "${state.pageCount}",
+                style = MaterialTheme.typography.bodySmall,
+                maxLines = 1,
+            )
+            IconButton(
+                onClick = { onIntent(ReaderContract.Intent.NextChapter) },
+                enabled = state.hasNextChapter,
+            ) {
+                Icon(
+                    if (rtl) Icons.Filled.SkipPrevious else Icons.Filled.SkipNext,
+                    contentDescription = "下一章",
+                )
+            }
         }
     }
 }
 
 @Composable
+private fun PageIndicator(pageLabel: String, total: Int) {
+    if (total <= 0 || pageLabel.isEmpty()) return
+    val text = "$pageLabel / $total"
+    val style = MaterialTheme.typography.bodySmall.copy(
+        fontWeight = FontWeight.Bold,
+        letterSpacing = 1.sp,
+    )
+    Box(
+        Modifier
+            .fillMaxSize()
+            .navigationBarsPadding()
+            .padding(bottom = 12.dp),
+        contentAlignment = Alignment.BottomCenter,
+    ) {
+        Box {
+            // 下垫深色描边，保证浅色页面上可读（对齐 Komikku #2D2D2D 4f stroke）。
+            Text(
+                text,
+                style = style.copy(drawStyle = Stroke(width = 4f)),
+                color = Color(0xFF2D2D2D),
+            )
+            Text(text, style = style, color = MaterialTheme.colorScheme.primary)
+        }
+    }
+}
+
+/**
+ * 章节过渡卡（对齐 Komikku ChapterTransition）：
+ * Next = 上 finished（当前）+ 下 next（目标）；Prev 反之；无目标章节时 OutlinedCard。
+ */
+@Composable
 private fun TransitionCard(
-    title: String?,
+    currentTitle: String?,
+    targetTitle: String?,
     label: String,
     onClick: () -> Unit,
     modifier: Modifier = Modifier.fillMaxSize(),
@@ -699,15 +945,53 @@ private fun TransitionCard(
         modifier.clickable(onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Text(
-                title ?: label,
-                color = contentColor.copy(alpha = 0.9f),
-                style = MaterialTheme.typography.titleMedium,
-                textAlign = TextAlign.Center,
-            )
-            Spacer(Modifier.height(12.dp))
-            Button(onClick = onClick) { Text(label) }
+        Column(
+            Modifier
+                .widthIn(max = 460.dp)
+                .fillMaxWidth(),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            if (targetTitle == null) {
+                OutlinedCard(
+                    colors = CardDefaults.outlinedCardColors(containerColor = Color.Transparent),
+                ) {
+                    Row(
+                        Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+                        horizontalArrangement = Arrangement.spacedBy(16.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Icon(
+                            Icons.Filled.Info,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                        )
+                        Text(
+                            label,
+                            color = MaterialTheme.colorScheme.primary,
+                            style = MaterialTheme.typography.bodyMedium,
+                        )
+                    }
+                }
+            } else {
+                currentTitle?.let {
+                    Text(
+                        it,
+                        color = contentColor.copy(alpha = 0.9f),
+                        style = MaterialTheme.typography.titleMedium,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.padding(bottom = 4.dp),
+                    )
+                }
+                Text(
+                    targetTitle,
+                    color = contentColor,
+                    style = MaterialTheme.typography.titleLarge.copy(fontSize = 20.sp),
+                    textAlign = TextAlign.Center,
+                    maxLines = 5,
+                )
+                Spacer(Modifier.height(12.dp))
+                Button(onClick = onClick) { Text(label) }
+            }
         }
     }
 }
@@ -722,15 +1006,24 @@ private fun ChapterListSheet(
         Column(
             Modifier
                 .fillMaxWidth()
-                .fillMaxHeight(0.7f)
-                .padding(horizontal = 8.dp),
+                                .padding(horizontal = 8.dp),
         ) {
             Text(
                 "章节目录",
                 style = MaterialTheme.typography.titleMedium,
                 modifier = Modifier.padding(12.dp),
             )
-            LazyColumn(Modifier.fillMaxSize()) {
+            val listState = rememberLazyListState(
+                initialFirstVisibleItemIndex = state.chapters
+                    .indexOfFirst { it.id == state.chapterId }
+                    .coerceAtLeast(0),
+            )
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = 200.dp, max = 500.dp),
+                state = listState,
+            ) {
                 itemsIndexed(state.chapters, key = { _, c -> c.id }) { index, chapter ->
                     val selected = chapter.id == state.chapterId
                     Row(
@@ -749,12 +1042,19 @@ private fun ChapterListSheet(
                             modifier = Modifier.width(36.dp),
                             style = MaterialTheme.typography.labelMedium,
                         )
-                        Text(
-                            chapter.title,
-                            modifier = Modifier.weight(1f),
-                            style = MaterialTheme.typography.bodyMedium,
-                            maxLines = 2,
-                        )
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                chapter.title,
+                                style = MaterialTheme.typography.bodyMedium,
+                                maxLines = 1,
+                            )
+                            Text(
+                                "第 ${index + 1} / ${state.chapters.size} 章",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                            )
+                        }
                     }
                 }
             }
@@ -825,6 +1125,15 @@ private fun ReaderSettingsSheet(
                     )
                 }
             }
+            SettingsSection("点按反转") {
+                TapInvertMode.entries.forEach { mode ->
+                    FilterChip(
+                        selected = settings.tapInvert == mode,
+                        onClick = { onIntent(ReaderContract.Intent.TapInvertChanged(mode)) },
+                        label = { Text(mode.displayName()) },
+                    )
+                }
+            }
             SettingsSection("主题") {
                 ReaderTheme.entries.forEach { theme ->
                     FilterChip(
@@ -836,6 +1145,21 @@ private fun ReaderSettingsSheet(
             }
             SettingsSwitch("双页（横屏）", settings.doublePage) {
                 onIntent(ReaderContract.Intent.ToggleDoublePage)
+            }
+            SettingsSwitch("双页顺序取反", settings.invertDoublePages) {
+                onIntent(ReaderContract.Intent.ToggleInvertDoublePages)
+            }
+            SettingsSwitch("更小的点按热区", settings.smallerTapZone) {
+                onIntent(ReaderContract.Intent.ToggleSmallerTapZone)
+            }
+            SettingsSwitch("长按唤起菜单", settings.readWithLongTap) {
+                onIntent(ReaderContract.Intent.ToggleReadWithLongTap)
+            }
+            SettingsSwitch("音量键翻页", settings.volumeKeysEnabled) {
+                onIntent(ReaderContract.Intent.ToggleVolumeKeys)
+            }
+            SettingsSwitch("音量键反转", settings.volumeKeysInverted) {
+                onIntent(ReaderContract.Intent.ToggleVolumeKeysInverted)
             }
             SettingsSwitch("灰度", settings.grayscale) {
                 onIntent(ReaderContract.Intent.ToggleGrayscale)
@@ -995,6 +1319,8 @@ private fun handleTap(
         mode = state.settings.tapZone,
         direction = state.settings.direction,
         menuVisible = state.menuVisible,
+        smallerTapZone = state.settings.smallerTapZone,
+        invert = state.settings.tapInvert,
     )
     when (action) {
         TapAction.PREV -> onIntent(ReaderContract.Intent.PrevPage)
@@ -1004,12 +1330,6 @@ private fun handleTap(
         TapAction.NONE -> Unit
     }
 }
-
-private fun previousTitle(state: ReaderContract.State): String? =
-    state.chapters.getOrNull(state.chapterIndex - 1)?.title
-
-private fun nextTitle(state: ReaderContract.State): String? =
-    state.chapters.getOrNull(state.chapterIndex + 1)?.title
 
 private fun ReaderTheme.canvasColor(): Color = when (this) {
     ReaderTheme.BLACK -> Color(0xFF000000)
@@ -1047,7 +1367,15 @@ private fun TapZoneMode.displayName(): String = when (this) {
     TapZoneMode.LEFT_RIGHT -> "左右"
     TapZoneMode.L_SHAPE -> "L 形"
     TapZoneMode.EDGE -> "边缘"
+    TapZoneMode.KINDLISH -> "Kindlish"
     TapZoneMode.DISABLED -> "关闭"
+}
+
+private fun TapInvertMode.displayName(): String = when (this) {
+    TapInvertMode.NONE -> "无"
+    TapInvertMode.HORIZONTAL -> "水平"
+    TapInvertMode.VERTICAL -> "垂直"
+    TapInvertMode.BOTH -> "双向"
 }
 
 private fun ReadingMode.displayName(): String = when (this) {

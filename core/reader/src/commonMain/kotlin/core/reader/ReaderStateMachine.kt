@@ -30,10 +30,13 @@ enum class ImageScaleType { FIT, FIT_WIDTH, FIT_HEIGHT, ORIGINAL, SMART_FIT }
 enum class ReaderTheme { BLACK, DARK, WHITE }
 
 /** 点按分区布局（对齐 Komikku 的导航模式）。 */
-enum class TapZoneMode { LEFT_RIGHT, L_SHAPE, EDGE, DISABLED }
+enum class TapZoneMode { LEFT_RIGHT, L_SHAPE, EDGE, KINDLISH, DISABLED }
 
 /** 点按动作（纯逻辑，可由单测锁定）。 */
 enum class TapAction { PREV, NEXT, MENU, CLOSE_MENU, NONE }
+
+/** 点按反转（对齐 Komikku TappingInvertMode：对归一化坐标做镜像后再判定）。 */
+enum class TapInvertMode { NONE, HORIZONTAL, VERTICAL, BOTH }
 
 /**
  * 阅读配置。字段全部有默认值，旧调用方（M3 状态机测试）无需改动。
@@ -43,6 +46,12 @@ data class ReadingConfig(
     val direction: ReadingDirection = ReadingDirection.LTR,
     val scaleType: ImageScaleType = ImageScaleType.FIT,
     val tapZone: TapZoneMode = TapZoneMode.LEFT_RIGHT,
+    /** 点按反转（NONE/HORIZONTAL/VERTICAL/BOTH，对齐 Komikku）。 */
+    val tapInvert: TapInvertMode = TapInvertMode.NONE,
+    /** 缩小点按热区（0.33 -> 0.25，对齐 Komikku smallerTapZone）。 */
+    val smallerTapZone: Boolean = false,
+    /** 双页顺序取反（`LTR xor invert` 定序，对齐 Komikku invertDoublePages）。 */
+    val invertDoublePages: Boolean = false,
     val doublePage: Boolean = false,
     val showPageNumber: Boolean = true,
     val webtoonSidePaddingPercent: Int = 0,
@@ -51,6 +60,12 @@ data class ReadingConfig(
     /** 亮度遮罩（0~60%，只压暗，不改系统亮度；对齐 Komikku customBrightness 的负值区间）。 */
     val dimLevel: Int = 0,
     val chapterTransition: Boolean = true,
+    /** 音量键翻页（对齐 Komikku reader_volume_keys，默认开；菜单打开时恒关闭菜单）。 */
+    val volumeKeysEnabled: Boolean = true,
+    /** 音量键反转（对齐 Komikku reader_volume_keys_inverted）。 */
+    val volumeKeysInverted: Boolean = false,
+    /** 长按唤起菜单（对齐 Komikku readWithLongTap，默认开）。 */
+    val readWithLongTap: Boolean = true,
 )
 
 /**
@@ -67,7 +82,13 @@ data class ReaderPageRequest(
 }
 
 /** 章节元数据（bridge 实现时由源 chapters 映射；M3 以 fake 驱动）。 */
-data class ChapterRef(val id: String, val title: String, val ordinal: Int)
+data class ChapterRef(
+    val id: String,
+    val title: String,
+    val ordinal: Int,
+    /** 已读（目录未读点用；provider 未接进度时恒 false）。 */
+    val isRead: Boolean = false,
+)
 
 /**
  * 章节解析（架构 6.1 的 ChapterResolver 角色）。
