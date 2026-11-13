@@ -158,6 +158,8 @@ fun App(
     fetchRepoIndex: (suspend () -> String?)? = null,
     /** 应用级依赖容器（S2）：共享 CookieStore/HttpClient/ImageFetcher；null = 无共享栈。 */
     container: AppContainer? = null,
+    /** A-5：B 批后端能力装配（设置持久化 / 版本号 / 缓存清理出口）；null = 内存保底。 */
+    wiring: BackendWiring? = null,
 ) {
     // BE-C3：用户主动导入 Cookie。桌面按 ADR-009 无内嵌浏览器，这是主要登录态入口；
     // 与 HostUi 兜底共用 CookieImporter，域名白名单取当前启用源的声明。
@@ -628,7 +630,14 @@ fun App(
                             onCancel = { id -> downloads?.let { c -> scope.launch { c.cancel(id) } } },
                         )
                     }
-                    is SettingsRoute -> NavEntry(key) { SettingsScreen() }
+                    is SettingsRoute -> NavEntry(key) {
+                        SettingsScreen(
+                            store = wiring?.settingsStore,
+                            appVersion = wiring?.appVersion.orEmpty(),
+                            // null = 未装配图片缓存清理，屏内不渲染该入口，不伪装能力。
+                            onClearImageCache = wiring?.clearImageCache,
+                        )
+                    }
                     else -> error("未知路由：$key")
                 }
             },

@@ -58,6 +58,8 @@ class SourceRuntime(
      * `LOGIN_EXPIRED` 重放路径不走缓存（重放的是副作用调用结果，见 `withPolicy`）。
      */
     private val pureCache: PureResultCache? = null,
+    /** A-5 / BE-B6：三段累计计数器快照；null = 只记 trace，不产出分段归因。 */
+    private val counterSnapshot: (suspend () -> CounterTrio)? = null,
 ) : SourceCalls, AutoCloseable {
 
     /**
@@ -209,27 +211,17 @@ class SourceRuntime(
     private fun pathForDetails(kind: ContentKind): String = when (kind) {
         ContentKind.NOVEL -> "novel.loadInfo"
         ContentKind.MANGA -> "comic.loadInfo"
-        ContentKind.VIDEO -> throw SourcePluginException(
-            "视频源渲染未接线：仅类型与能力扩展点已落地",
-            SourceErrorKind.CONTRACT,
-        )
-        ContentKind.AUDIO -> throw SourcePluginException(
-            "音频源渲染未接线：仅类型与能力扩展点已落地",
-            SourceErrorKind.CONTRACT,
-        )
+        // BE-C4：类型化 payload 已落地，路径可用；源未声明实现时由引擎按契约报错，
+        // 不再在宿主侧无条件抛 CONTRACT 掩盖源能力。
+        ContentKind.VIDEO -> "video.loadInfo"
+        ContentKind.AUDIO -> "audio.loadInfo"
     }
 
     private fun pathForPayload(kind: ContentKind): String = when (kind) {
         ContentKind.NOVEL -> "novel.loadChapter"
         ContentKind.MANGA -> "comic.loadEp"
-        ContentKind.VIDEO -> throw SourcePluginException(
-            "视频源渲染未接线：仅类型与能力扩展点已落地",
-            SourceErrorKind.CONTRACT,
-        )
-        ContentKind.AUDIO -> throw SourcePluginException(
-            "音频源渲染未接线：仅类型与能力扩展点已落地",
-            SourceErrorKind.CONTRACT,
-        )
+        ContentKind.VIDEO -> "video.loadEp"
+        ContentKind.AUDIO -> "audio.loadChapter"
     }
 
     override suspend fun invoke(path: String, argsJson: String): String =
@@ -267,9 +259,14 @@ class SourceRuntime(
      * 结构化并发取消与「宿主缺 native」原样抛出（测试据此跳过，不误判为源错误）。
      */
     private suspend fun withPolicy(path: String, block: suspend () -> String): String {
-        val emitTrace = { t: SourceCallTrace ->
+        val before = counterSnapshot?.invoke()
+        val emitTrace: suspend (SourceCallTrace) -> Unit = { t ->
             onTrace(t)
             telemetry?.onTrace(t)
+            // 快照-调用-快照：按差值把本次调用归因到 js/net/parse/init 四段。
+            if (before != null && counterSnapshot != null) {
+                telemetry?.emitCall(t, before, counterSnapshot.invoke())
+            }
         }
         val needed = ContractPolicy.capabilityForPath(path)
         if (needed != null && !descriptor.has(needed)) {
@@ -281,7 +278,7 @@ class SourceRuntime(
             throw rejection
         }
         val mark = TimeSource.Monotonic.markNow()
-        fun done(ok: Boolean, kind: SourceErrorKind?): Long {
+        suspend fun done(ok: Boolean, kind: SourceErrorKind?): Long {
             val ms = mark.elapsedNow().inWholeMilliseconds
             emitTrace(SourceCallTrace(descriptor.key, path, ms, ok, kind))
             return ms

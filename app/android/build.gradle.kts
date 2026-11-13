@@ -40,6 +40,8 @@ dependencies {
     implementation(project(":data:download"))
     implementation(project(":core:model"))
     implementation(project(":core:reader"))
+    // A-5：LogcatAppLog / UpdateScheduler 平台触发。
+    implementation(project(":core:common"))
     implementation(libs.sqldelight.android.driver)
     implementation(libs.ktor.client.core)
     implementation(libs.androidx.activity.compose)

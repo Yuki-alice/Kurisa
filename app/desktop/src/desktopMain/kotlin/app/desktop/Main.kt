@@ -36,6 +36,12 @@ import javax.swing.JOptionPane
 import javax.swing.SwingUtilities
 import app.shared.CookieImportHostUi
 import app.shared.CookiePaste
+import app.shared.SourceCatalog
+import app.shared.createBackendWiring
+import core.common.UpdateScheduler
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 
 /**
  * 桌面 Cookie 导入兜底（BE-C3 / ADR-009）：无内嵌浏览器时，让用户从 DevTools 粘贴
@@ -96,6 +102,17 @@ fun main() {
     val sourcesDir = File(appDir, "sources").apply { mkdirs() }
     // S2：共享容器（CookieStore/HttpClient/ImageFetcher 一份，阅读器与源侧配对一致）。
     val container = AppContainer(cookies, http)
+    // A-5：B 批后端能力装配。catalogProvider 用延迟引用，避开 catalog ↔ wiring 构造环
+    // （调度器首个 tick 在 6h 后，届时 bindings 早已赋值）。
+    val appLog = FileAppLog(File(appDir, "app.log"))
+    var catalogRef: SourceCatalog? = null
+    val wiring = createBackendWiring(
+        db = database,
+        catalogProvider = { catalogRef ?: error("SourceCatalog 尚未装配") },
+        appLog = appLog,
+        nowMs = { System.currentTimeMillis() },
+        appVersion = "1.0.0",
+    )
     val bindings = createSourceCatalog(
         db = database,
         httpClient = http,
@@ -115,7 +132,18 @@ fun main() {
                 },
             )
         },
+        wiring = wiring,
     )
+    catalogRef = bindings
+    // BE-B3：后台更新扫描（默认 6h 一轮），结果只写日志，不主动打扰用户。
+    CoroutineScope(SupervisorJob() + Dispatchers.Default).launch {
+        UpdateScheduler(wiring.updateSource, wiring.updateTrigger).run { scan ->
+            appLog.d(
+                "update",
+                "扫描 ${scan.scannedWorks} 部，候选 ${scan.candidates.size}，错误 ${scan.errors.size}",
+            )
+        }
+    }
     val readerChapters = LocalRoutingChapterProvider(localChapters, bindings.chapters)
     // 在线书架（A2）：数据层已就绪，装配层只做映射。
     val shelf = createShelfBindings(database) { System.currentTimeMillis() }
@@ -217,6 +245,7 @@ fun main() {
                     }
                 },
                 container = container,
+                wiring = wiring,
             )
         }
     }

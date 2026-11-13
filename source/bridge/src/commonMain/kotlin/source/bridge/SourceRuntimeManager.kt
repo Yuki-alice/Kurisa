@@ -116,6 +116,8 @@ class SourceRuntimeManager(
     private val maxCached: Int = 8,
     private val onRelogin: suspend (sourceKey: String) -> Boolean = { false },
     private val onError: (sourceKey: String, error: SourcePluginException) -> Unit = { _, _ -> },
+    /** A-5 / BE-B6：遥测消费出口；null = 不采集（旧行为零变）。 */
+    private val telemetry: TelemetrySink? = null,
 ) {
     private class Entry(val signature: String, val runtime: SourceRuntime)
 
@@ -135,11 +137,21 @@ class SourceRuntimeManager(
             existing.runtime.close()
             cache.remove(spec.key)
         }
+        val host = hosts.hostFor(spec)
         val engine: SourcePluginEngine = if (spec.format == "rules/v1") {
             // 一体包规则子集：Kotlin 执行器（不起 QuickJS），复用同一 HostApi/描述符/能力交集语义。
-            RulesEngine(spec.key, hosts.hostFor(spec), spec.apiVersion)
+            RulesEngine(spec.key, host, spec.apiVersion)
         } else {
-            engines.create(spec, hosts.hostFor(spec))
+            engines.create(spec, host)
+        }
+        // A-5 / BE-B6：从本次运行时持有的具体实例聚合三段计数器快照。
+        // 规则源没有 QuickJS 引擎，engine 段取零值；缺任何实现都退化为零快照，不让遥测拖垮调用。
+        val counterSnapshot: suspend () -> CounterTrio = {
+            CounterTrio(
+                engine = (engine as? QuickJsEngine)?.telemetry() ?: EngineTelemetry(),
+                network = (host.network as? KtorHostNetwork)?.networkTelemetry() ?: NetworkTelemetry(),
+                html = (host.html as? KsoupHostHtml)?.htmlTelemetry() ?: HtmlTelemetry(),
+            )
         }
         try {
             engine.load(spec.script)
@@ -170,6 +182,8 @@ class SourceRuntimeManager(
                 onRelogin = { onRelogin(spec.key) },
                 onError = { onError(spec.key, it) },
                 pureCache = pureResults,
+                telemetry = telemetry,
+                counterSnapshot = if (telemetry != null) counterSnapshot else null,
             )
             runtime.updateSettings(spec.settingsJson)
             cache[spec.key] = Entry(signature, runtime)

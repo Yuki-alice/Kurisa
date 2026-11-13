@@ -21,6 +21,7 @@ import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import source.bridge.BridgeChapterProvider
+import source.bridge.ChapterCachePort
 import source.bridge.CryptoHostConvert
 import source.bridge.HostUtilsImpl
 import source.bridge.InMemoryHostStorage
@@ -120,6 +121,10 @@ class RegistryChapterProvider(
      * 非空且启用时优先于 [workSourceKey] 映射，避免多源并存时永远读首个启用源。
      */
     private val preferredSourceKey: String? = null,
+    /** A-5 / BE-B2：章节目录写透缓存（null = 纯在线，旧行为零变）。 */
+    private val chapterCache: ChapterCachePort? = null,
+    /** 缓存写透失败只记日志，不打断一次成功的在线读取。 */
+    private val onChapterCacheError: (Throwable) -> Unit = {},
 ) : ChapterProvider {
     // P0: 脚本内容按 installPath 缓存（key = sha256），命中缓存不再每页读盘。
     // 记录更新/回滚后 sha 变化即失效重读；并发重复加载仅多一次 IO，结果一致。
@@ -158,7 +163,12 @@ class RegistryChapterProvider(
     private suspend fun bridgeFor(record: SourceRecord): BridgeChapterProvider {
         val kind = parseKinds(record.kindsJson).firstOrNull() ?: ContentKind.MANGA
         val runtime = acquire(specFor(record, cachedScript(record)))
-        return BridgeChapterProvider(runtime, kind)
+        return BridgeChapterProvider(
+            calls = runtime,
+            kind = kind,
+            chapterCache = chapterCache,
+            onChapterCacheError = onChapterCacheError,
+        )
     }
 
     /** 装配输入收口（阅读链路与测试面板共用同一签名/路由语义）。 */
@@ -539,6 +549,8 @@ fun createSourceCatalog(
     nowMs: () -> Long = { 0L },
     /** BE-C3：按源声明域名注入 HostUi；默认仍是 NoopHostUi，不改变既有测试与行为。 */
     hostUiFor: (Set<String>) -> source.hostapi.HostUi = { NoopHostUi() },
+    /** A-5：B 批后端能力装配（章节缓存 / 遥测 / 日志）；null = 保持旧行为。 */
+    wiring: BackendWiring? = null,
 ): SourceCatalog {
     val registry = SourceRegistry(db)
     val http = SourceHttpClient(httpClient, cookies, nowMs)
@@ -546,6 +558,10 @@ fun createSourceCatalog(
     // 无 DB 的单测/预览走内存 KV；生产此处为 DbKvStore。
     val memFallback = InMemoryHostStorage()
     val kvSafe: HostStorage = kvOrMem(kv, memFallback)
+    // BE-B6：源侧 __host.utils.log 不再丢进空实现，统一进装配层的 AppLog。
+    val logSink: (String) -> Unit = wiring?.appLog?.let { log ->
+        { text: String -> log.d("source", text) }
+    } ?: {}
     val hosts = PluginHostProvider { spec ->
         val network = KtorHostNetwork(http, cookies, spec.domains, nowMs = nowMs)
         object : HostApi {
@@ -553,7 +569,7 @@ fun createSourceCatalog(
             override val html = KsoupHostHtml()
             override val convert = CryptoHostConvert()
             override val ui = hostUiFor(spec.domains)
-            override val utils = HostUtilsImpl()
+            override val utils = HostUtilsImpl(logSink = logSink)
             override val storage = kvSafe
             override val novel = NovelHost()
         }
@@ -564,6 +580,7 @@ fun createSourceCatalog(
             native = KurisaNativePluginEngineFactory(cookies),
         ),
         hosts = hosts,
+        telemetry = wiring?.telemetry,
     )
     val lookup = RegistryLookup(registry)
     val provider = RegistryChapterProvider(
@@ -571,6 +588,11 @@ fun createSourceCatalog(
         acquire = { spec -> manager.acquire(spec) },
         loadScript = loadScript,
         appVersion = appVersion,
+        // BE-B2：在线目录成功即写透 chapter 表，远端失败时离线可读。
+        chapterCache = wiring?.chapterCache,
+        onChapterCacheError = { t ->
+            wiring?.appLog?.e("chapter-cache", "章节缓存写透失败: ${t.message}", t)
+        },
     )
     return SourceCatalog(registry, manager, provider, lookup, nowMs, loadScript, appVersion)
 }

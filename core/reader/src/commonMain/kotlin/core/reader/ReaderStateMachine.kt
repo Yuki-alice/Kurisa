@@ -147,6 +147,9 @@ interface ChapterProvider {
 fun pageCountOf(payload: ChapterPayload, novelPages: Int? = null): Int = when (payload) {
     is ChapterPayload.Images -> payload.urls.size.coerceAtLeast(1)
     is ChapterPayload.Text -> novelPages?.coerceAtLeast(1) ?: 1
+    // BE-C4：单资源媒体按 1 页计；播放器表现层随 M5 落地，后端类型化先到位。
+    is ChapterPayload.Video -> 1
+    is ChapterPayload.Audio -> 1
 }
 
 /**

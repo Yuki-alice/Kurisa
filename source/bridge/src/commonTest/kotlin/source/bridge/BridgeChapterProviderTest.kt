@@ -119,13 +119,21 @@ class BridgeChapterProviderTest {
     }
 
     @Test
-    fun videoAudioDeferredExplicitly() = runTest {
+    fun videoAudioPayloadsAreTypedNotDisguisedAsImages() = runTest {
+        // BE-C4：VIDEO/AUDIO 产出类型化 payload；缺 url 时显式失败，绝不回退成 images。
         val video = BridgeChapterProvider(
+            FakeCalls(chapter = """{"url":"https://cdn.example.com/v.m3u8"}"""),
+            ContentKind.VIDEO,
+        )
+        val typed = video.payload("w", "c")
+        assertTrue(typed is ChapterPayload.Video)
+        assertEquals("https://cdn.example.com/v.m3u8", typed.url)
+        val disguised = BridgeChapterProvider(
             FakeCalls(chapter = """{"images":["u1"]}"""),
             ContentKind.VIDEO,
         )
-        val err = assertFailsWith<SourceBridgeException> { video.payload("w", "c") }
-        assertTrue(err.message!!.contains("未接线"), err.message)
+        val err = assertFailsWith<SourceBridgeException> { disguised.payload("w", "c") }
+        assertTrue(err.message!!.contains("缺 url"), err.message)
         val audio = BridgeChapterProvider(
             FakeCalls(chapter = """{"content":"body","format":"plain"}"""),
             ContentKind.AUDIO,

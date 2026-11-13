@@ -156,10 +156,36 @@ class BridgeChapterProvider(
                 ?.mapNotNull { it.jsonPrimitive.contentOrNull }
                 ?: throw SourceBridgeException("漫画章节缺 images")
             ChapterPayload.Images(urls)
+        } else if (kind == ContentKind.VIDEO) {
+            // BE-C4：类型化视频 payload；不伪装成漫画 images，避免误导调用方。
+            val url = obj["url"]?.jsonPrimitive?.contentOrNull
+                ?: throw SourceBridgeException("视频章节缺 url")
+            ChapterPayload.Video(
+                url = url,
+                mimeType = obj["mimeType"]?.jsonPrimitive?.contentOrNull,
+                headers = stringMap(obj["headers"]),
+                subtitles = obj["subtitles"]?.jsonArray
+                    ?.mapNotNull { runCatching { it.jsonPrimitive.contentOrNull }.getOrNull() }
+                    .orEmpty(),
+            )
         } else {
-            // VIDEO/AUDIO：类型与能力扩展点已落地，渲染未接线，
-            // 此处显式失败，不伪装成漫画 images，避免误导调用方。
-            throw SourceBridgeException("视频/音频渲染未接线：kind=${kind.serial}")
+            val url = obj["url"]?.jsonPrimitive?.contentOrNull
+                ?: throw SourceBridgeException("音频章节缺 url")
+            ChapterPayload.Audio(
+                url = url,
+                mimeType = obj["mimeType"]?.jsonPrimitive?.contentOrNull,
+                headers = stringMap(obj["headers"]),
+                title = obj["title"]?.jsonPrimitive?.contentOrNull,
+                durationMs = runCatching {
+                    obj["durationMs"]?.jsonPrimitive?.contentOrNull?.toLongOrNull()
+                }.getOrNull(),
+            )
         }
     }
+
+    /** 不可信脚本输出的对象字段容错取字符串，非法形状一律忽略。 */
+    private fun stringMap(element: kotlinx.serialization.json.JsonElement?): Map<String, String> =
+        (element as? JsonObject)?.entries?.mapNotNull { (k, v) ->
+            runCatching { v.jsonPrimitive.contentOrNull }.getOrNull()?.let { k to it }
+        }?.toMap().orEmpty()
 }

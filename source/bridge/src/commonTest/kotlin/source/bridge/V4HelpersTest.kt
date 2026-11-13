@@ -712,7 +712,7 @@ class P extends ComicSource {
     }
 
     @Test
-    fun videoAudioKindsFailClosed() = runTest {        val b = Bundle()
+    fun videoAudioKindsNoLongerHardBlocked() = runTest {        val b = Bundle()
         val e = b.engine()
         try {
             e.load(V4_JS)
@@ -725,15 +725,14 @@ class P extends ComicSource {
                 ),
                 e,
             )
-            val details = assertFailsWith<SourcePluginException> {
-                runtime.loadWorkDetails("w", ContentKind.VIDEO)
-            }
-            assertEquals(SourceErrorKind.CONTRACT, details.kind)
-            assertTrue(details.message!!.contains("未接线"), details.message)
-            val payload = assertFailsWith<SourcePluginException> {
-                runtime.loadChapterPayload("w", "c", ContentKind.AUDIO)
-            }
-            assertEquals(SourceErrorKind.CONTRACT, payload.kind)
+            // BE-C4：宿主侧已开放 video/audio 路径，不再无条件抛「渲染未接线」。
+            // 源脚本未实现对应方法时由引擎按契约报错，属于源违约而非宿主屏蔽。
+            val detailsError = runCatching { runtime.loadWorkDetails("w", ContentKind.VIDEO) }
+                .exceptionOrNull()
+            assertTrue(detailsError == null || !detailsError.message.orEmpty().contains("未接线"))
+            val payloadError = runCatching { runtime.loadChapterPayload("w", "c", ContentKind.AUDIO) }
+                .exceptionOrNull()
+            assertTrue(payloadError == null || !payloadError.message.orEmpty().contains("未接线"))
             // 描述符可解析 video/audio kind（扩展点先行，仓库索引暂不接纳）。
             val d = SourceDescriptor.fromJson(
                 """{"key":"k","name":"n","kinds":["video","audio"]}""",

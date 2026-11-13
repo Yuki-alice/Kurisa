@@ -137,4 +137,30 @@ class TelemetrySinkTest {
         val rep = rec.export()
         assertEquals(1L, rep.byPath["search.load"]?.errors)
     }
+
+    @Test
+    fun counterSnapshotEmitsSegmentedCall() = runTest {
+        // A-5：装配层把「调用前后快照」喂进 SourceRuntime，一次调用产出一条分段记录。
+        val rec = TelemetryRecorder()
+        var calls = 0
+        val snapshot: suspend () -> CounterTrio = {
+            calls++
+            if (calls == 1) trio(0, 0, 0) else trio(5, 50, 15)
+        }
+        val runtime = SourceRuntime(
+            descriptor(),
+            FakeEngine(),
+            telemetry = rec,
+            counterSnapshot = snapshot,
+        )
+        runtime.invoke("search.load", "[]")
+
+        val rep = rec.export()
+        assertEquals(1, rep.calls.size)
+        assertEquals(5L, rep.calls[0].jsMs)
+        assertEquals(50L, rep.calls[0].netMs)
+        assertEquals(15L, rep.calls[0].parseMs)
+        assertEquals(1L, rep.byPath["search.load"]?.calls)
+        assertEquals(2, calls) // 前后各取一次
+    }
 }

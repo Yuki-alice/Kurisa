@@ -16,7 +16,13 @@ import app.shared.App
 import app.shared.AppContainer
 import app.shared.CallbackDownloadSink
 import app.shared.DbCookiePersistence
+import app.shared.SourceCatalog
+import app.shared.createBackendWiring
 import app.shared.createDownloadController
+import core.common.UpdateScheduler
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import app.shared.createShelfBindings
 import app.shared.createSourceCatalog
 import app.shared.downloadTaskDirName
@@ -76,6 +82,16 @@ class MainActivity : ComponentActivity() {
         cookies.purgeExpired(System.currentTimeMillis())
         val http = defaultHttpClient()
         val container = AppContainer(cookies, http)
+        // A-5：B 批后端能力装配；catalogProvider 延迟引用避开构造环。
+        val appLog = LogcatAppLog()
+        var catalogRef: SourceCatalog? = null
+        val wiring = createBackendWiring(
+            db = database,
+            catalogProvider = { catalogRef ?: error("SourceCatalog 尚未装配") },
+            appLog = appLog,
+            nowMs = { System.currentTimeMillis() },
+            appVersion = "1.0.0",
+        )
         val bindings = createSourceCatalog(
             db = database,
             httpClient = http,
@@ -87,7 +103,18 @@ class MainActivity : ComponentActivity() {
                 else File(File(filesDir, "sources"), path).readText()
             },
             nowMs = { System.currentTimeMillis() },
+            wiring = wiring,
         )
+        catalogRef = bindings
+        // BE-B3：后台更新扫描（进程级 scope，默认 6h 一轮），结果只写 logcat。
+        CoroutineScope(SupervisorJob() + Dispatchers.Default).launch {
+            UpdateScheduler(wiring.updateSource, wiring.updateTrigger).run { scan ->
+                appLog.d(
+                    "update",
+                    "扫描 ${scan.scannedWorks} 部，候选 ${scan.candidates.size}，错误 ${scan.errors.size}",
+                )
+            }
+        }
         val readerChapters = LocalRoutingChapterProvider(localChapters, bindings.chapters)
         // 在线书架（A2）与下载编排（A1）：与桌面同形，只是根目录换成 filesDir。
         val shelf = createShelfBindings(database) { System.currentTimeMillis() }
@@ -176,6 +203,7 @@ class MainActivity : ComponentActivity() {
                     }
                 },
                 container = container,
+                wiring = wiring,
                 onPickLocalDirectory = null,
                 saveSourceScript = { key, version, script, format ->
                     val ext = if (format == "rules/v1") "$version.rules.json" else "$version.js"

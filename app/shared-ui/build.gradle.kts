@@ -46,6 +46,8 @@ kotlin {
             implementation(libs.kotlinx.coroutines.core)
             implementation(project(":core:model"))
             implementation(project(":core:reader"))
+            // A-5：BackendWiring 使用 core.common 的 AppLog / UpdateScheduler / UpdateSource。
+            implementation(project(":core:common"))
             implementation(project(":core:designsystem"))
             implementation(project(":data:repository"))
             implementation(project(":data:download"))

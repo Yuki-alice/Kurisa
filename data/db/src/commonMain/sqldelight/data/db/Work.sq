@@ -33,5 +33,16 @@ INNER JOIN shelf_item si ON si.work_id = w.id
 WHERE si.shelf_id = ?
 ORDER BY si.added_at DESC;
 
+-- BE-B3：某源下已有章节缓存目录的作品（调度器扫描范围）。
+selectCachedWorks:
+SELECT w.* FROM work w
+WHERE w.source_key = ?
+  AND EXISTS (SELECT 1 FROM chapter c WHERE c.work_id = w.id)
+ORDER BY w.id;
+
+-- BE-B3：宿主 workId ↔ 源内 id 转换（调度器按源内 id 拉远端目录）。
+selectWorkBySourceWorkId:
+SELECT * FROM work WHERE source_key = ? AND source_work_id = ?;
+
 deleteWork:
 DELETE FROM work WHERE id = ?;

@@ -19,6 +19,8 @@ kotlin {
             implementation(project(":data:download"))
             implementation(project(":core:model"))
             implementation(project(":core:reader"))
+            // A-5：FileAppLog / UpdateScheduler 平台触发。
+            implementation(project(":core:common"))
             // BE-C3：桌面壳构造 CookieImportHostUi 时要解析 HostUi 契约类型。
             implementation(project(":source:hostapi"))
             implementation(libs.sqldelight.sqlite.driver)
