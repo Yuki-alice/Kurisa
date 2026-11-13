@@ -24,6 +24,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -45,6 +46,9 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.serialization.Serializable
+import org.koin.compose.viewmodel.koinViewModel
+import org.koin.core.context.GlobalContext
+import org.koin.core.parameter.parametersOf
 
 /** 全局搜索（跨源聚合、去重、筛选随 M5）。 */
 @Serializable
@@ -79,20 +83,30 @@ data class SearchUiState(
 )
 
 /**
+ * 搜索 ViewModel 的注入载荷（BE-A5：Koin 参数）。
+ *
+ * 装配层把「可搜索源列表 + 源调用出口」打包成一个不可变载荷，容器
+ * （`app.shared.AppContainer`）据此定义 `viewModel`，页面不再手写 Factory。
+ */
+class SearchDeps(
+    val sources: List<SearchSourceUi>,
+    val search: suspend (sourceKey: String, keyword: String, page: Int) -> SearchPageUi,
+)
+
+/**
  * 搜索 ViewModel（MVI：StateFlow 状态 + Intent 方法）。
  *
  * 搜索能力由 composition root 注入（源 key → 源调用），页面不依赖 bridge；
  * 失败按 `error` 呈现并可重试，不留白屏（C4）。
  */
 class SearchViewModel(
-    sources: List<SearchSourceUi>,
-    private val search: suspend (sourceKey: String, keyword: String, page: Int) -> SearchPageUi,
+    private val deps: SearchDeps,
 ) : ViewModel() {
     private val _state = MutableStateFlow(
-        SearchUiState(sourceKey = sources.firstOrNull()?.key.orEmpty()),
+        SearchUiState(sourceKey = deps.sources.firstOrNull()?.key.orEmpty()),
     )
     val state: StateFlow<SearchUiState> = _state.asStateFlow()
-    val sources: List<SearchSourceUi> = sources
+    val sources: List<SearchSourceUi> = deps.sources
 
     fun onQueryChange(q: String) = _state.update { it.copy(query = q) }
 
@@ -118,7 +132,7 @@ class SearchViewModel(
         val s = _state.value
         _state.update { it.copy(loading = true, error = null) }
         viewModelScope.launch {
-            runCatching { search(s.sourceKey, s.query.trim(), page) }
+            runCatching { deps.search(s.sourceKey, s.query.trim(), page) }
                 .onSuccess { p ->
                     _state.update {
                         it.copy(
@@ -140,17 +154,24 @@ class SearchViewModel(
     }
 }
 
-class SearchViewModelFactory(
-    private val sources: List<SearchSourceUi>,
-    private val search: suspend (String, String, Int) -> SearchPageUi,
-) : androidx.lifecycle.ViewModelProvider.Factory {
-    @Suppress("UNCHECKED_CAST")
-    override fun <T : ViewModel> create(
-        modelClass: kotlin.reflect.KClass<T>,
-        extras: androidx.lifecycle.viewmodel.CreationExtras,
-    ): T {
-        require(modelClass == SearchViewModel::class) { "仅支持 SearchViewModel" }
-        return SearchViewModel(sources, search) as T
+/**
+ * 从 Koin 容器取 [SearchViewModel]（BE-A5）。
+ *
+ * 容器（`AppContainer`）内定义 `viewModel { SearchViewModel(params.get<SearchDeps>()) }`；
+ * 依赖是屏幕级载荷，故走 `koinViewModel(parameters = …)` 而不是无参 `viewModelOf`。
+ *
+ * scope 用 `koinViewModel` 默认的 `currentKoinScope()`：`LocalKoinScopeContext` 自带
+ * 「默认 Koin 上下文根 scope」兜底，因此只要 `AppContainer` 启动过 Koin 即可解析，
+ * 不要求在 Compose 树外层再套 `KoinApplication {}`（`App.kt` 归装配层）。
+ * 容器未启动时（预览 / 独立 UI 测试）退化为本地实例，不抛异常、不伪造全局容器。
+ */
+@Composable
+private fun koinSearchViewModel(deps: SearchDeps): SearchViewModel {
+    val koinStarted = remember { GlobalContext.getOrNull() != null }
+    return if (!koinStarted) {
+        viewModel(key = "search") { SearchViewModel(deps) }
+    } else {
+        koinViewModel<SearchViewModel>(key = "search", parameters = { parametersOf(deps) })
     }
 }
 
@@ -164,11 +185,12 @@ fun SearchScreen(
         SearchPageUi()
     },
 ) {
-    val currentSearch by rememberUpdatedState(search)
-    val vm: SearchViewModel = viewModel(
-        key = "search",
-        factory = SearchViewModelFactory(sources) { k, kw, p -> currentSearch(k, kw, p) },
-    )
+    // 闭包可能随重组更新；VM 只构造一次，用 State 间接让最新闭包生效（与旧实现同语义）。
+    val currentSearch = rememberUpdatedState(search)
+    val deps = remember(sources, currentSearch) {
+        SearchDeps(sources) { k, kw, p -> currentSearch.value(k, kw, p) }
+    }
+    val vm: SearchViewModel = koinSearchViewModel(deps)
     val state by vm.state.collectAsStateWithLifecycle()
     SearchContent(
         state = state,

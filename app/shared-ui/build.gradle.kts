@@ -60,6 +60,7 @@ kotlin {
             implementation(project(":source:contract"))
             implementation(libs.ktor.client.core)
             implementation(libs.koin.core)
+            implementation(libs.koin.viewmodel.compose)
             implementation(libs.lifecycle.viewmodel)
             implementation(libs.lifecycle.viewmodel.compose)
             implementation(libs.lifecycle.runtime.compose)
