@@ -1,0 +1,21 @@
+CREATE TABLE highlight (
+  id TEXT PRIMARY KEY,
+  work_id TEXT NOT NULL,
+  chapter_id TEXT NOT NULL,
+  start INTEGER NOT NULL,
+  end INTEGER NOT NULL,
+  excerpt TEXT,
+  note TEXT,
+  created_at INTEGER NOT NULL
+);
+
+upsertHighlight:
+INSERT OR REPLACE INTO highlight
+  (id, work_id, chapter_id, start, end, excerpt, note, created_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?);
+
+selectHighlights:
+SELECT * FROM highlight WHERE work_id = ? AND chapter_id = ? ORDER BY start;
+
+deleteHighlight:
+DELETE FROM highlight WHERE id = ?;

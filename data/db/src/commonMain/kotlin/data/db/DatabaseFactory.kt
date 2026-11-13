@@ -36,6 +36,44 @@ object RollbackScripts {
         ALTER TABLE source_v1 RENAME TO source;
     """.trimIndent()
 
+    /**
+     * v4 → v3：去掉 `reading_progress.char_offset` / `layout_key`，其余列全保留。
+     * 执行前调用方须备份 DB 文件；逐条按 ';' 分割执行（与 V2_TO_V1 同约定）。
+     */
+    val V4_TO_V3 = """
+        CREATE TABLE reading_progress_v3 (
+          work_id TEXT PRIMARY KEY,
+          chapter_id TEXT NOT NULL,
+          page_index INTEGER,
+          scroll_offset REAL,
+          percent REAL NOT NULL,
+          updated_at INTEGER NOT NULL,
+          synced INTEGER NOT NULL DEFAULT 0
+        );
+        INSERT INTO reading_progress_v3
+          (work_id, chapter_id, page_index, scroll_offset, percent, updated_at, synced)
+        SELECT work_id, chapter_id, page_index, scroll_offset, percent, updated_at, synced
+          FROM reading_progress;
+        DROP TABLE reading_progress;
+        ALTER TABLE reading_progress_v3 RENAME TO reading_progress;
+    """.trimIndent()
+
+    /** v3 基线（无锚点列），供迁移测试建旧库。 */
+    val V3_PROGRESS = """
+        CREATE TABLE reading_progress (
+          work_id TEXT PRIMARY KEY,
+          chapter_id TEXT NOT NULL,
+          page_index INTEGER,
+          scroll_offset REAL,
+          percent REAL NOT NULL,
+          updated_at INTEGER NOT NULL,
+          synced INTEGER NOT NULL DEFAULT 0
+        );
+    """.trimIndent()
+
+    /** v5 → v4：去掉 `highlight` 表（M4 划线；纯新增表，回滚即删表）。 */
+    val V5_TO_V4 = "DROP TABLE highlight;"
+
     /** v1 基线（无 settings_json），供迁移测试建 v1 库。 */
     val V1_SOURCE = """
         CREATE TABLE source (

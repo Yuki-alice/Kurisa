@@ -33,6 +33,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.pager.HorizontalPager
@@ -52,8 +53,16 @@ import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.automirrored.outlined.List
 import androidx.compose.material.icons.outlined.Bookmark
 import androidx.compose.material.icons.outlined.BookmarkBorder
+import androidx.compose.material.icons.outlined.Brush
 import androidx.compose.material.icons.outlined.Crop
+import androidx.compose.material.icons.automirrored.outlined.FormatListBulleted
+import androidx.compose.material.icons.outlined.Delete
+import androidx.compose.material.icons.outlined.Edit
+import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.FormatListNumbered
+import androidx.compose.material.icons.outlined.KeyboardArrowDown
+import androidx.compose.material.icons.outlined.KeyboardArrowUp
+import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.SkipNext
@@ -73,8 +82,10 @@ import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
+import androidx.compose.material3.TextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -148,6 +159,8 @@ import dev.nucleusframework.pdfium.rememberPdfReaderState
 import data.network.CookieStore
 import data.network.SourceHttpClient
 import data.network.defaultHttpClient
+import data.repository.BookmarkRepository
+import data.repository.NoopBookmarkRepository
 import data.repository.ProgressRepository
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
@@ -170,6 +183,8 @@ fun ReaderScreen(
     localFs: LocalSourceFileSystem? = null,
     /** 作品名（顶栏主标题；未知时回退章节名）。 */
     mangaTitle: String = "",
+    /** 书签持久化（默认内存态；平台壳传入 SQLDelight 实现）。 */
+    bookmarks: BookmarkRepository = NoopBookmarkRepository,
 ) {
     // 网络栈装配（Koin M5 前手写：CookieStore 按 composition 记忆；
     // 会话级共享随 M5 DI 落地；demo 源无鉴权需求）。
@@ -190,9 +205,16 @@ fun ReaderScreen(
             domains = domains,
             settingsStore = settingsStore,
             mangaTitle = mangaTitle,
+            bookmarks = bookmarks,
         ),
     )
-    ReaderScreenVm(workId = workId, onBack = onBack, vm = vm)
+    ReaderScreenVm(
+        workId = workId,
+        onBack = onBack,
+        vm = vm,
+        images = images,
+        domains = domains,
+    )
 }
 
 /** VM 已就绪入口（预览/测试直接供 VM，不碰网络装配）。 */
@@ -201,6 +223,9 @@ fun ReaderScreenVm(
     workId: String,
     onBack: () -> Unit,
     vm: ReaderViewModel,
+    /** 小说文内图片出口（受控抓取器；为空时只显示占位符）。 */
+    images: ImageFetcher? = null,
+    domains: Set<String> = emptySet(),
 ) {
     val state by vm.state.collectAsStateWithLifecycle()
     val snacks = remember { SnackbarHostState() }
@@ -222,6 +247,8 @@ fun ReaderScreenVm(
             onIntent = vm::onIntent,
             onBack = onBack,
             modifier = Modifier.padding(padding),
+            images = images,
+            domains = domains,
         )
     }
 }
@@ -232,6 +259,9 @@ fun ReaderContent(
     onIntent: (ReaderContract.Intent) -> Unit,
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
+    /** 小说文内图片：沿用 ReaderScreen 装配的受控出口与域名白名单。 */
+    images: ImageFetcher? = null,
+    domains: Set<String> = emptySet(),
 ) {
     val settings = state.settings
     BoxWithConstraints(
@@ -258,7 +288,16 @@ fun ReaderContent(
         }
         val pdfBytes = state.pdfBytes
     when {
-            state.article != null -> NovelContent(state.article, state.settings)
+            // 章节切换重建 Viewer：避免沿用上一章 PagerState/LazyListState 造成跳章串位。
+            state.novel != null -> key(state.chapterId) {
+                NovelReader(
+                    state = state,
+                    onIntent = onIntent,
+                    images = images,
+                    domains = domains,
+                )
+            }
+            state.article != null -> PlainArticleContent(state.article, state.settings)
             pdfBytes != null -> PdfReaderView(pdfBytes, state, onIntent, onBack)
             state.loading && state.pageCount == 0 -> LoadingScreen()
             state.error != null && state.pageCount == 0 -> ErrorScreen(
@@ -313,12 +352,48 @@ fun ReaderContent(
 
         if (state.menuVisible) {
             ReaderChrome(state, onIntent, onBack, pageLabel)
-        } else if (state.article == null && settings.showPageNumber && state.pageCount > 0) {
+        } else if (settings.showPageNumber && state.pageCount > 0 &&
+            (state.article == null || state.novel != null)
+        ) {
             PageIndicator(pageLabel, state.pageCount)
         }
 
         if (state.chapterListVisible) {
             ChapterListSheet(state, onIntent)
+        }
+        if (state.bookmarksVisible) {
+            BookmarkListSheet(state, onIntent)
+        }
+        if (state.editingNoteId != null) {
+            BookmarkNoteDialog(state, onIntent)
+        }
+        if (state.editingHighlightNoteId != null) {
+            HighlightNoteDialog(state, onIntent)
+        }
+        if (state.searchVisible) {
+            Box(
+                Modifier.fillMaxSize(),
+                contentAlignment = Alignment.TopCenter,
+            ) {
+                ReaderSearchBar(state, onIntent)
+            }
+        }
+        // 拖拽选区确认条（与搜索条同列避免遮挡；标出后落盘并清选区）。
+        val selection = state.selectionRange
+        if (selection != null && selection.last > selection.first) {
+            Box(
+                Modifier.fillMaxSize(),
+                contentAlignment = Alignment.TopCenter,
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    TextButton(onClick = { onIntent(ReaderContract.Intent.CommitNovelSelection) }) {
+                        Text("标出所选")
+                    }
+                    TextButton(onClick = { onIntent(ReaderContract.Intent.ClearNovelSelection) }) {
+                        Text("取消")
+                    }
+                }
+            }
         }
         if (state.settingsVisible) {
             ReaderSettingsSheet(state, onIntent)
@@ -360,6 +435,15 @@ private fun PdfReaderView(
         }
         if (state.chapterListVisible) {
             ChapterListSheet(state, onIntent)
+        }
+        if (state.bookmarksVisible) {
+            BookmarkListSheet(state, onIntent)
+        }
+        if (state.editingNoteId != null) {
+            BookmarkNoteDialog(state, onIntent)
+        }
+        if (state.editingHighlightNoteId != null) {
+            HighlightNoteDialog(state, onIntent)
         }
         if (state.settingsVisible) {
             ReaderSettingsSheet(state, onIntent)
@@ -926,6 +1010,24 @@ private fun ReaderTopBar(
                 tint = MaterialTheme.colorScheme.primary,
             )
         }
+        // 全文搜索仅小说正文可用（漫画是图片页，无字符坐标）。
+        if (state.novel != null) {
+            IconButton(onClick = { onIntent(ReaderContract.Intent.OpenSearch) }) {
+                Icon(
+                    Icons.Outlined.Search,
+                    contentDescription = "搜索正文",
+                    tint = MaterialTheme.colorScheme.primary,
+                )
+            }
+            IconButton(onClick = { onIntent(ReaderContract.Intent.ToggleHighlightMode) }) {
+                Icon(
+                    Icons.Outlined.Brush,
+                    contentDescription = "划线模式",
+                    tint = if (state.highlightMode) MaterialTheme.colorScheme.primary
+                    else MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
     }
 }
 
@@ -952,6 +1054,9 @@ private fun ReaderBottomBar(
         ) {
             IconButton(onClick = { onIntent(ReaderContract.Intent.OpenChapterList) }) {
                 Icon(Icons.Outlined.FormatListNumbered, contentDescription = "目录", tint = primary)
+            }
+            IconButton(onClick = { onIntent(ReaderContract.Intent.OpenBookmarks) }) {
+                Icon(Icons.AutoMirrored.Outlined.FormatListBulleted, contentDescription = "书签列表", tint = primary)
             }
             // 本地可用的直接开关（在线源的 WebView/Browser/Share/阅读模式/旋转在此无意义）。
             IconButton(onClick = { onIntent(ReaderContract.Intent.ToggleCropBorders) }) {
@@ -1236,6 +1341,273 @@ private fun ChapterListSheet(
     }
 }
 
+/** 全文搜索条（小说正文；命中计数 + 上/下个 + 关闭，输入即搜即跳）。 */
+@Composable
+private fun ReaderSearchBar(
+    state: ReaderContract.State,
+    onIntent: (ReaderContract.Intent) -> Unit,
+) {
+    val focusRequester = remember { FocusRequester() }
+    Surface(
+        tonalElevation = 3.dp,
+        shadowElevation = 4.dp,
+    ) {
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .statusBarsPadding()
+                .padding(horizontal = 8.dp, vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            TextField(
+                value = state.searchQuery,
+                onValueChange = { onIntent(ReaderContract.Intent.SearchQueryChanged(it)) },
+                placeholder = { Text("搜索正文") },
+                singleLine = true,
+                modifier = Modifier
+                    .weight(1f)
+                    .focusRequester(focusRequester),
+            )
+            val total = state.searchMatches.size
+            Text(
+                if (total == 0) "0/0" else "${state.searchIndex + 1}/$total",
+                style = MaterialTheme.typography.labelMedium,
+                modifier = Modifier.padding(horizontal = 8.dp),
+            )
+            TextButton(
+                onClick = { onIntent(ReaderContract.Intent.HighlightAllSearchMatches) },
+                enabled = total > 0,
+            ) {
+                Text("标出")
+            }
+            IconButton(
+                onClick = { onIntent(ReaderContract.Intent.SearchPrev) },
+                enabled = total > 0,
+            ) {
+                Icon(Icons.Outlined.KeyboardArrowUp, contentDescription = "上一个")
+            }
+            IconButton(
+                onClick = { onIntent(ReaderContract.Intent.SearchNext) },
+                enabled = total > 0,
+            ) {
+                Icon(Icons.Outlined.KeyboardArrowDown, contentDescription = "下一个")
+            }
+            IconButton(onClick = { onIntent(ReaderContract.Intent.CloseSearch) }) {
+                Icon(Icons.Outlined.Close, contentDescription = "关闭搜索")
+            }
+        }
+    }
+    LaunchedEffect(Unit) { runCatching { focusRequester.requestFocus() } }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun BookmarkListSheet(
+    state: ReaderContract.State,
+    onIntent: (ReaderContract.Intent) -> Unit,
+) {
+    ModalBottomSheet(onDismissRequest = { onIntent(ReaderContract.Intent.CloseBookmarks) }) {
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 8.dp),
+        ) {
+            Text(
+                "书签",
+                style = MaterialTheme.typography.titleMedium,
+                modifier = Modifier.padding(12.dp),
+            )
+            val items = state.bookmarkList
+            if (items.isEmpty()) {
+                Text(
+                    "暂无书签：在阅读页点右上角书签图标添加",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 24.dp),
+                )
+            } else {
+                LazyColumn(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 200.dp, max = 500.dp),
+                ) {
+                    items(items, key = { it.id }) { bookmark ->
+                        val chapterTitle = state.chapters
+                            .firstOrNull { it.id == bookmark.chapterId }?.title
+                            ?: bookmark.chapterId
+                        Row(
+                            Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(8.dp))
+                                .clickable { onIntent(ReaderContract.Intent.JumpToBookmark(bookmark.id)) }
+                                .padding(horizontal = 12.dp, vertical = 12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Column(Modifier.weight(1f)) {
+                                Text(
+                                    chapterTitle,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    maxLines = 1,
+                                )
+                                val excerpt = bookmark.excerpt
+                                if (!excerpt.isNullOrBlank()) {
+                                    Text(
+                                        excerpt,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        maxLines = 2,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                }
+                                val note = bookmark.note
+                                if (!note.isNullOrBlank()) {
+                                    Text(
+                                        "笔记：$note",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.primary,
+                                        maxLines = 3,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                }
+                            }
+                            IconButton(
+                                onClick = { onIntent(ReaderContract.Intent.StartEditNote(bookmark.id)) },
+                            ) {
+                                Icon(Icons.Outlined.Edit, contentDescription = "编辑笔记")
+                            }
+                        }
+                    }
+                }
+            }
+            Text(
+                "本章划线",
+                style = MaterialTheme.typography.titleMedium,
+                modifier = Modifier.padding(12.dp),
+            )
+            val highlights = state.highlightList
+            if (highlights.isEmpty()) {
+                Text(
+                    "暂无划线：打开划线模式后点段落添加",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 12.dp),
+                )
+            } else {
+                Column(
+                    Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 300.dp)
+                        .verticalScroll(rememberScrollState()),
+                ) {
+                    highlights.forEachIndexed { index, highlight ->
+                        Row(
+                            Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(8.dp))
+                                .clickable { onIntent(ReaderContract.Intent.JumpToHighlight(highlight.id)) }
+                                .padding(horizontal = 12.dp, vertical = 12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Column(Modifier.weight(1f)) {
+                                Text(
+                                    highlight.excerpt ?: "第 ${index + 1} 处划线",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                                val highlightNote = highlight.note
+                                if (!highlightNote.isNullOrBlank()) {
+                                    Text(
+                                        "笔记：$highlightNote",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.primary,
+                                        maxLines = 3,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                }
+                            }
+                            IconButton(
+                                onClick = { onIntent(ReaderContract.Intent.StartEditHighlightNote(highlight.id)) },
+                            ) {
+                                Icon(Icons.Outlined.Edit, contentDescription = "编辑划线笔记")
+                            }
+                            IconButton(onClick = { onIntent(ReaderContract.Intent.RemoveHighlight(highlight.id)) }) {
+                                Icon(Icons.Outlined.Delete, contentDescription = "删除划线")
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/** 书签笔记编辑器（纯本地文本，上限 2000 字，空串视为清除）。 */
+@Composable
+private fun BookmarkNoteDialog(
+    state: ReaderContract.State,
+    onIntent: (ReaderContract.Intent) -> Unit,
+) {
+    val id = state.editingNoteId ?: return
+    val bookmark = state.bookmarkList.firstOrNull { it.id == id } ?: return
+    var text by remember(id) { mutableStateOf(bookmark.note.orEmpty()) }
+    AlertDialog(
+        onDismissRequest = { onIntent(ReaderContract.Intent.CancelEditNote) },
+        title = { Text("书签笔记") },
+        text = {
+            TextField(
+                value = text,
+                onValueChange = { text = it.take(2000) },
+                placeholder = { Text("写下想法…") },
+                modifier = Modifier.fillMaxWidth(),
+            )
+        },
+        confirmButton = {
+            TextButton(onClick = { onIntent(ReaderContract.Intent.SaveNote(text)) }) {
+                Text("保存")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = { onIntent(ReaderContract.Intent.CancelEditNote) }) {
+                Text("取消")
+            }
+        },
+    )
+}
+
+/** 划线笔记编辑器（纯本地文本，上限 2000 字，空串视为清除；与书签笔记同构）。 */
+@Composable
+private fun HighlightNoteDialog(
+    state: ReaderContract.State,
+    onIntent: (ReaderContract.Intent) -> Unit,
+) {
+    val id = state.editingHighlightNoteId ?: return
+    val highlight = state.highlightList.firstOrNull { it.id == id } ?: return
+    var text by remember(id) { mutableStateOf(highlight.note.orEmpty()) }
+    AlertDialog(
+        onDismissRequest = { onIntent(ReaderContract.Intent.CancelEditHighlightNote) },
+        title = { Text("划线笔记") },
+        text = {
+            TextField(
+                value = text,
+                onValueChange = { text = it.take(2000) },
+                placeholder = { Text("写下想法…") },
+                modifier = Modifier.fillMaxWidth(),
+            )
+        },
+        confirmButton = {
+            TextButton(onClick = { onIntent(ReaderContract.Intent.SaveHighlightNote(text)) }) {
+                Text("保存")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = { onIntent(ReaderContract.Intent.CancelEditHighlightNote) }) {
+                Text("取消")
+            }
+        },
+    )
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun ReaderSettingsSheet(
@@ -1252,6 +1624,87 @@ private fun ReaderSettingsSheet(
                 .padding(bottom = 24.dp),
         ) {
             Text("阅读设置", style = MaterialTheme.typography.titleMedium)
+            // 按书作用域提示 + 恢复全局（仅本书有覆写时展示）。
+            if (state.settingsScope != "global") {
+                Row(
+                    Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        "本书单独设置生效中",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.weight(1f),
+                    )
+                    TextButton(onClick = { onIntent(ReaderContract.Intent.ResetBookSettings) }) {
+                        Text("恢复全局设置")
+                    }
+                }
+            }
+            if (state.novel != null) {
+                val t = state.settings.typography
+                // 拖动期间只更新本地值，松手才提交：避免每帧写盘 + 触发全书重排。
+                var fontSize by remember(t.fontSizeSp) { mutableStateOf(t.fontSizeSp) }
+                var lineHeight by remember(t.lineHeightMultiple) { mutableStateOf(t.lineHeightMultiple) }
+                var spacing by remember(t.paragraphSpacingDp) { mutableStateOf(t.paragraphSpacingDp) }
+                var margin by remember(t.pageMarginDp) { mutableStateOf(t.pageMarginDp) }
+                var indent by remember(t.paragraphIndentEm) { mutableStateOf(t.paragraphIndentEm) }
+                Text(
+                    "小说排版",
+                    style = MaterialTheme.typography.titleSmall,
+                    modifier = Modifier.padding(top = 12.dp),
+                )
+                Text("字号 ${fontSize.toInt()} sp", style = MaterialTheme.typography.bodyMedium)
+                Slider(
+                    value = fontSize,
+                    onValueChange = { fontSize = it },
+                    onValueChangeFinished = {
+                        onIntent(ReaderContract.Intent.NovelFontSizeChanged(fontSize))
+                    },
+                    valueRange = 12f..30f,
+                    steps = 17,
+                )
+                Text("行距 $lineHeight 倍", style = MaterialTheme.typography.bodyMedium)
+                Slider(
+                    value = lineHeight,
+                    onValueChange = { lineHeight = it },
+                    onValueChangeFinished = {
+                        onIntent(ReaderContract.Intent.NovelLineHeightChanged(lineHeight))
+                    },
+                    valueRange = 1f..2.5f,
+                    steps = 14,
+                )
+                Text("段距 ${spacing.toInt()} dp", style = MaterialTheme.typography.bodyMedium)
+                Slider(
+                    value = spacing,
+                    onValueChange = { spacing = it },
+                    onValueChangeFinished = {
+                        onIntent(ReaderContract.Intent.NovelParagraphSpacingChanged(spacing))
+                    },
+                    valueRange = 0f..48f,
+                    steps = 23,
+                )
+                Text("页边距 ${margin.toInt()} dp", style = MaterialTheme.typography.bodyMedium)
+                Slider(
+                    value = margin,
+                    onValueChange = { margin = it },
+                    onValueChangeFinished = {
+                        onIntent(ReaderContract.Intent.NovelPageMarginChanged(margin))
+                    },
+                    valueRange = 0f..64f,
+                    steps = 31,
+                )
+                Text("首行缩进 ${indent} em", style = MaterialTheme.typography.bodyMedium)
+                Slider(
+                    value = indent,
+                    onValueChange = { indent = it },
+                    onValueChangeFinished = {
+                        onIntent(ReaderContract.Intent.NovelParagraphIndentChanged(indent))
+                    },
+                    valueRange = 0f..4f,
+                    steps = 39,
+                )
+            }
             SettingsSection("阅读模式") {
                 FilterChip(
                     selected = settings.mode == ReadingMode.PAGED,
@@ -1528,9 +1981,9 @@ private fun PageErrorPlaceholder(message: String, onRetry: () -> Unit, modifier:
     }
 }
 
+/** 兼容旧状态（未结构化正文）：纯文本降级视图；结构化正文走 NovelReader。 */
 @Composable
-private fun NovelContent(article: String, settings: ReadingConfig) {
-    // M4 做排版分页；此处按 format 做最小分流，避免 HTML 标签原样显示。
+private fun PlainArticleContent(article: String, settings: ReadingConfig) {
     val scroll = rememberScrollState()
     Column(
         Modifier

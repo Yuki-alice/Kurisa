@@ -57,6 +57,19 @@ class BridgeChapterProvider(
         }
     }
 
+    /** 小说文内图片接线：`novel.onImageResolve` 重写 URL / 附加已脱敏头 / 重试次数。
+     * 未声明时直通原文；返回的 headers 已由 `ImageLoadConfig.sanitized()` 剥离
+     * UA/Cookie（宿主出口统一注入），调用方不得自行补传。 */
+    override suspend fun resolveNovelImage(url: String): ReaderPageRequest {
+        val cfg = calls.novelImageResolve(url) ?: return ReaderPageRequest(url)
+        return ReaderPageRequest(
+            url = url,
+            rewriteUrl = cfg.url,
+            headers = cfg.headers,
+            maxRetries = cfg.maxRetries,
+        )
+    }
+
     /** `comic.onImageLoad` 接线：重写 URL / 附加已脱敏头 / 重试次数。 */
     override suspend fun resolvePage(
         workId: String,

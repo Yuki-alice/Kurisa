@@ -124,6 +124,8 @@ internal class ProgressRepositoryImpl(private val db: ReaderDatabase) : Progress
             percent = progress.percent.toDouble(),
             updated_at = progress.updatedAtEpochMs,
             synced = if (progress.synced) 1L else 0L,
+            char_offset = progress.charOffset.toLong(),
+            layout_key = progress.layoutKey,
         )
     }
 
@@ -137,6 +139,8 @@ internal class ProgressRepositoryImpl(private val db: ReaderDatabase) : Progress
             percent = row.percent.toFloat(),
             updatedAtEpochMs = row.updated_at,
             synced = row.synced == 1L,
+            charOffset = row.char_offset.toInt(),
+            layoutKey = row.layout_key.orEmpty(),
         )
     }
 }

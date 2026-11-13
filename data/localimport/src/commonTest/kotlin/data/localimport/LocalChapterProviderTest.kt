@@ -37,7 +37,7 @@ class LocalChapterProviderTest {
                 "M/ch01/p1.jpg" to jpg1,
                 "M/vol.cbz" to cbzSrc.createZipFromTree(),
                 "M/book.epub" to epubSrc.createZipFromTree(),
-                "M/notes.txt" to byteArrayOf(0),
+                "M/notes.txt" to "第一章 开端\n正文第一段。\n第二章 继续\n正文第二段。\n".encodeToByteArray(),
             ),
         )
     }
@@ -48,8 +48,14 @@ class LocalChapterProviderTest {
     @Test
     fun chaptersDescSkipsNonChapters() = runTest {
         val chapters = provider(seed()).chapters("M")
-        assertEquals(listOf("vol.cbz", "ch02", "ch01", "book.epub").sortedWith(NaturalOrder).reversed(), chapters.map { it.title })
+        // 漫画/归档章节保持原顺序；文本书以 `<path>#<index>` 追加，不影响漫画章节。
+        val comicTitles = chapters.filterNot { it.id.contains('#') }.map { it.title }
+        assertEquals(
+            listOf("vol.cbz", "ch02", "ch01", "book.epub").sortedWith(NaturalOrder).reversed(),
+            comicTitles,
+        )
         assertTrue(chapters.all { it.id.startsWith("M/") })
+        assertTrue(chapters.any { it.id.startsWith("M/notes.txt#") })
     }
 
     @Test

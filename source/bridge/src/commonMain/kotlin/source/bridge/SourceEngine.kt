@@ -43,6 +43,14 @@ interface SourceCalls {
     suspend fun imageLoadConfig(url: String, workId: String, chapterId: String): ImageLoadConfig? = null
 
     /**
+     * `novel.onImageResolve` 归一化配置（未声明 `hasNovelImageResolve` 时返回 null）。
+     * 安全语义与 [imageLoadConfig] 一致：`ImageLoadConfig.sanitized()` 剥离 UA/Cookie
+     *（宿主出口统一注入，`cf_clearance` 配对 UA 红线），只保留 Referer 等业务头；
+     * 默认空实现，[SourceRuntime] 覆盖为真实 JS 调用。
+     */
+    suspend fun novelImageResolve(url: String): ImageLoadConfig? = null
+
+    /**
      * 通用调用（`await __source.<path>(...args)` → JSON；契约增长与工具调试入口）。
      * path 仅允许标识符点分（P6：JS 侧输入校验）。
      */

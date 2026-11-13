@@ -5,7 +5,7 @@ package data.localimport
  * `filter/OrderBy` + ComicInfo 三级覆盖（顶层 xml → cbm(仅标记) → 遗留 json →
  * 章节内首个 ComicInfo.xml → `.noxml`），纯 Kotlin。
  *
- * 输出为仓无关的扫描模型，落库映射由 `:data:repository` 后续接（阶段二）。
+ * 输出为仓无关的扫描模型，落库映射由 `:data:repository.LocalLibrarySync` 承接。
  */
 enum class LocalOrderBy { TITLE, DATE }
 

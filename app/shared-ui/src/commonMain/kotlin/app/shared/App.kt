@@ -21,6 +21,15 @@ import kotlinx.serialization.modules.subclass
 import core.designsystem.AppTheme
 import core.reader.ChapterProvider
 import core.reader.ReaderSettingsStore
+import data.localimport.LocalSourceFileSystem
+import data.localimport.LocalSourceScanner
+import data.repository.BookmarkRepository
+import core.model.LocalBook
+import data.repository.LocalBookImporter
+import data.repository.LocalBookRepository
+import data.repository.LocalLibrarySync
+import data.repository.NoopBookmarkRepository
+import data.repository.NoopLocalBookRepository
 import data.repository.ProgressRepository
 import feature.detail.DetailRoute
 import feature.detail.DetailScreen
@@ -80,6 +89,14 @@ fun App(
     readerDomains: Set<String> = emptySet(),
     readerProgress: ProgressRepository = NoopProgressRepository,
     readerSettings: ReaderSettingsStore = DefaultReaderSettingsStore,
+    /** 书签持久化（平台壳传入 SQLDelight 实现；默认内存态）。 */
+    bookmarkRepository: BookmarkRepository = NoopBookmarkRepository,
+    /** 本地库文件系统（平台壳传入；为空时本地归档图片不可读）。 */
+    localFs: LocalSourceFileSystem? = null,
+    /** 本地书仓库（平台壳传入 SQLDelight 实现；为空时跳过启动扫描）。 */
+    localBooks: LocalBookRepository = NoopLocalBookRepository,
+    /** 本地书选择器（平台壳注入：桌面 FileDialog / Android SAF；iOS 暂缺传 null）。 */
+    pickLocalFiles: (suspend () -> List<Pair<String, ByteArray>>)? = null,
     /** 源目录（平台壳装配后传入；null = 无源管理能力，列表空，开关无操作）。 */
     sourceCatalog: SourceCatalog? = null,
     /**
@@ -103,13 +120,68 @@ fun App(
                 sourceCatalog?.snapshotUi().orEmpty()
             }
         }
+        // 本地库状态（书架同构展示用；导入/扫描后刷新）。
+        var localBookList by remember { mutableStateOf(emptyList<LocalBook>()) }
+        suspend fun refreshLocalBooks() {
+            localBookList = runCatching { localBooks.list() }.getOrDefault(emptyList())
+        }
+        suspend fun syncLocalLibrary() {
+            val fs = localFs ?: return
+            runCatching {
+                LocalLibrarySync(
+                    LocalSourceScanner(fs),
+                    localBooks,
+                ) { kotlin.time.Clock.System.now().toEpochMilliseconds() }.sync()
+            }
+            refreshLocalBooks()
+        }
+        // 本地库启动扫描入库（失败静默，阅读链路不受影响）。
+        LaunchedEffect(localFs, localBooks) {
+            withContext(Dispatchers.Default) { syncLocalLibrary() }
+        }
         NavDisplay(
             backStack = backStack,
             onBack = { backStack.removeLastOrNull() },
             entryProvider = { key: NavKey ->
                 when (key) {
                     is ShelfRoute -> NavEntry(key) {
-                        ShelfScreen(onOpenDetail = { backStack.add(DetailRoute(it)) })
+                        ShelfScreen(
+                            onOpenDetail = { backStack.add(DetailRoute(it)) },
+                            localBooks = localBookList,
+                            pickLocalFiles = pickLocalFiles,
+                            onOpenLocalBook = { workId ->
+                                scope.launch {
+                                    val first = runCatching { readerChapters.chapters(workId) }
+                                        .getOrNull()?.firstOrNull() ?: return@launch
+                                    backStack.add(ReaderRoute(workId, first.id))
+                                }
+                            },
+                            onDeleteLocalBook = { workId ->
+                                scope.launch {
+                                    withContext(Dispatchers.Default) {
+                                        val fs = localFs ?: return@withContext
+                                        runCatching {
+                                            LocalBookImporter(fs, localBooks) {
+                                                kotlin.time.Clock.System.now().toEpochMilliseconds()
+                                            }.remove(workId)
+                                        }
+                                        syncLocalLibrary()
+                                    }
+                                }
+                            },
+                            onImportFiles = localFs?.let { fs ->
+                                { files: List<Pair<String, ByteArray>> ->
+                                    withContext(Dispatchers.Default) {
+                                        runCatching {
+                                            LocalBookImporter(fs, localBooks) {
+                                                kotlin.time.Clock.System.now().toEpochMilliseconds()
+                                            }.import(files)
+                                        }
+                                        syncLocalLibrary()
+                                    }
+                                }
+                            },
+                        )
                     }
                     is ExploreRoute -> NavEntry(key) {
                         ExploreScreen(key.sourceKey, onOpenDetail = { backStack.add(DetailRoute(it)) })
@@ -132,6 +204,8 @@ fun App(
                             domains = domains,
                             progress = readerProgress,
                             settingsStore = readerSettings,
+                            bookmarks = bookmarkRepository,
+                            localFs = localFs,
                         )
                     }
                     is SourcesRoute -> NavEntry(key) {

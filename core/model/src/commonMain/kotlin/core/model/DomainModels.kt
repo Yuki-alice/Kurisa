@@ -41,6 +41,10 @@ data class ReadingProgress(
     val percent: Float = 0f,
     val updatedAtEpochMs: Long,
     val synced: Boolean = false,
+    /** 小说正文字符锚点（-1 = 漫画/未启用）；重排后据此恢复位置。 */
+    val charOffset: Int = -1,
+    /** 生成该锚点时的排版键（LayoutKey.signature）。 */
+    val layoutKey: String = "",
 ) {
     init {
         require(percent in 0f..1f) { "percent 越界: $percent" }
@@ -73,6 +77,19 @@ data class Bookmark(
     val excerpt: String? = null,
     val note: String? = null,
     val createdAtEpochMs: Long,
+)
+
+/** 划线（块字符区间，锚点坐标与进度/书签同系；点选整段/长按圈词/搜索批量已落地，手势拖拽待后续）。 */
+@Serializable
+data class Highlight(
+    val id: String,
+    val workId: String,
+    val chapterId: String,
+    val start: Int,
+    val end: Int,
+    val excerpt: String? = null,
+    val createdAtEpochMs: Long,
+    val note: String? = null,
 )
 
 /** 本地书（M4 导入后与在线作品同构展示，来源标记为 local）。 */

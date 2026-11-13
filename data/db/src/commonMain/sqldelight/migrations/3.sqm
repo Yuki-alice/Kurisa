@@ -1,0 +1,2 @@
+ALTER TABLE reading_progress ADD COLUMN char_offset INTEGER NOT NULL DEFAULT -1;
+ALTER TABLE reading_progress ADD COLUMN layout_key TEXT NOT NULL DEFAULT '';

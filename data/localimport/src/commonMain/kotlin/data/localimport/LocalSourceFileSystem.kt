@@ -27,6 +27,24 @@ class LocalSourceFileSystem(
         root[path].writeBytes(bytes)
     }
 
+    /** 确保目录存在（导入落盘前调用；单层即可，调用方保证不含多级路径）。 */
+    suspend fun ensureDir(path: String) {
+        root[path].mkdir()
+    }
+
+    /** 递归删除（本地书删除用；不存在即视为成功，含隐藏文件）。 */
+    suspend fun deleteRecursively(path: String) {
+        deleteRecursively(root[path])
+    }
+
+    private suspend fun deleteRecursively(node: VfsFile) {
+        if (!node.exists()) return
+        if (node.stat().isDirectory) {
+            for (child in node.listSimple()) deleteRecursively(child)
+        }
+        node.delete()
+    }
+
     /** 打开归档（zip 系；RAR/7z/TAR 由调用方前置 [FormatDetector.isSupportedArchive] 拦截）。 */
     suspend fun openArchive(path: String): ArchiveReader = ArchiveReader.open(root[path])
 

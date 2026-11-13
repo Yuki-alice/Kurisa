@@ -1,0 +1,10 @@
+CREATE TABLE highlight (
+  id TEXT PRIMARY KEY,
+  work_id TEXT NOT NULL,
+  chapter_id TEXT NOT NULL,
+  start INTEGER NOT NULL,
+  end INTEGER NOT NULL,
+  excerpt TEXT,
+  note TEXT,
+  created_at INTEGER NOT NULL
+);

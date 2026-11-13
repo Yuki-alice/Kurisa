@@ -18,3 +18,6 @@ SELECT * FROM bookmark WHERE work_id = ? ORDER BY created_at;
 
 deleteBookmark:
 DELETE FROM bookmark WHERE id = ?;
+
+deleteBookmarksByChapter:
+DELETE FROM bookmark WHERE work_id = ? AND chapter_id = ?;

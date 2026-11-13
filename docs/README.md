@@ -25,6 +25,11 @@
 | `m0-verification-report.md`、`m0-webview-host-linux.md`、`feasibility.md` | M0 技术栈/依赖可行性实测，含三端与 WebView 数据，仅作历史追溯 |
 | `cookie-cloudflare.md` | Cookie / Cloudflare 结论稿，仍是 `data/network` 行为背景 |
 | `community-solutions.md` | 同主题调研过程稿，结论以 `cookie-cloudflare.md` 为准 |
+| `novel-reader-research.md` | 小说阅读器实现调研：Compose/Kotlin 同类项目对比、M4 排版分页与进度锚点落地方案（参考，非规范） |
+| `novel-reader-plan.md` | M4 实施计划：文件级改动清单、接口签名、验收门与 Phase 2 进度（参考，非规范） |
+| `novel-reader-handoff.md` | 小说阅读器模块编写交接：进度、文件清单、验证状态、未完成清单、已知坑（移交用） |
+| `novel-reader-agent-prompt.md` | 可直接复制给接手 agent 的自包含提示词 |
+| `local-import-picker-matrix.md` | 本地书导入选择器依赖可解析性矩阵（FileKit 选型、风险与实施草案；暂不引入） |
 | `source-compatibility.md`、`real-source-e2e.md` | 34 源兼容矩阵与本地 E2E 结果。**属本地门禁基线**：对应测试需外部 refs 目录，CI 不自动执行 |
 | `contract/manga-example.js`、`novel-example.js`、`v4-example.js` | 契约示例源（`example.*` 合成站点） |
 | `baseline/`、`screenshots/` | 基线与截图资产。`baseline/mangadex-search-one.json` 是 M0 历史实测样本，仅被 `m0-verification-report.md` 引用，**不得复用为新 fixture**（C1） |
