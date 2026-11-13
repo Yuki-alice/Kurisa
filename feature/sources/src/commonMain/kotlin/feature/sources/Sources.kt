@@ -103,6 +103,20 @@ sealed interface InstallOutcomeUi {
     data class Rejected(val reason: String) : InstallOutcomeUi
 }
 
+/** 源仓库更新候选（纯展示行；App 层从 `SourceUpdateUi` 映射，feature 不依赖装配层）。 */
+data class RepoUpdateRowUi(
+    val key: String,
+    val version: String,
+    val installedVersion: String?,
+    val reason: String,
+)
+
+/** 一次「检查更新」的结果：候选展示行 + 失败原因（成功时为 null）。 */
+data class RepoUpdatesUi(
+    val rows: List<RepoUpdateRowUi> = emptyList(),
+    val error: String? = null,
+)
+
 @Composable
 fun SourcesScreen(
     items: List<SourceUiItem> = emptyList(),
@@ -112,6 +126,8 @@ fun SourcesScreen(
     onConfirmInstall: suspend (script: String, confirmed: Boolean) -> InstallOutcomeUi =
         { _, _ -> InstallOutcomeUi.Rejected("未装配") },
     onOpenRuleTest: () -> Unit = {},
+    /** 检查源仓库更新（null = 不展示入口；由 App 层接订阅出口）。 */
+    onCheckUpdates: (suspend () -> RepoUpdatesUi)? = null,
 ) {
     SourcesContent(
         items = items,
@@ -119,6 +135,7 @@ fun SourcesScreen(
         onPreviewInstall = onPreviewInstall,
         onConfirmInstall = onConfirmInstall,
         onOpenRuleTest = onOpenRuleTest,
+        onCheckUpdates = onCheckUpdates,
     )
 }
 
@@ -129,9 +146,13 @@ fun SourcesContent(
     onPreviewInstall: suspend (script: String) -> InstallPreviewUi,
     onConfirmInstall: suspend (script: String, confirmed: Boolean) -> InstallOutcomeUi,
     onOpenRuleTest: () -> Unit = {},
+    onCheckUpdates: (suspend () -> RepoUpdatesUi)? = null,
     modifier: Modifier = Modifier,
 ) {
     var installOpen by remember { mutableStateOf(false) }
+    var checking by remember { mutableStateOf(false) }
+    var updates by remember { mutableStateOf<RepoUpdatesUi?>(null) }
+    val scope = rememberCoroutineScope()
     Column(
         modifier.fillMaxSize().padding(Tokens.spacingL),
         verticalArrangement = Arrangement.spacedBy(Tokens.spacingM),
@@ -144,7 +165,38 @@ fun SourcesContent(
             Text("源管理", style = MaterialTheme.typography.titleLarge)
             Row(horizontalArrangement = Arrangement.spacedBy(Tokens.spacingM)) {
                 TextButton(onClick = onOpenRuleTest) { Text("规则测试") }
+                if (onCheckUpdates != null) {
+                    TextButton(
+                        enabled = !checking,
+                        onClick = {
+                            scope.launch {
+                                checking = true
+                                updates = runCatching { onCheckUpdates() }
+                                    .getOrElse { RepoUpdatesUi(error = it.message ?: "检查更新失败") }
+                                checking = false
+                            }
+                        },
+                    ) { Text(if (checking) "检查中…" else "检查更新") }
+                }
                 OutlinedButton(onClick = { installOpen = true }) { Text("安装") }
+            }
+        }
+        updates?.let { result ->
+            result.error?.let {
+                Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+            }
+            if (result.rows.isEmpty() && result.error == null) {
+                Text("无可用更新", style = MaterialTheme.typography.bodySmall)
+            }
+            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                result.rows.forEach { row ->
+                    Text(
+                        "${row.key} → v${row.version}" +
+                            (row.installedVersion?.let { "（已装 v$it）" } ?: "") +
+                            " · ${row.reason}",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
             }
         }
         if (items.isEmpty()) {

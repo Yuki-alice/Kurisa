@@ -149,6 +149,8 @@ fun ShelfScreen(
     onImportFiles: (suspend (List<Pair<String, ByteArray>>) -> Unit)? = null,
     /** 封面加载（null = 只显示标题占位，不发起网络）。 */
     coverLoader: ShelfCoverLoader? = null,
+    /** 移出在线收藏（源内 workId + sourceKey；null = 不展示入口）。 */
+    onRemoveFromShelf: ((String, String) -> Unit)? = null,
 ) {
     val vm: ShelfViewModel = viewModel(
         key = "shelf",
@@ -163,6 +165,7 @@ fun ShelfScreen(
         pickLocalFiles = pickLocalFiles,
         onImportFiles = onImportFiles,
         coverLoader = coverLoader,
+        onRemoveFromShelf = onRemoveFromShelf,
     )
 }
 
@@ -175,6 +178,7 @@ fun ShelfContent(
     pickLocalFiles: PickLocalFiles? = null,
     onImportFiles: (suspend (List<Pair<String, ByteArray>>) -> Unit)? = null,
     coverLoader: ShelfCoverLoader? = null,
+    onRemoveFromShelf: ((String, String) -> Unit)? = null,
 ) {
     val scope = rememberCoroutineScope()
     val canImport = pickLocalFiles != null && onImportFiles != null
@@ -219,6 +223,9 @@ fun ShelfContent(
                         work = work,
                         coverLoader = coverLoader,
                         onClick = { onOpenDetail(work.workId, work.sourceKey) },
+                        onRemove = onRemoveFromShelf?.let { callback ->
+                            { callback(work.workId, work.sourceKey) }
+                        },
                     )
                 }
             }
@@ -271,6 +278,7 @@ private fun ShelfWorkRow(
     work: ShelfWorkUi,
     coverLoader: ShelfCoverLoader?,
     onClick: () -> Unit,
+    onRemove: (() -> Unit)? = null,
 ) {
     Card(Modifier.fillMaxWidth().clickable(onClick = onClick)) {
         Row(
@@ -298,6 +306,9 @@ private fun ShelfWorkRow(
                     "${work.kindLabel} · ${work.sourceKey}",
                     style = MaterialTheme.typography.labelSmall,
                 )
+            }
+            if (onRemove != null) {
+                TextButton(onClick = onRemove) { Text("移出") }
             }
         }
     }

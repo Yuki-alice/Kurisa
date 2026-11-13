@@ -148,6 +148,8 @@ class SearchViewModelFactory(
 fun SearchScreen(
     onOpenDetail: (SearchWorkUi) -> Unit,
     loader: suspend (String, Int) -> SearchPageUi = { _, _ -> SearchPageUi() },
+    /** 加入书架（null = 不展示入口；由 App 层接 ShelfBindings）。 */
+    onAddToShelf: ((SearchWorkUi) -> Unit)? = null,
 ) {
     val vm: SearchViewModel = viewModel(
         key = "search",
@@ -161,13 +163,14 @@ fun SearchScreen(
             }
         }
     }
-    SearchContent(state = state, onIntent = vm::onIntent)
+    SearchContent(state = state, onIntent = vm::onIntent, onAddToShelf = onAddToShelf)
 }
 
 @Composable
 fun SearchContent(
     state: SearchContract.State,
     onIntent: (SearchContract.Intent) -> Unit,
+    onAddToShelf: ((SearchWorkUi) -> Unit)? = null,
 ) {
     Column(
         Modifier.fillMaxSize().padding(Tokens.spacingL),
@@ -216,6 +219,9 @@ fun SearchContent(
                             "${work.kindLabel} · ${work.sourceLabel.ifBlank { work.sourceKey }}",
                             style = MaterialTheme.typography.labelSmall,
                         )
+                        if (onAddToShelf != null) {
+                            TextButton(onClick = { onAddToShelf(work) }) { Text("加入书架") }
+                        }
                     }
                 }
             }

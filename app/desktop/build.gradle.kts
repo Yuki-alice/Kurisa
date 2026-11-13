@@ -16,6 +16,8 @@ kotlin {
             implementation(project(":data:repository"))
             implementation(project(":data:localimport"))
             implementation(project(":data:network"))
+            implementation(project(":data:download"))
+            implementation(project(":core:model"))
             implementation(project(":core:reader"))
             implementation(libs.sqldelight.sqlite.driver)
             implementation(libs.ktor.client.core)

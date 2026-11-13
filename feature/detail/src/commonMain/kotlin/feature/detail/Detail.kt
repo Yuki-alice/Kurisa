@@ -15,6 +15,7 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -153,6 +154,10 @@ fun DetailScreen(
     onBack: () -> Unit,
     loader: suspend (String, String) -> WorkDetailUi =
         { w, k -> WorkDetailUi(w, k, w, error = "未装配") },
+    /** 加入书架（null = 不展示入口；由 App 层构造 SearchWorkUi 后落库）。 */
+    onAddToShelf: (() -> Unit)? = null,
+    /** 下载本章（章节 id；null = 不展示入口；由 App 层入队 DownloadTask）。 */
+    onDownloadChapter: ((String) -> Unit)? = null,
 ) {
     val vm: DetailViewModel = viewModel(
         key = "detail:$sourceKey:$workId",
@@ -166,7 +171,13 @@ fun DetailScreen(
             }
         }
     }
-    DetailContent(state = state, onIntent = vm::onIntent, onBack = onBack)
+    DetailContent(
+        state = state,
+        onIntent = vm::onIntent,
+        onBack = onBack,
+        onAddToShelf = onAddToShelf,
+        onDownloadChapter = onDownloadChapter,
+    )
 }
 
 @Composable
@@ -174,6 +185,8 @@ fun DetailContent(
     state: DetailContract.State,
     onIntent: (DetailContract.Intent) -> Unit,
     onBack: () -> Unit,
+    onAddToShelf: (() -> Unit)? = null,
+    onDownloadChapter: ((String) -> Unit)? = null,
 ) {
     Column(
         Modifier.fillMaxSize().padding(Tokens.spacingL),
@@ -187,6 +200,9 @@ fun DetailContent(
         Row(horizontalArrangement = Arrangement.spacedBy(Tokens.spacingM)) {
             Button(onClick = onBack) { Text("返回") }
             Button(onClick = { onIntent(DetailContract.Intent.Reload) }) { Text("刷新") }
+            if (onAddToShelf != null) {
+                TextButton(onClick = onAddToShelf) { Text("加入书架") }
+            }
         }
         if (state.loading) {
             Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
@@ -211,6 +227,11 @@ fun DetailContent(
                             "第 ${chapter.ordinal.ifZero(index + 1)} 章 · ${chapter.id}",
                             style = MaterialTheme.typography.labelSmall,
                         )
+                        if (onDownloadChapter != null) {
+                            TextButton(onClick = { onDownloadChapter(chapter.id) }) {
+                                Text("下载本章")
+                            }
+                        }
                     }
                 }
             }

@@ -7,9 +7,14 @@ import androidx.compose.ui.window.rememberWindowState
 import app.cash.sqldelight.db.QueryResult
 import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
 import app.shared.App
+import app.shared.CallbackDownloadSink
+import app.shared.createDownloadController
+import app.shared.downloadTaskDirName
 import app.shared.createShelfBindings
 import app.shared.createSourceCatalog
+import core.model.ChapterPayload
 import data.db.ReaderDatabase
+import data.download.KtorRangeFetcher
 import data.network.CookieStore
 import data.network.defaultHttpClient
 import data.localimport.LOCAL_WORK_PREFIX
@@ -54,6 +59,52 @@ fun main() {
         loadScript = { path -> File(path).readText() },
         nowMs = { System.currentTimeMillis() },
     )
+    val readerChapters = LocalRoutingChapterProvider(localChapters, bindings.chapters)
+    // 下载编排（BE-A1）：分片落本地目录，抓取仍走 KtorRangeFetcher 的白名单 + 配对 UA。
+    val downloadsDir = File(appDir, "downloads").apply { mkdirs() }
+    val downloads = createDownloadController(
+        db = database,
+        fetcher = KtorRangeFetcher(
+            client = http,
+            cookies = cookies,
+            nowMs = { System.currentTimeMillis() },
+        ),
+        sink = CallbackDownloadSink(
+            listParts = { taskId ->
+                withContext(Dispatchers.IO) {
+                    File(downloadsDir, downloadTaskDirName(taskId)).listFiles { f -> f.name.endsWith(".part") }
+                        ?.mapNotNull { it.name.removeSuffix(".part").toIntOrNull() }
+                        ?.sorted().orEmpty()
+                }
+            },
+            readBytes = { taskId ->
+                withContext(Dispatchers.IO) {
+                    File(downloadsDir, downloadTaskDirName(taskId)).listFiles { f -> f.name.endsWith(".part") }
+                        ?.sumOf { it.length() } ?: 0L
+                }
+            },
+            writePart = { taskId, index, bytes ->
+                withContext(Dispatchers.IO) {
+                    val dir = File(downloadsDir, downloadTaskDirName(taskId)).apply { mkdirs() }
+                    File(dir, "$index.part").writeBytes(bytes)
+                }
+            },
+            clear = { taskId ->
+                withContext(Dispatchers.IO) {
+                    File(downloadsDir, downloadTaskDirName(taskId)).deleteRecursively()
+                }
+            },
+        ),
+        resolveUrls = { task ->
+            val payload = runCatching { readerChapters.payload(task.workId, task.chapterId) }
+                .getOrNull() as? ChapterPayload.Images
+            // 本地书 URL 形如 `path!/entry`，走不了 Range 抓取，只放行 http(s)。
+            payload?.urls.orEmpty().filter {
+                it.startsWith("https://") || it.startsWith("http://")
+            }
+        },
+        domains = { bindings.currentDomains() },
+    )
     application {
         Window(
             onCloseRequest = ::exitApplication,
@@ -61,7 +112,7 @@ fun main() {
             state = rememberWindowState(width = 1000.dp, height = 720.dp),
         ) {
             App(
-                readerChapters = LocalRoutingChapterProvider(localChapters, bindings.chapters),
+                readerChapters = readerChapters,
                 readerDomains = bindings.currentDomains(),
                 readerProgress = progress,
                 readerSettings = settings,
@@ -92,6 +143,15 @@ fun main() {
                     f.parentFile.mkdirs()
                     f.writeText(script)
                     f.absolutePath
+                },
+                downloads = downloads,
+                // 源仓库索引只读本地文件，不发起任意 URL 请求（fail-closed）。
+                fetchRepoIndex = {
+                    withContext(Dispatchers.IO) {
+                        val index = File(sourcesDir, "index.json")
+                        if (!index.isFile) error("未找到本地源仓库索引：${index.absolutePath}")
+                        index.readText()
+                    }
                 },
             )
         }

@@ -8,8 +8,8 @@
 
 | 文档 | 定位 |
 | --- | --- |
-| `handoff-2026-11-13.md` | **最近一次交接**：仓库/门禁状态、本轮已落地的核心能力、**四处「已实现但没接上」的缺口**与接手顺序、已知偶发问题、红线。接手先读这份 |
-| `work-plan.md` | **唯一活计划位**：现状快照、M5/M6/M7 与 P2 的优先级任务、验收门、明确不做的事、风险与回滚 |
+| `handoff-2026-11-13.md` | **最近一次交接**：仓库/门禁状态、已落地能力、已知偶发问题与红线。§3 的四处生产接线缺口**已完成**，仅作追溯；实施依据以 `work-plan.md` 为准 |
+| `work-plan.md` | **唯一活计划位**：现状快照；**§2 核心功能定义与后端专项**（能力域地图、源码取证断点、`BE-A1`…`BE-A5` / `BE-B1`…`BE-B8` / `BE-C2`…`BE-C6` 任务分解与依赖/验收门，第一批即 `BE-A1`…`BE-A5`，Koin 接线在首批收尾）；§3 M5/M6/M7 与 P2 优先级任务；验收门、明确不做的事、风险与回滚 |
 | `architecture.md` | 总体架构与 ADR。ADR-002/003、§4.6.3、§4.7 继续有效；§4.3 的 v1 单发模型叙述已标为历史记录，实现现状以代码为准、目标态以 `plugin-system/DESIGN.md` 为准 |
 | `plugin-system/DESIGN.md` | 插件系统设计（目标态）：运行时生命周期、Host SDK、声明式规则层、安全与性能目标 |
 | `plugin-system/HOST-SDK.md`、`plugin-system/SOURCE-PACKAGE.md` | Host SDK 冻结签名与源包规范；当前实现为 `js/v1` + `rules/v1` 双形态分派，`defineSource` 一体包仍是目标态（见 SOURCE-PACKAGE 开头实施说明） |
@@ -31,11 +31,11 @@
 | `source-compatibility.md`、`real-source-e2e.md` | 源兼容矩阵与本地 E2E 结果。**属本地门禁基线**：对应测试需外部 refs 目录，CI 不自动执行 |
 | `contract/manga-example.js`、`novel-example.js`、`v4-example.js` | 契约示例源（`example.*` 合成站点）。`manga-example.js` 头块能力位已修为 `search,comic` |
 | `baseline/`、`screenshots/` | 基线与截图资产。`baseline/mangadex-search-one.json` 是 M0 历史实测样本，**不得复用为新 fixture**（C1） |
-| `../design/README.md` | M5 高保真设计原型（13 屏 M3 Expressive + tokens + 可点原型，纯前端、C1 合成素材），**设计规格非实现现状**。目录已恢复到工作区（18 文件 / 17 已跟踪）；但**原型仍在重新设计**，当前不作为排期依据，定稿后本条与 `work-plan.md` 的 M5 任务需同步刷新 |
+| `../design/README.md` | M5 高保真设计原型（13 屏 M3 Expressive + tokens + 可点原型，纯前端、C1 合成素材），**设计规格非实现现状**。当前该目录 17 个已跟踪文件在工作树中为**未提交删除**（原型仍在重新设计），定稿前不作为排期依据；这批删除不由规划文档处理，定稿后本条与 `work-plan.md` 的 M5 任务需同步刷新 |
 
 ### 测试门禁口径
 
-- 当前基线：全仓 `desktopTest` **488 用例 / 0 失败 / 0 错误 / 0 跳过**（2026-11-13 夜复核），`:app:android:assembleDebug` 通过。
+- 当前基线：全仓 `desktopTest` **499 用例 / 0 失败 / 0 错误 / 0 跳过**（2026-11-13 夜 A 批接线后复核），`:app:android:assembleDebug` 与 iOS 模拟器编译通过。
   本轮新增 31 条：`DownloadManagerTest` 5、`TarArchiveTest` 6、`ShelfViewModelTest` 3、`ShelfBindingsTest` 3、`SourceRepoSubscriptionTest` 9、`SourceRepoUpdatesTest` 5。
 - 两条 walkthrough 已有自动回归：`app/shared-ui/src/desktopTest/kotlin/app/shared/ComicWalkthroughTest.kt`（网络源）与 `data/localimport/src/commonTest/kotlin/data/localimport/LocalComicWalkthroughTest.kt`（本地 CBZ），均为 `example.*` 合成数据 / 内存 Vfs，**仍不等于真实站点跑通**。截图基线待补。
 - 条件门禁：`RealSourceE2ETest` / `AllSourcesCompatibilityTest` 需 `-Dkurisa.refsDir`，`SourcesRepoContractTest` 需 `-Dkurisa.sourcesRepoDir` 或环境变量 `KURISA_SOURCES_REPO`；缺目录时打印 `SKIP` 并按通过计，**CI 全绿不等于全流程跑过**。本轮已带真实源仓目录跑通 `SourcesRepoContractTest`（52 源 / 52 条索引）。

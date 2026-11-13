@@ -42,6 +42,25 @@ class CallbackDownloadSink(
 }
 
 /**
+ * 任务 ID → 分片目录名。
+ *
+ * `taskId` 由源返回的 `workId` / `chapterId` 拼成，属**不可信输入**：
+ * 1. 只保留 `A-Z a-z 0-9 _ -`，`.` 也被替换，故不可能出现 `..` 逃出下载根目录；
+ * 2. 截断到 48 字符，避免超出文件系统名长限制；
+ * 3. 追加 `taskId.hashCode()` 的十六进制后缀——规范化会把不同分隔符映射成 `_`，
+ *    仅靠白名单可能让两个不同任务落到同一目录，后缀保证唯一。
+ */
+fun downloadTaskDirName(taskId: String): String {
+    val safe = taskId.replace(UNSAFE_TASK_ID_CHARS, "_").take(MAX_SAFE_LEN)
+    val suffix = taskId.hashCode().toUInt().toString(16)
+    return "${safe.ifBlank { "_" }}-$suffix"
+}
+
+private const val MAX_SAFE_LEN = 48
+
+private val UNSAFE_TASK_ID_CHARS = Regex("[^A-Za-z0-9_-]")
+
+/**
  * 生产下载编排工厂（composition root）。
  *
  * [resolveUrls] 由平台壳注入「章节 → 图片 URL」；[domains] 取当前启用源白名单，

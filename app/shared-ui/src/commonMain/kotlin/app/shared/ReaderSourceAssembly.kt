@@ -19,6 +19,7 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
@@ -358,6 +359,39 @@ class SourceCatalog internal constructor(
         return SearchPageUi(works = works, errors = errors, maxPage = maxPage)
     }
 
+    /**
+     * 发现 / 分类页后端出口（BE-A4）。
+     *
+     * 统一走契约 `categoryComics.load`（`docs/contract/source.d.ts:95`，参数
+     * `category, param, options, page`；category 为空时传空串），结果与搜索同形
+     * （`works/comics` 归一化）。能力未声明 / 引擎不支持该路径的源会被能力门或
+     * 引擎拒绝，按「单源失败」记入 errors，不拖垮其余源。
+     */
+    suspend fun explore(
+        sourceKey: String? = null,
+        category: String = "",
+        page: Int = 1,
+    ): SearchPageUi {
+        val records = if (sourceKey.isNullOrBlank()) {
+            lookup.enabledKeys().mapNotNull { lookup.get(it) }
+        } else {
+            listOfNotNull(lookup.get(sourceKey))
+        }
+        val args = JsonArray(
+            listOf(
+                JsonPrimitive(category),
+                JsonPrimitive(""),
+                JsonArray(emptyList<JsonElement>()),
+                JsonPrimitive(page),
+            ),
+        ).toString()
+        return aggregateExplore(
+            records = records,
+            call = { rec -> runtimeFor(rec).invoke("categoryComics.load", args) },
+            parse = ::parseSearchPage,
+        )
+    }
+
     /** 作品详情（B5）：按 sourceKey 精确取源，返回标题 + 归一化章节列表。 */
     suspend fun detail(workId: String, sourceKey: String): WorkDetailUi {
         val rec = lookup.get(sourceKey)
@@ -614,6 +648,29 @@ private fun UpdateCandidate.toUpdateUi(): SourceUpdateUi = SourceUpdateUi(
     reason = reason,
     downloadUrl = entry.url ?: entry.filename,
 )
+
+/**
+ * 发现 / 分类结果的跨源聚合（BE-A4 纯逻辑，注入 call 便于三态单测）。
+ * 无源返回空页 + 显式提示；单源失败只记入 errors，不拖垮其余源。
+ */
+internal suspend fun aggregateExplore(
+    records: List<SourceRecord>,
+    call: suspend (SourceRecord) -> String,
+    parse: (String, SourceRecord) -> SearchPageUi,
+): SearchPageUi {
+    if (records.isEmpty()) return SearchPageUi(errors = listOf("无可用源"))
+    val works = mutableListOf<SearchWorkUi>()
+    val errors = mutableListOf<String>()
+    var maxPage = 1
+    for (rec in records) {
+        runCatching {
+            val parsed = parse(call(rec), rec)
+            works += parsed.works
+            maxPage = maxOf(maxPage, parsed.maxPage)
+        }.onFailure { errors += "${rec.name}（${rec.key}）：${it.message ?: "发现失败"}" }
+    }
+    return SearchPageUi(works = works, errors = errors, maxPage = maxPage)
+}
 
 fun createSourceCatalog(
     db: ReaderDatabase,

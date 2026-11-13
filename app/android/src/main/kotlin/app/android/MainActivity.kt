@@ -13,9 +13,14 @@ import kotlin.coroutines.Continuation
 import kotlin.coroutines.resume
 import app.cash.sqldelight.driver.android.AndroidSqliteDriver
 import app.shared.App
+import app.shared.CallbackDownloadSink
+import app.shared.createDownloadController
+import app.shared.downloadTaskDirName
 import app.shared.createShelfBindings
 import app.shared.createSourceCatalog
+import core.model.ChapterPayload
 import data.db.ReaderDatabase
+import data.download.KtorRangeFetcher
 import data.network.CookieStore
 import data.network.defaultHttpClient
 import data.localimport.LOCAL_WORK_PREFIX
@@ -62,9 +67,10 @@ class MainActivity : ComponentActivity() {
         )
         // 真实源装配（P0）：与桌面同形，无源时退化为 Noop（C1）。
         val cookies = CookieStore()
+        val http = defaultHttpClient()
         val bindings = createSourceCatalog(
             db = database,
-            httpClient = defaultHttpClient(),
+            httpClient = http,
             cookies = cookies,
             appVersion = "1.0.0",
             loadScript = { path ->
@@ -74,9 +80,55 @@ class MainActivity : ComponentActivity() {
             },
             nowMs = { System.currentTimeMillis() },
         )
+        val readerChapters = LocalRoutingChapterProvider(localChapters, bindings.chapters)
+        // 下载编排（BE-A1）：分片落 filesDir/downloads，抓取走白名单 + 配对 UA。
+        val downloadsDir = File(filesDir, "downloads").apply { mkdirs() }
+        val sourcesDir = File(filesDir, "sources")
+        val downloads = createDownloadController(
+            db = database,
+            fetcher = KtorRangeFetcher(
+                client = http,
+                cookies = cookies,
+                nowMs = { System.currentTimeMillis() },
+            ),
+            sink = CallbackDownloadSink(
+                listParts = { taskId ->
+                    withContext(Dispatchers.IO) {
+                        File(downloadsDir, downloadTaskDirName(taskId)).listFiles { f -> f.name.endsWith(".part") }
+                            ?.mapNotNull { it.name.removeSuffix(".part").toIntOrNull() }
+                            ?.sorted().orEmpty()
+                    }
+                },
+                readBytes = { taskId ->
+                    withContext(Dispatchers.IO) {
+                        File(downloadsDir, downloadTaskDirName(taskId)).listFiles { f -> f.name.endsWith(".part") }
+                            ?.sumOf { it.length() } ?: 0L
+                    }
+                },
+                writePart = { taskId, index, bytes ->
+                    withContext(Dispatchers.IO) {
+                        val dir = File(downloadsDir, downloadTaskDirName(taskId)).apply { mkdirs() }
+                        File(dir, "$index.part").writeBytes(bytes)
+                    }
+                },
+                clear = { taskId ->
+                    withContext(Dispatchers.IO) {
+                        File(downloadsDir, downloadTaskDirName(taskId)).deleteRecursively()
+                    }
+                },
+            ),
+            resolveUrls = { task ->
+                val payload = runCatching { readerChapters.payload(task.workId, task.chapterId) }
+                    .getOrNull() as? ChapterPayload.Images
+                payload?.urls.orEmpty().filter {
+                    it.startsWith("https://") || it.startsWith("http://")
+                }
+            },
+            domains = { bindings.currentDomains() },
+        )
         setContent {
             App(
-                readerChapters = LocalRoutingChapterProvider(localChapters, bindings.chapters),
+                readerChapters = readerChapters,
                 readerDomains = bindings.currentDomains(),
                 readerProgress = progress,
                 readerSettings = settings,
@@ -111,6 +163,15 @@ class MainActivity : ComponentActivity() {
                     f.parentFile?.mkdirs()
                     f.writeText(script)
                     f.absolutePath
+                },
+                downloads = downloads,
+                // 源仓库索引只读本地文件，不发起任意 URL 请求（fail-closed）。
+                fetchRepoIndex = {
+                    withContext(Dispatchers.IO) {
+                        val index = File(sourcesDir, "index.json")
+                        if (!index.isFile) error("未找到本地源仓库索引：${index.absolutePath}")
+                        index.readText()
+                    }
                 },
             )
         }
