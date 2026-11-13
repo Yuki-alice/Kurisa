@@ -217,6 +217,51 @@ class ReaderSourceAssemblyTest {
     }
 
     @Test
+    fun preferredSourceWinsOverMappingAndOrder() = runTest {
+        val usedKeys = mutableListOf<String>()
+        val callsA = FakeCalls(details = """{"title":"A","chapters":{"a1":"A1"}}""")
+        val callsB = FakeCalls(details = """{"title":"B","chapters":{"b1":"B1"}}""")
+        val lookup = FakeLookup(
+            listOf(
+                record(key = "com.example.a", path = "/tmp/a.js"),
+                record(key = "com.example.b", path = "/tmp/b.js"),
+            ),
+        )
+        val p = RegistryChapterProvider(
+            lookup = lookup,
+            acquire = { spec ->
+                usedKeys += spec.key
+                if (spec.key == "com.example.b") callsB else callsA
+            },
+            loadScript = { "// fake" },
+            workSourceKey = { "com.example.a" },
+            // 路由指定 b：必须压过 workSourceKey 映射与「首个 enabled 源」两条回退。
+            preferredSourceKey = "com.example.b",
+        )
+        assertEquals(listOf("b1"), p.chapters("w").map { it.id })
+        assertEquals(listOf("com.example.b"), usedKeys)
+    }
+
+    @Test
+    fun preferredDisabledFallsBackToMapping() = runTest {
+        val usedKeys = mutableListOf<String>()
+        val callsA = FakeCalls(details = """{"title":"A","chapters":{"a1":"A1"}}""")
+        val p = RegistryChapterProvider(
+            lookup = FakeLookup(
+                listOf(
+                    record(key = "com.example.a", path = "/tmp/a.js"),
+                    record(key = "com.example.off", path = "/tmp/off.js").copy(enabled = false),
+                ),
+            ),
+            acquire = { spec -> usedKeys += spec.key; callsA },
+            loadScript = { "// fake" },
+            preferredSourceKey = "com.example.off",
+        )
+        assertEquals(listOf("a1"), p.chapters("w").map { it.id })
+        assertEquals(listOf("com.example.a"), usedKeys)
+    }
+
+    @Test
     fun recordToUiItemMapping() {
         val item = record().copy(signatureOk = true).toUiItem()
         assertEquals("com.example.a", item.key)

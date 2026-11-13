@@ -35,7 +35,6 @@ class ShelfLocalBooksTest {
         var opened: String? = null
         rule.setContent {
             ShelfScreen(
-                onOpenDetail = {},
                 localBooks = listOf(book("local:A", "A书")),
                 onOpenLocalBook = { opened = it },
             )
@@ -52,7 +51,6 @@ class ShelfLocalBooksTest {
         var received: List<Pair<String, ByteArray>>? = null
         rule.setContent {
             ShelfScreen(
-                onOpenDetail = {},
                 localBooks = emptyList(),
                 pickLocalFiles = { listOf("x.epub" to ByteArray(3)) },
                 onImportFiles = { received = it },
@@ -72,7 +70,6 @@ class ShelfLocalBooksTest {
         var deleted: String? = null
         rule.setContent {
             ShelfScreen(
-                onOpenDetail = {},
                 localBooks = listOf(book("local:B", "B书")),
                 onDeleteLocalBook = { deleted = it },
             )
@@ -87,7 +84,7 @@ class ShelfLocalBooksTest {
     @Test
     fun importEntryHiddenWithoutCallbacks() {
         rule.setContent {
-            ShelfScreen(onOpenDetail = {}) 
+            ShelfScreen()
         }
         rule.waitForIdle()
         rule.onAllNodesWithText("导入").assertCountEquals(0)

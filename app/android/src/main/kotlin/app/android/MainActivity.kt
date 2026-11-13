@@ -13,6 +13,7 @@ import kotlin.coroutines.Continuation
 import kotlin.coroutines.resume
 import app.cash.sqldelight.driver.android.AndroidSqliteDriver
 import app.shared.App
+import app.shared.AppContainer
 import app.shared.createSourceCatalog
 import data.db.ReaderDatabase
 import data.network.CookieStore
@@ -60,11 +61,13 @@ class MainActivity : ComponentActivity() {
         )
         // 真实源装配（P0）：与桌面同形，无源时退化为 Noop（C1）。
         val cookies = CookieStore()
+        val http = defaultHttpClient()
+        val container = AppContainer(cookies, http)
         val bindings = createSourceCatalog(
             db = database,
-            httpClient = defaultHttpClient(),
+            httpClient = http,
             cookies = cookies,
-            appVersion = "0.0.0",
+            appVersion = "1.0.0",
             loadScript = { path ->
                 val f = File(path)
                 if (f.isAbsolute) f.readText()
@@ -102,6 +105,8 @@ class MainActivity : ComponentActivity() {
                     }
                 },
                 sourceCatalog = bindings,
+                container = container,
+                onPickLocalDirectory = null,
                 saveSourceScript = { key, version, script, format ->
                     val ext = if (format == "rules/v1") "$version.rules.json" else "$version.js"
                     val f = File(File(File(filesDir, "sources"), key), ext)

@@ -47,6 +47,30 @@ class NavRoutesTest {
         }
     }
 
+    /** B4：路由必须原样带住 sourceKey / title，否则多源并存时静默回退首个启用源。 */
+    @Test
+    fun sourceKeySurvivesRoundTrip() {
+        val detail = DetailRoute("w1", "demo.manga", "演示作品")
+        val reader = ReaderRoute("w1", "c1", "demo.manga", "演示作品")
+        for (route in listOf<NavKey>(detail, reader)) {
+            val raw = json.encodeToString(PolymorphicSerializer(NavKey::class), route)
+            assertEquals(route, json.decodeFromString(PolymorphicSerializer(NavKey::class), raw))
+        }
+        assertEquals("demo.manga", detail.sourceKey)
+        assertEquals("演示作品", reader.title)
+    }
+
+    /** 默认值兼容：历史路由（不带 sourceKey）反序列化后仍可用。 */
+    @Test
+    fun legacyRouteJsonStillDecodes() {
+        val reader = json.decodeFromString(
+            PolymorphicSerializer(NavKey::class),
+            """{"type":"feature.reader.ReaderRoute","workId":"w","chapterId":"c"}""",
+        ) as ReaderRoute
+        assertEquals("", reader.sourceKey)
+        assertEquals("", reader.title)
+    }
+
     @Test
     fun routeCountGuard() {
         // 加新目的地必须同步注册（数对不上就去补 appSerializersModule）。

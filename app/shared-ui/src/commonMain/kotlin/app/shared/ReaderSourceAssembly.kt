@@ -14,7 +14,9 @@ import feature.sources.InstallPreviewUi
 import feature.sources.SourceUiItem
 import io.ktor.client.HttpClient
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import source.bridge.BridgeChapterProvider
 import source.bridge.CryptoHostConvert
@@ -53,6 +55,14 @@ import source.registry.SourceRegistry
  * - 导航侧 `ReaderRoute` 携带 sourceKey 为后续项（需导航签名变更，见 ADR-008）；
  *   接线后调用方传入映射即可，本提供方无需再改。
  */
+/**
+ * 宿主版本（源的 `minAppVersion` 门禁按此比较）。
+ *
+ * B6 的成因是壳传 `0.0.0` 而示例源声明 `1.0.0`，导致验证源直接装不上；
+ * 统一到 `1.0.0` 并收口为一处常量，避免平台壳再次漂移。
+ */
+const val DEFAULT_APP_VERSION: String = "1.0.0"
+
 data class ReaderSourceBindings(
     val chapters: ChapterProvider,
     val domains: Set<String>,
@@ -92,13 +102,18 @@ class RegistryChapterProvider(
     private val lookup: ActiveSourceLookup,
     private val acquire: suspend (PluginRuntimeSpec) -> SourceCalls,
     private val loadScript: suspend (installPath: String) -> String,
-    private val appVersion: String = "0.0.0",
+    private val appVersion: String = DEFAULT_APP_VERSION,
     /**
      * 按作品路由（P3）：`workId → sourceKey`（调用方由书架/详情的作品归属提供，
      * 后续 `ReaderRoute` 携带 sourceKey 后直传；导航未接线前保持默认）。
      * 返回 null/未知 key/被禁用源时回退首个 enabled 源（现行为零变）。
      */
     private val workSourceKey: (workId: String) -> String? = { null },
+    /**
+     * 路由指定源（B4）：`ReaderRoute.sourceKey` / `DetailRoute.sourceKey` 直接透传。
+     * 非空且启用时优先于 [workSourceKey] 映射，避免多源并存时永远读首个启用源。
+     */
+    private val preferredSourceKey: String? = null,
 ) : ChapterProvider {
     // P0: 脚本内容按 installPath 缓存（key = sha256），命中缓存不再每页读盘。
     // 记录更新/回滚后 sha 变化即失效重读；并发重复加载仅多一次 IO，结果一致。
@@ -107,8 +122,12 @@ class RegistryChapterProvider(
     private fun activeRecord(): SourceRecord? =
         lookup.enabledKeys().firstOrNull()?.let { lookup.get(it) }
 
-    /** 按作品路由：映射命中且源可用时走作品源，否则回退首个 enabled 源。 */
+    /** 按作品路由：路由指定源 > 作品归属映射 > 首个 enabled 源。 */
     private fun recordFor(workId: String): SourceRecord? {
+        val preferred = preferredSourceKey?.takeIf { it.isNotBlank() }
+        if (preferred != null && lookup.enabledKeys().contains(preferred)) {
+            lookup.get(preferred)?.let { return it }
+        }
         val mapped = runCatching { workSourceKey(workId) }.getOrNull()
         if (!mapped.isNullOrBlank() && lookup.enabledKeys().contains(mapped)) {
             lookup.get(mapped)?.let { return it }
@@ -229,7 +248,7 @@ fun createReaderBindings(
     httpClient: HttpClient,
     cookies: CookieStore,
     loadScript: suspend (installPath: String) -> String,
-    appVersion: String = "0.0.0",
+    appVersion: String = DEFAULT_APP_VERSION,
     nowMs: () -> Long = { 0L },
 ): ReaderSourceBindings {
     val catalog = createSourceCatalog(db, httpClient, cookies, loadScript, appVersion, nowMs)
@@ -250,9 +269,28 @@ class SourceCatalog internal constructor(
     private val lookup: ActiveSourceLookup,
     private val nowMs: () -> Long,
     private val loadScript: suspend (installPath: String) -> String = { error("未装配脚本加载器") },
-    private val appVersion: String = "0.0.0",
+    private val appVersion: String = DEFAULT_APP_VERSION,
 ) {
     fun snapshot(): List<SourceRecord> = registry.all()
+
+    /**
+     * 按源 key 绑定章节提供方（B4）。
+     *
+     * 空 key 复用默认 [chapters]（首个启用源）；非空时构造带 `preferredSourceKey` 的
+     * 同名 provider——脚本缓存彼此独立，代价是每个路由持有自己的小缓存，换来
+     * 多源并存时不再静默读到错误的源。Key 未安装/被禁用时内部回退默认语义。
+     */
+    fun providerFor(sourceKey: String?): ChapterProvider {
+        val key = sourceKey?.trim().orEmpty()
+        if (key.isEmpty()) return chapters
+        return RegistryChapterProvider(
+            lookup = lookup,
+            acquire = { spec -> manager.acquire(spec) },
+            loadScript = loadScript,
+            appVersion = appVersion,
+            preferredSourceKey = key,
+        )
+    }
 
     suspend fun setEnabled(key: String, enabled: Boolean): Boolean {
         val ok = registry.setEnabled(key, enabled, nowMs())
@@ -264,6 +302,53 @@ class SourceCatalog internal constructor(
         lookup.enabledKeys().flatMapTo(mutableSetOf()) { key ->
             lookup.get(key)?.let { parseStringList(it.domainsJson) }.orEmpty()
         }
+
+    /**
+     * 作品概要（S2 详情页）：按源 key 调用 `loadInfo` 并归一化标题/简介/封面。
+     *
+     * 章节仍由 [providerFor] 的 `chapters()` 提供（同一源、同一次解析），
+     * 此处只补 UI 需要的元数据；解析失败返回空对象，页面回退路由里的标题提示。
+     */
+    suspend fun workInfo(sourceKey: String, workId: String): SourceWorkInfo {
+        val key = sourceKey.trim()
+        val rec = (if (key.isEmpty()) lookup.enabledKeys().firstOrNull() else key)
+            ?.let { lookup.get(it) }
+            ?: return SourceWorkInfo()
+        val kind = parseKinds(rec.kindsJson).firstOrNull() ?: ContentKind.MANGA
+        return runCatching {
+            val runtime = acquireRuntime(rec)
+            SourceWorkInfo.parse(runtime.loadWorkDetails(workId, kind))
+        }.getOrElse { SourceWorkInfo() }
+    }
+
+    /**
+     * 搜索（S2 搜索页）：按源 key 走 `search.load` / `search.page`，兼容
+     * `works`（规则源）与 `comics`（Venera 契约）两种返回字段。
+     */
+    suspend fun search(sourceKey: String, keyword: String, page: Int): SourceSearchPage {
+        val key = sourceKey.trim().ifEmpty { lookup.enabledKeys().firstOrNull().orEmpty() }
+        val rec = lookup.get(key)
+            ?: throw IllegalStateException("源未安装：$key")
+        val runtime = acquireRuntime(rec)
+        val options = runCatching { runtime.defaultSearchOptions() }.getOrDefault("[]")
+        return SourceSearchPage.parse(runtime.searchWorks(keyword, options, page))
+    }
+
+    /** 源 key 列表（搜索页的源选择器；只列启用源）。 */
+    fun enabledSources(): List<SourceRecord> =
+        lookup.enabledKeys().mapNotNull { lookup.get(it) }
+
+    private suspend fun acquireRuntime(rec: SourceRecord): SourceCalls =
+        manager.acquire(
+            RegistryChapterProvider(
+                lookup = lookup,
+                acquire = { spec -> manager.acquire(spec) },
+                loadScript = loadScript,
+                appVersion = appVersion,
+                preferredSourceKey = rec.key,
+            ).specFor(rec, loadScript(rec.installPath)),
+        )
+
 
     /** 源管理页快照（Record → UI 行，映射收口于此，feature 只收纯展示字段）。 */
     fun snapshotUi(): List<SourceUiItem> = snapshot().map { it.toUiItem() }
@@ -381,7 +466,7 @@ fun createSourceCatalog(
     httpClient: HttpClient,
     cookies: CookieStore,
     loadScript: suspend (installPath: String) -> String,
-    appVersion: String = "0.0.0",
+    appVersion: String = DEFAULT_APP_VERSION,
     nowMs: () -> Long = { 0L },
 ): SourceCatalog {
     val registry = SourceRegistry(db)
@@ -440,5 +525,76 @@ private fun kvOrMem(
     override fun delete(sourceKey: String, key: String) {
         runCatching { kv.delete(sourceKey, key) }
         runCatching { mem.delete(sourceKey, key) }
+    }
+}
+
+/** 作品概要（详情页顶栏用；解析失败保持空，页面回退路由标题）。 */
+data class SourceWorkInfo(
+    val title: String = "",
+    val description: String = "",
+    val cover: String? = null,
+    val tags: List<String> = emptyList(),
+) {
+    companion object {
+        fun parse(raw: String): SourceWorkInfo {
+            val obj = runCatching { Json.parseToJsonElement(raw).jsonObject }.getOrNull()
+                ?: return SourceWorkInfo()
+            fun str(vararg keys: String): String? = keys.firstNotNullOfOrNull { k ->
+                obj[k]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }
+            }
+            val tags = runCatching {
+                obj["tags"]?.jsonArray?.mapNotNull { it.jsonPrimitive.contentOrNull }.orEmpty()
+            }.getOrDefault(emptyList())
+            return SourceWorkInfo(
+                title = str("title", "name").orEmpty(),
+                description = str("description", "desc").orEmpty(),
+                cover = str("cover", "coverUrl"),
+                tags = tags,
+            )
+        }
+    }
+}
+
+/** 搜索结果条目（sourceWorkId 原样保留，路由与源调用都以它为键）。 */
+data class SourceWorkSummary(
+    val id: String,
+    val title: String,
+    val cover: String? = null,
+)
+
+/**
+ * 搜索页结果。
+ *
+ * 字段兼容：Venera 契约返回 `comics`，规则源返回 `works`；两者都缺时按空处理，
+ * 不把形状差异暴露给 UI。
+ */
+data class SourceSearchPage(
+    val works: List<SourceWorkSummary> = emptyList(),
+    val maxPage: Int = 1,
+) {
+    companion object {
+        fun parse(raw: String): SourceSearchPage {
+            val obj = runCatching { Json.parseToJsonElement(raw).jsonObject }.getOrNull()
+                ?: return SourceSearchPage()
+            val arr = obj["works"] ?: obj["comics"] ?: obj["list"]
+            val works = runCatching {
+                arr?.jsonArray?.mapNotNull { el ->
+                    val o = el.jsonObject
+                    val id = o["id"]?.jsonPrimitive?.contentOrNull
+                        ?: o["url"]?.jsonPrimitive?.contentOrNull
+                        ?: return@mapNotNull null
+                    val title = o["title"]?.jsonPrimitive?.contentOrNull
+                        ?: o["name"]?.jsonPrimitive?.contentOrNull
+                        ?: id
+                    SourceWorkSummary(
+                        id = id,
+                        title = title,
+                        cover = o["cover"]?.jsonPrimitive?.contentOrNull,
+                    )
+                }.orEmpty()
+            }.getOrDefault(emptyList())
+            val maxPage = obj["maxPage"]?.jsonPrimitive?.contentOrNull?.toIntOrNull() ?: 1
+            return SourceSearchPage(works, maxPage.coerceAtLeast(1))
+        }
     }
 }

@@ -2,7 +2,7 @@
 
 | 项目 | 内容 |
 | --- | --- |
-| 文档状态 | **制定中**（首个版本尚未发布；后续直接改正文，不维护版本号与变更摘要） |
+| 文档状态 | **实施中**：S0–S3 已落地（2026-11-13），断点与验收门见 §1.2 / §4；后续直接改正文，不维护版本号与变更摘要 |
 | 范围 | 漫画：本地文件导入 + JS/规则插件网络源。**小说排版与小说源延后** |
 | 目标 | 两条可复现的端到端 walkthrough：从用户入口一路走到阅读器出图，并固化成回归门禁 |
 | 定位 | 漫画全流程的**唯一活计划位**；其余文档中的阶段清单不再作为实施依据 |
@@ -33,15 +33,15 @@
 
 ### 1.2 断点（按必修顺序）
 
-| # | 断点 | 证据 | 后果 |
-| --- | --- | --- | --- |
-| B1 | 无导入入口；`localFs` 未传阅读器 | `app/shared-ui/src/commonMain/kotlin/app/shared/App.kt:127` 无 `ImportRoute`、`feature/reader/src/commonMain/kotlin/feature/reader/Reader.kt:170` `localFs = null` | 本地能力全在，用户触达不到 |
-| B2 | `LocalChapterProvider` 未注入 | `app/shared-ui/src/commonMain/kotlin/app/shared/App.kt:79` 默认 `NoopChapterProvider`；`app/desktop/src/desktopMain/kotlin/app/desktop/Main.kt:47`、`app/android/src/main/kotlin/app/android/MainActivity.kt:46` 只传 `RegistryChapterProvider` | 只有一个 Provider 槽，缺本地/在线组合器 |
-| B3 | 阅读器自带独立 `CookieStore` | `feature/reader/src/commonMain/kotlin/feature/reader/Reader.kt:176`、`Reader.kt:178` | 与源侧不共享，配对 UA 无法跨链路生效；Koin 接入时一并收口 |
-| B4 | 路由不带 `sourceKey` | `feature/reader/src/commonMain/kotlin/feature/reader/Reader.kt:158`、`app/shared-ui/src/commonMain/kotlin/app/shared/App.kt:123`、`app/shared-ui/src/commonMain/kotlin/app/shared/ReaderSourceAssembly.kt:101`、`ReaderSourceAssembly.kt:111` | `workSourceKey` 恒 `{ null }`，多源下永远回退首个 enabled 源 |
-| B5 | 发现页仍是占位 | `feature/search/src/commonMain/kotlin/feature/search/Search.kt:44`、`feature/detail/src/commonMain/kotlin/feature/detail/Detail.kt:30`、`feature/explore/src/commonMain/kotlin/feature/explore/Explore.kt:26`；`ReaderSourceAssembly.kt:277` 只有 `testRules` | 引擎的 `searchWorks` / `loadWorkDetails` 无调用方 |
-| B6 | **验证用源装不上** | 示例源 `docs/contract/manga-example.js:6` 与 `v4-example.js:6` 声明 `minAppVersion=1.0.0`；平台壳 `app/desktop/src/desktopMain/kotlin/app/desktop/Main.kt:36`、`app/android/src/main/kotlin/app/android/MainActivity.kt:36` 传 `appVersion="0.0.0"`；`source/bridge/src/commonMain/kotlin/source/bridge/SourceRuntimeManager.kt:159` 比较后抛 CONTRACT | 这是端到端验证的真实硬阻断，必须先解 |
-| B7 | 无真实端到端回归 | `app/shared-ui/src/desktopTest/kotlin/app/shared/SourceCatalogTest.kt:109`、`SourceCatalogTest.kt:153` 是 MockEngine + 规则源三步诊断；`source/bridge/src/desktopTest/kotlin/source/bridge/RealSourceE2ETest.kt:48`、`SourcesRepoContractTest.kt:46`、`AllSourcesCompatibilityTest.kt:78` 均需外部 refs 否则 SKIP | 「全绿」不等于全流程跑过 |
+| # | 断点 | 证据 | 后果 | 状态（2026-11-13） |
+| --- | --- | --- | --- | --- |
+| B1 | 无导入入口；`localFs` 未传阅读器 | `app/shared-ui/.../App.kt` 无导入入口、`feature/reader/.../Reader.kt` `localFs = null` | 本地能力全在，用户触达不到 | **已解**：`ShelfScreen` 选目录 → `LocalLibrary` 扫描 → `ReaderRoute` 传 `localFs` |
+| B2 | `LocalChapterProvider` 未注入 | 平台壳只传 `RegistryChapterProvider` | 只有一个 Provider 槽，缺本地/在线组合器 | **已解**：`LocalFirstChapterProvider` 按 `local:` 前缀分派 |
+| B3 | 阅读器自带独立 `CookieStore` | `Reader.kt` 内 `remember { CookieStore() }` | 与源侧不共享，配对 UA 无法跨链路生效 | **已解**：`AppContainer`（Koin）共享 CookieStore/HttpClient/ImageFetcher |
+| B4 | 路由不带 `sourceKey` | `ReaderRoute` / `DetailRoute` 无该字段 | `workSourceKey` 恒 `{ null }`，多源下永远回退首个 enabled 源 | **已解**：两路由带 `sourceKey`，`SourceCatalog.providerFor` 绑定 |
+| B5 | 发现页仍是占位 | `Search.kt` / `Detail.kt` / `Explore.kt` 占位 | 引擎的 `searchWorks` / `loadWorkDetails` 无调用方 | **已解（搜索/详情）**：`SourceCatalog.search/workInfo` + MVI 页面；explore 明确标注未接线 |
+| B6 | **验证用源装不上** | 示例源 `minAppVersion=1.0.0` vs 壳传 `0.0.0` | 端到端验证的真实硬阻断 | **已解**：`DEFAULT_APP_VERSION=1.0.0` 收口，示例源能力位改为 `search,comic` |
+| B7 | 无真实端到端回归 | 条件门禁需外部 refs 否则 SKIP | 「全绿」不等于全流程跑过 | **已解**：`LocalComicWalkthroughTest` / `NetworkComicWalkthroughTest` 两条 desktopTest，含截图证据 |
 
 次要：`docs/contract/manga-example.js:10` 的 `@capabilities search,chapterImages` 中 `chapterImages` 不在 `SourceCapability` 枚举，装配时会被 `mapNotNull` 静默丢弃；验证用源建议改用 `rules/v1` 演示包或修正头块。
 
@@ -123,3 +123,90 @@
 - 降为历史基线：`plugin-system/REFACTOR-PLAN.md`（§0 已记完工，§1 差距矩阵是重构前基线）。
 - 保留但加状态注记：`komikku-reader-replication.md`（视觉/UX 规格，实施以本文为准）、`real-source-e2e.md`（修正指向不存在的 `HANDOFF.md` 的引用）。
 - 修正 `docs/README.md` 与归档区 README 中已失效的归档理由与「reader-handoff 有未提交修改」陈述。
+
+
+---
+
+## 8. 实施记录（2026-11-13）
+
+### 8.1 落地内容
+
+| 阶段 | 结果 |
+| --- | --- |
+| S0 解堵 | `DEFAULT_APP_VERSION = "1.0.0"` 单一常量；`DetailRoute` / `ReaderRoute` 增 `sourceKey` / `title`（默认值保证历史路由可反序列化）；`RegistryChapterProvider` 增 `preferredSourceKey`，优先级「路由 > 作品映射 > 首个 enabled」；`NavRoutesTest` 补 3 条断言 |
+| S1 本地闭环 | `LocalLibrary`（扫描作品）+ `LocalFirstChapterProvider`（`local:` 前缀分派）+ 书架选目录入口（Desktop `JFileChooser`，IO 线程 + EDT）；阅读器 `localFs` 接线 |
+| S2 网络闭环 | `SourceCatalog.search / workInfo / providerFor / enabledSources`；兼容 `works` 与 `comics` 两种返回；`SearchViewModel` / `DetailViewModel`（StateFlow + Intent）；`AppContainer`（koin-core）共享 CookieStore / HttpClient / ImageFetcher，删除阅读器自建实例 |
+| S3 门禁固化 | 两条 walkthrough 落 `desktopTest`；截图写入 `docs/screenshots/`；`WalkthroughSupport.assertRendered` 整图采样防空白 |
+
+### 8.2 可复现命令
+
+```bash
+# 桌面全量（截图测试需虚拟显示）
+xvfb-run -a ./gradlew desktopTest
+
+# 单条 walkthrough
+xvfb-run -a ./gradlew :app:shared-ui:desktopTest \
+  --tests "app.shared.LocalComicWalkthroughTest" \
+  --tests "app.shared.NetworkComicWalkthroughTest"
+```
+
+### 8.3 证据图
+
+素材全部来自仓库内真实漫画库 [`docs/sample-library/`](sample-library/README.md)
+（Pepper & Carrot，David Revoy，CC-BY 4.0），不是合成占位图。
+
+| 文件 | 展示内容 |
+| --- | --- |
+| `docs/screenshots/comic-local-shelf.png` | 书架：4 部本地作品的**真实封面**网格（CBZ 与图片目录两种形态） |
+| `docs/screenshots/comic-local-detail.png` | 本地详情：封面 + 标题 + 元信息 + 「开始阅读」+ 目录 |
+| `docs/screenshots/comic-local-cbz.png` | CBZ 章节出图：真实漫画整页（992×1401，10 页，页码 1/10） |
+| `docs/screenshots/comic-network-search.png` | 装源后搜索：2 条结果各带真实封面缩略图 |
+| `docs/screenshots/comic-network-detail.png` | 源详情：封面取自 `ComicDetails.cover`（走同一图片出口） |
+| `docs/screenshots/comic-network-source.png` | 网络章节出图：`loadEp` 8 页 → 图片出口 → 解码（页码 1/8） |
+| `docs/screenshots/app-desktop-shelf.png` | **真实桌面进程**（`xvfb-run ./gradlew :app:desktop:run` + `KURISA_LIBRARY`）启动后的书架 |
+| `docs/screenshots/app-desktop-detail.png` | 同一进程内**真实点击**首本书后的详情页 |
+
+KURISA_LIBRARY 支持见 `app/desktop/.../Main.kt`：`-Dkurisa.library=<dir>` 或环境变量
+`KURISA_LIBRARY=<dir>` 可直接打开指定库（既方便日常使用，也让自动化能起真窗口验证）。
+
+> 真实窗口的阅读器截图没拿到：Xvfb 无窗口管理器，`xdotool` 合成的点击只在首次
+> （窗口激活那一击）被接收，之后详情页的按钮不再响应；键盘 Tab/Enter 同样无效。
+> 阅读器画面由 `LocalComicWalkthroughTest` 用同一 Compose 渲染管线出图，内容与真机一致。
+
+### 8.4 与计划的偏差（如实记录）
+
+1. **Koin 范围**：只引入 `koin-core` 收口共享网络栈（CookieStore / HttpClient / ImageFetcher）；
+   `ReaderViewModel` 改用 lifecycle 的 `viewModel(key) { ... }` initializer 构造，**手写
+   `ReaderViewModelFactory` 已删除**。未引入 `koin-compose-viewmodel`（`koinViewModel` 需该构件，
+   与本项目 CMP 1.12.2 / Native 组合未验证，不在本轮冒险引入）。
+2. **explore 页**：只做诚实标注，未接 `explore/category`。walkthrough 3.2 不覆盖该页。
+3. **本地封面**：已接入（`LocalWork.coverBytes` + Coil），首字渐变只作无封面时的兜底。
+   过程中修掉一个真实缺陷：目录型作品（`漫画/第01话/01.jpg`）的封面**始终为 null**——
+   `firstImageCover` 用 `byExtension(章节名)` 判断形态，而目录名没有扩展名，
+   于是既不是 `DIRECTORY` 也不进归档分支，整条分支被跳过。改为「先试列目录」后修复。
+4. **章节标题**：已去扩展名（`LocalChapterProvider.displayTitle`），`.cbz/.zip/.epub/.pdf`
+   不再露给读者；id 仍是原路径，读写不受影响。
+
+### 8.5 关于「闭环」与素材的返工记录
+
+首版 S3 的截图被判定为「没眼看」，理由成立，记录在此避免重犯：
+
+1. **素材是假的。** 页面由 `mangaJpeg()` 用 Java2D 画「白底 + 蓝条 + 居中色块」，
+   全图不超过 5 种颜色。这种输入**证明不了渲染链路**：解码器、缩放、配色、裁边、
+   双页合并全都测不到，截图也无法作为效果确认。
+2. **UI 只是骨架。** 书架是一行行文字卡片、详情是裸文字列表、搜索是纯文本行。
+   漫画是视觉品类，没有封面就没有「这是哪本书」的信息。
+3. **「闭环」只到数据层。** 链路确实通了（扫描 → 章节 → 字节 → 解码 → 上屏），
+   但屏幕上没有一张漫画，用户看不到闭环。
+
+本轮改为：
+
+| 项 | 改法 |
+| --- | --- |
+| 素材 | `docs/sample-library/` 真实漫画库（3 话 16 页 + 1 话图片目录形态），测试直接复制后扫描 |
+| 书架 | `LazyVerticalGrid` 封面网格 + 真实封面 + 来源徽标 + 定高文本块 |
+| 详情 | 封面 + 标题 + 元信息 + 「开始阅读」+ 编号目录 |
+| 搜索 | 结果卡片带封面缩略图（封面走同一图片出口，不直连 URL） |
+| 断言 | 新增 `assertPhotoLike`：整图颜色数 ≥ 800（阅读器 ≥ 1500）。色块图必然失败，真图必然通过——这才是「真的渲染了」的门禁 |
+
+宽屏下三页都限宽居中（书架 1180dp、详情/搜索 820dp），避免桌面端内容全挤在左侧。

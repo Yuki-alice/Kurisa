@@ -40,6 +40,17 @@
 需 `-Dkurisa.refsDir` 或 `-Dkurisa.sourcesRepoDir` 等外部目录，否则打印 `SKIP` 并按通过计。
 「测试全绿」不等于全流程跑过；可复现的漫画端到端回归以 `comic-e2e-plan.md` §3 为准。
 
+漫画两条 walkthrough 已于 2026-11-13 固化为**无条件执行**的 desktopTest（不需要外部 refs）：
+`app/shared-ui/src/desktopTest/.../LocalComicWalkthroughTest.kt`（复制 `docs/sample-library/`
+真实漫画库后扫描）与 `NetworkComicWalkthroughTest.kt`（MockEngine + `example.com` 合成站点，
+CDN 返回的也是真实漫画页）。二者逐页截图到 `docs/screenshots/comic-*.png`，
+并断言「整图颜色数 ≥ 800（阅读器 ≥ 1500）」——色块占位图必然失败，真图必然通过。
+截图测试需要显示器，CI/无头环境用 `xvfb-run -a ./gradlew desktopTest`。
+
+> 素材是真实的：`docs/sample-library/` 放的是 Pepper & Carrot（David Revoy，CC-BY 4.0）
+> 已发表作品的原页。早期版本用 Java2D 画色块当漫画页，测试能过但截图证明不了渲染，
+> 已于 2026-11-13 全部替换（见 `comic-e2e-plan.md` §8.5）。
+
 ## 3. 已归档（`_archive/2026-11-12/`）
 
 采用**无损归档**（`git mv`，不删除）；如需彻底删除，确认后另行执行。归档原因分两类：

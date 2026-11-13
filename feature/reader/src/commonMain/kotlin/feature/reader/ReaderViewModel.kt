@@ -1140,33 +1140,3 @@ class LoadPageBytesUseCase(
             ),
         ).bytes
 }
-
-/** Koin 接入前手写 Factory（M5 改 viewModelOf；SavedStateHandle 按需再加）。 */
-class ReaderViewModelFactory(
-    private val workId: String,
-    private val chapterId: String,
-    private val chapters: ChapterProvider,
-    private val saveProgress: SaveReadingProgressUseCase,
-    private val loadProgress: LoadReadingProgressUseCase,
-    private val pages: LoadPageBytesUseCase,
-    private val domains: Set<String>,
-    private val machine: ReaderStateMachine = ReaderStateMachine(),
-    private val settingsStore: ReaderSettingsStore = DefaultReaderSettingsStore,
-    private val mangaTitle: String = "",
-    private val bookmarks: data.repository.BookmarkRepository = data.repository.NoopBookmarkRepository,
-) : androidx.lifecycle.ViewModelProvider.Factory {
-    @Suppress("UNCHECKED_CAST")
-    override fun <T : ViewModel> create(
-        modelClass: kotlin.reflect.KClass<T>,
-        extras: androidx.lifecycle.viewmodel.CreationExtras,
-    ): T {
-        require(modelClass == ReaderViewModel::class) { "仅支持 ReaderViewModel" }
-        return ReaderViewModel(
-            workId, chapterId, machine, chapters,
-            saveProgress, loadProgress, pages, domains,
-            settingsStore = settingsStore,
-            mangaTitle = mangaTitle,
-            bookmarks = bookmarks,
-        ) as T
-    }
-}

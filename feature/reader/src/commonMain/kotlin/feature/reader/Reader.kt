@@ -166,9 +166,19 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 import kotlinx.serialization.Serializable
 
-/** 阅读器（漫画 & 小说共用外壳，内部分支；Viewer 由阅读模式选择）。 */
+/**
+ * 阅读器（漫画 & 小说共用外壳，内部分支；Viewer 由阅读模式选择）。
+ *
+ * [sourceKey] 是作品归属源（B4）：空串表示未指定，由 provider 自行回退首个启用源；
+ * 多源并存时必须带上，否则永远读第一个源。[title] 仅用于顶栏，未知时回退章节名。
+ */
 @Serializable
-data class ReaderRoute(val workId: String, val chapterId: String) : NavKey
+data class ReaderRoute(
+    val workId: String,
+    val chapterId: String,
+    val sourceKey: String = "",
+    val title: String = "",
+) : NavKey
 
 @Composable
 fun ReaderScreen(
@@ -185,17 +195,23 @@ fun ReaderScreen(
     mangaTitle: String = "",
     /** 书签持久化（默认内存态；平台壳传入 SQLDelight 实现）。 */
     bookmarks: BookmarkRepository = NoopBookmarkRepository,
+    /**
+     * 共享图片出口（由 AppContainer 注入，与源侧共用 CookieStore/HttpClient）。
+     * 为空时（预览/单测）才回落到临时实例，生产路径不得为空（B3）。
+     */
+    imageFetcher: ImageFetcher? = null,
 ) {
-    // 网络栈装配（Koin M5 前手写：CookieStore 按 composition 记忆；
-    // 会话级共享随 M5 DI 落地；demo 源无鉴权需求）。
-    val cookies = remember { CookieStore() }
-    val images: ImageFetcher = remember(localFs) {
-        val network = SourceImageFetcher(SourceHttpClient(defaultHttpClient(), cookies) { 0L })
+    // 网络栈：优先用容器注入的共享实例；本地作品再叠加本地抓取器。
+    // 不再在此处 `remember { CookieStore() }`——那会与源侧配对 UA 脱钩（B3）。
+    val images: ImageFetcher = remember(localFs, imageFetcher) {
+        val network = imageFetcher
+            ?: SourceImageFetcher(SourceHttpClient(defaultHttpClient(), CookieStore()) { 0L })
         localFs?.let { LocalImageFetcher(it, network) } ?: network
     }
-    val vm: ReaderViewModel = viewModel(
-        key = "reader:$workId:$chapterId",
-        factory = ReaderViewModelFactory(
+    // Koin 场景下依赖由 AppContainer 提供（共享图片出口）；VM 本身用 lifecycle
+    // 的 initializer DSL 构造，不再维护手写 ViewModelProvider.Factory（S2）。
+    val vm: ReaderViewModel = viewModel(key = "reader:$workId:$chapterId") {
+        ReaderViewModel(
             workId = workId,
             chapterId = chapterId,
             chapters = chapters,
@@ -206,8 +222,8 @@ fun ReaderScreen(
             settingsStore = settingsStore,
             mangaTitle = mangaTitle,
             bookmarks = bookmarks,
-        ),
-    )
+        )
+    }
     ReaderScreenVm(
         workId = workId,
         onBack = onBack,
