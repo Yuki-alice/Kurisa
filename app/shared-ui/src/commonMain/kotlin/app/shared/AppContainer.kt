@@ -8,6 +8,8 @@ import feature.detail.DetailDeps
 import feature.detail.DetailViewModel
 import feature.search.SearchDeps
 import feature.search.SearchViewModel
+import feature.settings.SettingsDeps
+import feature.settings.SettingsViewModel
 import io.ktor.client.HttpClient
 import org.koin.core.Koin
 import org.koin.core.context.startKoin
@@ -47,6 +49,7 @@ class AppContainer(
                 // androidx ViewModelStore 管理，容器只负责定义。
                 viewModel { params -> SearchViewModel(params.get<SearchDeps>()) }
                 viewModel { params -> DetailViewModel(params.get<DetailDeps>()) }
+                viewModel { params -> SettingsViewModel(params.get<SettingsDeps>()) }
             },
         )
     }.koin

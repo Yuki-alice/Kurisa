@@ -8,6 +8,10 @@ import feature.search.SearchDeps
 import feature.search.SearchPageUi
 import feature.search.SearchSourceUi
 import feature.search.SearchViewModel
+import feature.settings.SettingsDeps
+import feature.settings.SettingsPrefs
+import feature.settings.SettingsStore
+import feature.settings.SettingsViewModel
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.MockEngine
 import io.ktor.client.engine.mock.respondOk
@@ -48,8 +52,18 @@ class AppContainerTest {
             val detailDeps = DetailDeps("路由标题") { DetailData(title = "详情标题") }
             val detailVm = container.graph.get<DetailViewModel> { parametersOf(detailDeps) }
             assertNotNull(detailVm)
+
+            val settingsDeps = SettingsDeps(FakeSettingsStore(), "9.9.9", null)
+            val settingsVm = container.graph.get<SettingsViewModel> { parametersOf(settingsDeps) }
+            assertNotNull(settingsVm)
+            assertEquals("9.9.9", settingsVm.state.value.appVersion)
         } finally {
             container.close()
         }
+    }
+
+    class FakeSettingsStore : SettingsStore {
+        override suspend fun load(): SettingsPrefs = SettingsPrefs()
+        override suspend fun save(prefs: SettingsPrefs) = Unit
     }
 }
