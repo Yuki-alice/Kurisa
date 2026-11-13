@@ -7,9 +7,9 @@
 ## 0. 交接摘要
 
 - 任务：完成 M4「小说与本地导入」——在线小说章节可分页阅读、本地 TXT/EPUB 与在线书同构、进度/书签可靠、图片受控加载、三端一致。
-- 当前状态：**Phase 1/2 已完成并反复全量验证通过**；后续 P2 切片（书签/划线 4 种输入/笔记/搜索批量/富文本全集/按书设置/本地导入端到端 + 删除/排版五参数/渲染基线/外链迁移）全部落地，`desktopTest` **450/0**（87 文件）+ `:app:android:assembleDebug` 成功。
-- 接手第一步：跑全量 `desktopTest` + `:app:android:assembleDebug` 确认 450/0 基线仍绿，修任何失败（基线证据：`docs/screenshots/reader-novel-paged.png`、`reader-novel-rich.png`）。
-- 所有改动**均未提交**（`git status` 见 §3，约 76 个文件）；文档地图已登记，工作区日志在 `.workbuddy/memory/2026-11-13.md`。
+- 当前状态：**Phase 1/2 已完成并反复全量验证通过，M4 已于 2026-11-13 合并进 main（提交 867167e）**；后续 P2 切片（书签/划线 4 种输入/笔记/搜索批量/富文本全集/按书设置/本地导入端到端 + 删除/排版五参数/渲染基线/外链迁移）全部落地，全仓 `desktopTest` **453 用例 / 0 失败 / 0 错误 / 0 跳过，BUILD SUCCESSFUL** + `:app:android:assembleDebug` 成功。
+- 接手第一步：跑全量 `desktopTest` + `:app:android:assembleDebug` 确认 453/0/0/0 基线仍绿，修任何失败（基线证据：`docs/screenshots/reader-novel-paged.png`、`reader-novel-rich.png`）。
+- 所有改动**已随 M4 合并进 main（提交 867167e）**（交接时工作区状态见 §3）；文档地图已登记，工作区日志在 `.workbuddy/memory/2026-11-13.md`。
 - 不要重写已完成部分，不要引入新第三方依赖或新 expect/actual。
 
 ## 1. 完成定义（M4 Gate）
@@ -35,7 +35,7 @@
 | 进度持久化 | `ReadingProgress.charOffset/layoutKey`；`Progress.sq` + `3.sqm` 加列；`RollbackScripts.V4_TO_V3` 可回滚；`ProgressRepositoryImpl` / `ReaderSettingsDto` 透传 |
 | 测试 | `NovelContentParserTest`、`NovelPaginatorTest`、`ReaderViewModelNovelTest`、迁移/回滚断言、schema 一致性断言 |
 
-### Phase 2（本轮已完成，**最后验证被中断**）
+### Phase 2（本轮已完成并全量验证通过，已合并 867167e）
 
 | 能力 | 落点 |
 | --- | --- |
@@ -102,10 +102,10 @@ P0 两项验证已补齐并通过。
 
 ## 5. 未完成清单（按优先级）
 
-### P0 · 收口验证
-1. 重跑 `:feature:reader:desktopTest`，确认 `NovelImagePolicyTest` 与 `novelReaderRendersStructuredText` 通过；截图测试若因颜色采样（`assertRendered` 默认 `minColors = 3`）失败，按文字页实际用 `minColors = 2`。
-2. 跑 `desktopTest` 全量 + `:app:android:assembleDebug`，确认 Phase 2 未破坏漫画/网络/迁移路径，尤其 `UrlPolicyTest`、`MigrationAndOfflineTest`、`ReaderViewModelTest`。
-3. 修所有失败并复核测试统计（用例数应 ≥ 450 + 本轮新增；450 为 2026-11-13 全量基线）。
+### P0 · 收口验证（已完成）
+1. 重跑 `:feature:reader:desktopTest`：`NovelImagePolicyTest` 与 `novelReaderRendersStructuredText` 通过，截图采样按文字页实际用 `minColors = 2`。已完成。
+2. `desktopTest` 全量 + `:app:android:assembleDebug` 通过，Phase 2 未破坏漫画/网络/迁移路径（`UrlPolicyTest`、`MigrationAndOfflineTest`、`ReaderViewModelTest` 均无回归）。已完成。
+3. 全量复核无失败：本次实测全仓 `desktopTest` **453 用例 / 0 失败 / 0 错误 / 0 跳过，BUILD SUCCESSFUL**（2026-11-13 M4 合并 867167e 后基线）。已完成。
 
 ### P1 · 运行时图片重写与性能
 1. **`novel.onImageResolve` 生产接线**（2026-11-13 已落地最小闭环）：`SourceCalls.novelImageResolve()` 默认 null，`SourceRuntime` 覆盖为真实 JS 调用（`sanitized()` 剥离 UA/Cookie，`PureResultCache` 按源 key+URL 键控）；`ChapterProvider.resolveNovelImage()` 默认直通，`BridgeChapterProvider` 覆盖为按源重写；`ReaderViewModel.onReady` 解析后对 IMAGE 块批量重写（单张失败回退原文），最终可加载性仍由 `isAllowedNovelImageUrl` + `SourceImageFetcher` 白名单/逐跳复核决定。已过 `security-audit` 自查（MASVS-NETWORK/PLATFORM/CODE，见终报），`UrlPolicyTest` 5/0、`BridgeChapterProviderTest` 11/0（含新增 2）。2026-11-13 补完：`State.novelImageHeaders`（key=effectiveUrl）随正文原子发布，`NovelImage` 取图时经 `ImageRequest(headers)` 透传业务头（仍走 `SourceImageFetcher` 白名单/逐跳复核，UA/Cookie 由宿主注入）；`ReaderViewModelNovelTest` 新增 headers 断言。
@@ -203,6 +203,6 @@ cd /f/Kurisa   # Windows Git Bash；或在项目根用 -p 指定
 - [x] 本地导入端到端（445/0；FileKit 不可用已撤依赖；手势拖拽区间/仿真翻页留后续）
 - [x] 外链迁移 LinkAnnotation（445/0；行为不变；手势拖拽区间/仿真翻页留后续）
 - [x] 完成本地导入 UI / 书架同构展示（445/0；iOS 选择器待 macOS 验证）
-- [ ] 更新 `docs/novel-reader-plan.md` §6 与本文档的验证状态
+- [x] 更新 `docs/novel-reader-plan.md` §6 与本文档的验证状态
 - [ ] 追加 `.workbuddy/memory/2026-11-13.md` 工作日志
 - [ ] 提交前复核 `git status`，确认无构建产物/临时文件入库

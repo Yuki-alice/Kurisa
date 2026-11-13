@@ -4,6 +4,8 @@
 > 替代 `DESIGN.md §6` 的“两种形态”描述：不再维护 `规则 JSON` 与 `JS class` 两套包，
 > 用一个 `defineSource` 对象统一两者。旧 `class X extends ComicSource` 源继续可用（只读兼容，不再作为模板）。
 > 日期：2026-11-12。
+>
+> 实施说明：当前实现为 `js/v1` 与 `rules/v1` 双形态分派（`detectFormat` 按头块 `@format` / 扩展名识别，`RulesEngine` 执行 `rules/v1`，`js/v1` 走 `QuickJsEngine`）；`defineSource` 一体包仍是本规范的目标态、尚未落地，勿误以为代码已在跑单一模板。
 
 ## 0. 为什么只要一种模板
 

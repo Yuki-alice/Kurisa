@@ -6,7 +6,7 @@
 // @minApp       1.0.0
 // @kind         manga
 // @domains      manga.example.com
-// @capabilities search,chapterImages
+// @capabilities search,comic
 // ==/SourceScript==
 
 /**

@@ -33,6 +33,7 @@ import data.repository.NoopLocalBookRepository
 import data.repository.ProgressRepository
 import feature.detail.DetailRoute
 import feature.detail.DetailScreen
+import feature.detail.WorkDetailUi
 import feature.downloads.DownloadsRoute
 import feature.downloads.DownloadsScreen
 import feature.explore.ExploreRoute
@@ -42,6 +43,7 @@ import feature.reader.NoopChapterProvider
 import feature.reader.NoopProgressRepository
 import feature.reader.ReaderRoute
 import feature.reader.ReaderScreen
+import feature.search.SearchPageUi
 import feature.search.SearchRoute
 import feature.search.SearchScreen
 import feature.settings.SettingsRoute
@@ -184,19 +186,51 @@ fun App(
                         )
                     }
                     is ExploreRoute -> NavEntry(key) {
-                        ExploreScreen(key.sourceKey, onOpenDetail = { backStack.add(DetailRoute(it)) })
+                        ExploreScreen(
+                            key.sourceKey,
+                            onOpenDetail = { workId ->
+                                sourceCatalog?.bindWork(workId, key.sourceKey)
+                                backStack.add(DetailRoute(workId, key.sourceKey))
+                            },
+                        )
                     }
                     is SearchRoute -> NavEntry(key) {
-                        SearchScreen(onOpenDetail = { backStack.add(DetailRoute(it)) })
+                        SearchScreen(
+                            loader = { keyword, page ->
+                                withContext(Dispatchers.Default) {
+                                    sourceCatalog?.search(keyword, page)
+                                        ?: SearchPageUi(errors = listOf("未装配源目录"))
+                                }
+                            },
+                            onOpenDetail = { work ->
+                                sourceCatalog?.bindWork(work.workId, work.sourceKey)
+                                backStack.add(
+                                    DetailRoute(work.workId, work.sourceKey, work.title),
+                                )
+                            },
+                        )
                     }
                     is DetailRoute -> NavEntry(key) {
+                        sourceCatalog?.bindWork(key.workId, key.sourceKey)
                         DetailScreen(
                             workId = key.workId,
-                            onOpenReader = { w, c -> backStack.add(ReaderRoute(w, c)) },
+                            sourceKey = key.sourceKey,
+                            title = key.title,
+                            loader = { workId, sourceKey ->
+                                withContext(Dispatchers.Default) {
+                                    sourceCatalog?.detail(workId, sourceKey)
+                                        ?: WorkDetailUi(workId, sourceKey, workId, error = "未装配源目录")
+                                }
+                            },
+                            onOpenReader = { w, c ->
+                                sourceCatalog?.bindWork(w, key.sourceKey)
+                                backStack.add(ReaderRoute(w, c, key.sourceKey))
+                            },
                             onBack = { backStack.removeLastOrNull() },
                         )
                     }
                     is ReaderRoute -> NavEntry(key) {
+                        sourceCatalog?.bindWork(key.workId, key.sourceKey)
                         ReaderScreen(
                             key.workId, key.chapterId,
                             onBack = { backStack.removeLastOrNull() },
@@ -206,6 +240,8 @@ fun App(
                             settingsStore = readerSettings,
                             bookmarks = bookmarkRepository,
                             localFs = localFs,
+                            cookies = sourceCatalog?.cookies,
+                            httpClient = sourceCatalog?.httpClient,
                         )
                     }
                     is SourcesRoute -> NavEntry(key) {

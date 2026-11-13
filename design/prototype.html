@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kurisa · 交互原型</title>
+<link rel="stylesheet" href="assets/tokens.css">
+<link rel="stylesheet" href="assets/base.css">
+<link rel="stylesheet" href="assets/components.css">
+<link rel="stylesheet" href="assets/screens.css">
+<link rel="stylesheet" href="assets/prototype.css">
+</head>
+<body class="proto">
+
+<div class="proto-shell">
+  <aside class="proto-panel">
+    <a class="proto-brand" href="index.html">
+      <span class="brand-mark">K</span>
+      <span>
+        <b>Kurisa</b>
+        <span class="pb-sub">交互原型 · MD3E</span>
+      </span>
+    </a>
+
+    <p class="proto-lede">
+      390 × 844 可点原型：底部 5 个目的地（书架 / 更新 / 历史 / 浏览 / 更多），
+      书架 → 详情 → 阅读器，长按多选、阅读设置弹层、搜索与下载。
+      与设计总览页共用同一套 <code>assets/screens.js</code> 模板和 token。
+    </p>
+
+    <div class="proto-group">
+      <span class="pg-title">直接跳转</span>
+      <div class="proto-jump" id="jumpList"></div>
+    </div>
+
+    <div class="proto-group">
+      <span class="pg-title">控制</span>
+      <div class="proto-controls">
+        <div class="seg" id="themeSeg">
+          <button data-t="light" class="on">浅色</button>
+          <button data-t="dark">深色</button>
+        </div>
+        <button class="pbtn" id="resetBtn">重置</button>
+      </div>
+      <div class="proto-route" id="routeLabel">/shelf</div>
+    </div>
+
+    <div class="proto-group">
+      <span class="pg-title">可交互</span>
+      <ul class="proto-hints">
+        <li>点封面 → 作品详情 → 「开始阅读」→ 阅读器</li>
+        <li>阅读器底部「设置」→ 阅读设置弹层</li>
+        <li>点阅读画面 → 隐藏 / 显示 chrome</li>
+        <li>底部 5 个 tab 可切换；chips / 分段按钮可点</li>
+        <li><kbd>Esc</kbd> 关闭弹层 · <kbd>⌫</kbd> 返回</li>
+      </ul>
+    </div>
+
+    <div class="proto-foot">
+      <a href="index.html">← 设计总览</a>
+      <span>Kurisa · 本地优先阅读器</span>
+    </div>
+  </aside>
+
+  <main class="proto-stage">
+    <div class="device proto-device" id="device">
+      <div class="device-screen" id="screen" data-theme="light"></div>
+      <div class="device-island"></div>
+    </div>
+    <div class="proto-caption"><span id="captionTitle">书架</span><span class="pc-sep">·</span><span id="captionNote">点击封面进入详情</span></div>
+  </main>
+</div>
+
+<script src="assets/tokens.js"></script>
+<script src="assets/data.js"></script>
+<script src="assets/screens.js"></script>
+<script src="assets/prototype.js"></script>
+</body>
+</html>

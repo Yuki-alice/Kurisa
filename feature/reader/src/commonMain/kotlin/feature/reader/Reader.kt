@@ -168,7 +168,12 @@ import kotlinx.serialization.Serializable
 
 /** 阅读器（漫画 & 小说共用外壳，内部分支；Viewer 由阅读模式选择）。 */
 @Serializable
-data class ReaderRoute(val workId: String, val chapterId: String) : NavKey
+data class ReaderRoute(
+    val workId: String,
+    val chapterId: String,
+    /** 作品归属源（B4：App 层据此绑定按作品路由；本地书为空串）。 */
+    val sourceKey: String = "",
+) : NavKey
 
 @Composable
 fun ReaderScreen(
@@ -185,12 +190,18 @@ fun ReaderScreen(
     mangaTitle: String = "",
     /** 书签持久化（默认内存态；平台壳传入 SQLDelight 实现）。 */
     bookmarks: BookmarkRepository = NoopBookmarkRepository,
+    /**
+     * 共享网络栈（B3）：平台壳把源装配用的同一个 [CookieStore] / [io.ktor.client.HttpClient]
+     * 传进来，阅读器图片出口与源请求共享 Cookie 与配对 UA；不传时退化为独立实例，
+     * 保证既有调用方与单测零改动。Koin 收口 VM 工厂仍属后续项。
+     */
+    cookies: CookieStore? = null,
+    httpClient: io.ktor.client.HttpClient? = null,
 ) {
-    // 网络栈装配（Koin M5 前手写：CookieStore 按 composition 记忆；
-    // 会话级共享随 M5 DI 落地；demo 源无鉴权需求）。
-    val cookies = remember { CookieStore() }
-    val images: ImageFetcher = remember(localFs) {
-        val network = SourceImageFetcher(SourceHttpClient(defaultHttpClient(), cookies) { 0L })
+    val sharedCookies = remember(cookies) { cookies ?: CookieStore() }
+    val sharedHttpClient = remember(httpClient) { httpClient ?: defaultHttpClient() }
+    val images: ImageFetcher = remember(localFs, sharedCookies, sharedHttpClient) {
+        val network = SourceImageFetcher(SourceHttpClient(sharedHttpClient, sharedCookies) { 0L })
         localFs?.let { LocalImageFetcher(it, network) } ?: network
     }
     val vm: ReaderViewModel = viewModel(

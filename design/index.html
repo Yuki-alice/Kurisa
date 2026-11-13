@@ -1,0 +1,247 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kurisa · MD3 设计原型</title>
+<meta name="description" content="Kurisa 阅读器的 Material 3 / M3E 设计原型：以参考应用的信息架构为骨架，替换为 M3E 组件，含设计系统、13 屏高保真与响应式布局。">
+<link rel="stylesheet" href="assets/tokens.css">
+<link rel="stylesheet" href="assets/base.css">
+<link rel="stylesheet" href="assets/components.css">
+<link rel="stylesheet" href="assets/screens.css">
+<link rel="stylesheet" href="assets/board.css">
+</head>
+<body class="board">
+
+<nav class="topnav">
+  <div class="wrap">
+    <div class="brand"><span class="brand-mark">K</span>Kurisa</div>
+    <span class="brand-sub">MATERIAL 3 设计原型</span>
+    <div class="navlinks">
+      <a href="#basis">设计基准</a>
+      <a href="#color">颜色</a>
+      <a href="#components">组件</a>
+      <a href="#screens">界面</a>
+      <a href="#responsive">响应式</a>
+      <a href="#mapping">落地</a>
+    </div>
+    <div class="theme-switch" id="themeSwitch">
+      <button data-theme-set="light" class="on">浅色</button>
+      <button data-theme-set="dark">深色</button>
+    </div>
+    <a class="nav-cta" href="prototype.html">交互原型 →</a>
+  </div>
+</nav>
+
+<header class="page-head">
+  <div class="wrap">
+    <h1>Kurisa 阅读器 · Material 3 / M3E 界面</h1>
+    <p class="lead">
+      Kurisa 是本地优先的阅读器 + 可扩展内容接入框架：应用本体不预置任何内容（C1），
+      源的装载、签名与白名单由用户掌控（C2），断网时书架与已下载必须可用（C4）。
+      因此界面以「用户自己的书架」为主入口，源管理页承担安全叙事，阅读器是唯一的全屏沉浸页。
+    </p>
+    <p class="lead" style="margin-top:10px">
+      以参考应用（Komikku）的页面结构与交互为骨架：5 个底部目的地、自适应封面网格、模糊信息头、
+      章节列表、沉浸式阅读器、设置列表；组件替换为 Material 3 Expressive 现行件
+     （ShortNavigationBar、ButtonGroup、FloatingToolbar、WavyProgress、Slider 4dp 手柄、
+      强调字阶）。配色沿用参考应用的 Material You 蓝（primary #0058CA / #B0C6FF），
+      tertiary 绿只用于进度与已下载。
+    </p>
+    <div class="meta-row">
+      <span class="pill solid">material3 1.5.0-rc01 · MotionScheme.expressive()</span>
+      <span class="pill">13 屏高保真 · 390 × 844 / 1280 × 800</span>
+      <span class="pill">HCT 色彩：48 角色 · 明暗两套</span>
+      <span class="pill">Android / iOS / Desktop（CMP）</span>
+    </div>
+  </div>
+</header>
+
+<main>
+  <div class="wrap">
+
+    <!-- 01 -->
+    <section class="sec" id="basis">
+      <div class="sec-head">
+        <div class="sec-no">01</div>
+        <div>
+          <h2 class="sec-title">设计基准</h2>
+          <p class="sec-desc">
+            页面结构、信息密度、导航层级来自参考应用；M3E 只作用在组件与视觉语言上，不改变用户已有的操作路径。
+          </p>
+        </div>
+        <div class="sec-aside">Structure → M3E</div>
+      </div>
+      <div class="bench" id="bench"></div>
+    </section>
+
+    <!-- 02 -->
+    <section class="sec" id="color">
+      <div class="sec-head">
+        <div class="sec-no">02</div>
+        <div>
+          <h2 class="sec-title">颜色</h2>
+          <p class="sec-desc">
+            6 组 HCT 色调板派生 48 个角色。primary 由参考应用的蓝色反推（hue 268.5 / chroma 63，tone40 = #0058CA，
+            tone80 = #B0C6FF）；neutral 带轻微紫调，浅色 #FEFBFF、深色 #1B1B1F。
+          </p>
+        </div>
+        <div class="sec-aside">HCT · 48 roles</div>
+      </div>
+      <div class="color-bar">
+        <div class="seed"><i style="background:#0058CA"></i><span><b>primary · #0058CA</b>h268.5 c63 · 深色 #B0C6FF</span></div>
+        <div class="seed"><i style="background:#565E74"></i><span><b>secondary · #565E74</b>h268.5 c18 · 容器与选中态</span></div>
+        <div class="seed"><i style="background:#1E6D25"></i><span><b>tertiary · #1E6D25</b>h145.6 c52 · 进度 / 已下载</span></div>
+        <div class="seed"><i style="background:conic-gradient(#FEFBFF,#EFEDF1,#1B1B1F,#B0C6FF)"></i><span><b>neutral / neutral-variant</b>h268 c4 / c8 · 表面与描边</span></div>
+      </div>
+      <div id="roleGridLight"></div>
+      <div id="roleGridDark" hidden></div>
+    </section>
+
+    <!-- 03 -->
+    <section class="sec" id="components">
+      <div class="sec-head">
+        <div class="sec-no">03</div>
+        <div>
+          <h2 class="sec-title">组件</h2>
+          <p class="sec-desc">
+            只用 M3/M3E 现行组件：flexible NavigationBar（比 80dp 基线更矮，选中标签 secondary）、
+            TopAppBar 64dp（滚动后 surface-container）、PrimaryTabRow 48dp（3px 内容宽指示器）、
+            FilterChip（8dp → 全圆，label-large 14）、ButtonGroup（标准组间隙 / 连接组 2dp 仅用于选择）、
+            FAB 56/80/96（primary-container，elevation 3）、ModalBottomSheet（顶部 28dp，scrim 32%）、
+            LinearWavyProgressIndicator、Slider。按钮 XS–XL 五档，按压向方形 morph；
+            动效用 emphasized 曲线 + duration 刻度（进入 400ms decelerate / 退出 200ms accelerate）。
+          </p>
+        </div>
+        <div class="sec-aside">Light / Dark</div>
+      </div>
+      <div class="comp-grid" id="compGrid"></div>
+    </section>
+
+    <!-- 04 -->
+    <section class="sec" id="screens">
+      <div class="sec-head">
+        <div class="sec-no">04</div>
+        <div>
+          <h2 class="sec-title">界面 · 13 屏</h2>
+          <p class="sec-desc">
+            390 × 844。封面与漫画页为程序生成的合成素材，不含任何第三方内容；可交互版本见
+            <a href="prototype.html" style="color:var(--accent)">交互原型</a>。
+          </p>
+        </div>
+        <div class="sec-aside">390 × 844</div>
+      </div>
+      <div class="gallery" id="gallery"></div>
+    </section>
+
+    <!-- 05 -->
+    <section class="sec" id="responsive">
+      <div class="sec-head">
+        <div class="sec-no">05</div>
+        <div>
+          <h2 class="sec-title">响应式</h2>
+          <p class="sec-desc">
+            严格沿用 M3 窗口尺寸类（5 档）与 3 种规范布局：书架是 <b>Feed</b>（列数随宽度涨，边距/沟槽按档切换），
+            作品详情是 <b>List-detail</b>（compact 单窗格跳转，medium 起列表与详情并排），
+            宽屏下的「网格 + 详情预览」是 <b>Supporting pane</b>（主区 2/3 + 副区 1/3）。
+            导航只换组件不换目的地：ShortNavigationBar → NavigationRail → WideNavigationRail。
+            下面是 live demo —— 拖滑杆，布局按 container queries 真实重排，不是缩放截图。
+          </p>
+        </div>
+        <div class="sec-aside">WindowSizeClass</div>
+      </div>
+      <div class="wsc-table-wrap">
+        <table class="tbl wsc">
+          <thead><tr><th>窗口类</th><th>宽度</th><th>列数</th><th>边距 / 沟槽</th><th>导航</th><th>书架网格</th></tr></thead>
+          <tbody>
+            <tr><td><code>Compact</code></td><td class="tnum">&lt; 600dp</td><td class="tnum">4</td><td class="tnum">16 / 8</td><td>ShortNavigationBar（底部 64dp）</td><td>3 列 · 单窗格</td></tr>
+            <tr><td><code>Medium</code></td><td class="tnum">600–839dp</td><td class="tnum">8</td><td class="tnum">24 / 16</td><td>NavigationRail（侧边 80dp）</td><td>4 列 · 可选第二窗格</td></tr>
+            <tr><td><code>Expanded</code></td><td class="tnum">840–1199dp</td><td class="tnum">12</td><td class="tnum">24 / 16</td><td>WideNavigationRail（侧边 240dp）</td><td>3–4 列 + 详情副窗格</td></tr>
+            <tr><td><code>Large</code></td><td class="tnum">1200–1599dp</td><td class="tnum">12</td><td class="tnum">24 / 24</td><td>WideNavigationRail（侧边 240dp）</td><td>4 列 · 内容 ≤ 1040dp 居中</td></tr>
+            <tr><td><code>Extra-large</code></td><td class="tnum">≥ 1600dp</td><td class="tnum">12</td><td class="tnum">24 / 24</td><td>WideNavigationRail（侧边 240dp）</td><td>同 Large，边距更慷慨</td></tr>
+          </tbody>
+        </table>
+        <p class="wsc-note">M3E 对照：<code>ShortNavigationBar</code> 替代基线 NavigationBar；
+          <code>WideNavigationRail</code> 替代基线 NavigationRail 与 NavigationDrawer（后两者无 M3E 形态）；
+          阅读器在所有窗口类下都是全屏沉浸页，导航全部隐藏。</p>
+      </div>
+      <div class="desk-stage" id="deskStage"></div>
+      <div class="bp-grid">
+        <div class="bp">
+          <div class="w">COMPACT · &lt; 600dp</div>
+          <h4>手机竖屏</h4>
+          <p>ShortNavigationBar 64dp（5 目的地）· 边距 16 / 沟槽 8 · 3 列网格 · 详情/阅读器全屏跳转 · 底部弹层。</p>
+        </div>
+        <div class="bp">
+          <div class="w">MEDIUM · 600–839dp</div>
+          <h4>平板竖屏 / 折叠展开</h4>
+          <p>NavigationRail 80dp · 边距 24 / 沟槽 16 · 4 列网格 · List-detail 窄列表（360dp）+ 详情。</p>
+        </div>
+        <div class="bp">
+          <div class="w">EXPANDED · 840–1199dp</div>
+          <h4>平板横屏 / 小桌面</h4>
+          <p>WideNavigationRail 240dp · 3–4 列网格 · Supporting pane：主区 + 336dp 详情副窗格（可拖拽分隔）。</p>
+        </div>
+        <div class="bp">
+          <div class="w">LARGE+ · ≥ 1200dp</div>
+          <h4>桌面 / 超宽屏</h4>
+          <p>同 Expanded 导航 · 4 列网格 · 正文区 ≤ 1040dp 居中，多余空间留白而非拉伸 · ⌘K 聚焦搜索。</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- 06 -->
+    <section class="sec" id="mapping">
+      <div class="sec-head">
+        <div class="sec-no">06</div>
+        <div>
+          <h2 class="sec-title">落地映射</h2>
+          <p class="sec-desc">
+            原型即实现规格。下表把每个视觉决策指回 <code style="color:var(--accent)">core/designsystem</code> 的落点（M5：theme / tokens / expressive 三层）。
+          </p>
+        </div>
+        <div class="sec-aside">Compose</div>
+      </div>
+      <table class="tbl">
+        <thead><tr><th style="width:24%">原型</th><th style="width:34%">Compose / API</th><th>说明</th></tr></thead>
+        <tbody>
+          <tr><td><code>--md-*</code> 48 角色</td><td><code>MaterialExpressiveTheme(colorScheme = …)</code></td><td>HCT 种子派生；Android 12+ 可被动态取色覆盖，回退到该方案。</td></tr>
+          <tr><td><code>.m3-navbar</code> 64dp</td><td><code>ShortNavigationBar</code> + <code>ShortNavigationBarItem</code></td><td>5 个目的地；指示器 56×32 secondaryContainer，选中图标 on-secondary-container，选中标签 secondary。</td></tr>
+          <tr><td><code>.m3-topbar</code> 64dp</td><td><code>TopAppBar</code></td><td>titleLarge + 数量胶囊 + 40dp 图标按钮；滚动后切 surface-container。</td></tr>
+          <tr><td><code>.m3-tabrow</code> 48dp</td><td><code>PrimaryScrollableTabRow</code></td><td>3px 内容宽指示器 + divider；分类页签不带计数，计数放在 app bar。</td></tr>
+          <tr><td><code>.lib-grid</code></td><td><code>LazyVerticalGrid(Adaptive(128.dp))</code></td><td>3:4 封面 12dp 圆角；标题 titleSmall 两行；未读角标（error 系）与进度条叠在封面内。</td></tr>
+          <tr><td><code>.sel-toolbar</code></td><td><code>HorizontalFloatingToolbar</code></td><td>长按多选时升起：64dp 全胶囊、elevation 3、两侧 16dp 内缩，内容 on-surface-variant。</td></tr>
+          <tr><td><code>.det-hero</code></td><td>blur + <code>Brush.verticalGradient</code></td><td>封面模糊作背景，双层渐变接入 surface。</td></tr>
+          <tr><td><code>.m3-chip</code></td><td><code>FilterChip(selectedShape = CircleShape)</code></td><td>未选中 8dp 圆角 label-large，选中变全圆 + secondary-container；标签 chips 用 AssistChip（描边）。</td></tr>
+          <tr><td><code>.m3-btn</code> XS–XL</td><td><code>Button</code> 32 / 40 / 56 / 96 / 136</td><td>按压向方形 morph（8/8/12/16/16）；禁用 on-surface 38% + 12% 容器；字号随档增大。</td></tr>
+          <tr><td><code>.m3-fab.ext</code> 56dp</td><td><code>SmallExtendedFloatingActionButton</code></td><td>详情页「开始阅读」：56dp、对称 16dp 内缩、title-medium 标签；FAB 默认 primary-container + elevation 3。</td></tr>
+          <tr><td><code>.m3-sheet</code></td><td><code>ModalBottomSheet</code></td><td>阅读设置 / 章节筛选共用；顶部 28dp 圆角 + 32×4 拖拽条 + 32% scrim，进入 400ms decelerate。</td></tr>
+          <tr><td><code>.m3-wavy</code></td><td><code>LinearWavyProgressIndicator</code></td><td>下载中任务；暂停退回 <code>LinearProgressIndicator</code>。</td></tr>
+          <tr><td><code>.m3-slider</code> 4×44</td><td><code>Slider</code>（M3E 手柄）</td><td>阅读器章节滑杆与亮度共用；开关手柄 16 关 / 24 开 / 按压 28。</td></tr>
+          <tr><td>动效 token</td><td><code>MaterialTheme.motionScheme</code>（spatial / effects × default / fast / slow）</td><td>Web 回退：emphasized 曲线 + duration 刻度（进入 400ms / 退出 200ms）；颜色与透明度无 overshoot。</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+  </div>
+</main>
+
+<footer class="foot">
+  <div class="wrap" style="display:flex;justify-content:space-between;gap:24px;padding:0">
+    <div>
+      Kurisa · 本地优先的漫画与小说阅读器<br>
+      Kotlin Multiplatform + Compose Multiplatform · 设计原型不包含任何第三方内容
+    </div>
+    <div style="text-align:right">
+      <a href="prototype.html">交互原型 →</a><br>
+      <a href="../docs/architecture.md">架构文档</a> · <a href="../docs/comic-e2e-plan.md">全流程计划</a>
+    </div>
+  </div>
+</footer>
+
+<script src="assets/tokens.js"></script>
+<script src="assets/data.js"></script>
+<script src="assets/screens.js"></script>
+<script src="assets/board.js"></script>
+</body>
+</html>

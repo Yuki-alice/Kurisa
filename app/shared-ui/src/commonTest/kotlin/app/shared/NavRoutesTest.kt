@@ -30,8 +30,8 @@ class NavRoutesTest {
         ShelfRoute,
         ExploreRoute("k"),
         SearchRoute,
-        DetailRoute("w"),
-        ReaderRoute("w", "c"),
+        DetailRoute("w", "src.key", "标题"),
+        ReaderRoute("w", "c", "src.key"),
         SourcesRoute,
         RuleTestRoute,
         DownloadsRoute,
@@ -51,5 +51,28 @@ class NavRoutesTest {
     fun routeCountGuard() {
         // 加新目的地必须同步注册（数对不上就去补 appSerializersModule）。
         assertEquals(9, routes.size)
+    }
+
+    @Test
+    fun sourceKeySurvivesRoundTripAndKeepsLocalDefault() {
+        // B4：sourceKey 是多态序列化的真实字段，不能只在内存里传。
+        val detail = DetailRoute("w", "ex.b", "B-W1")
+        val backDetail = json.decodeFromString(
+            PolymorphicSerializer(NavKey::class),
+            json.encodeToString(PolymorphicSerializer(NavKey::class), detail),
+        )
+        assertEquals(detail, backDetail)
+        assertEquals("ex.b", (backDetail as DetailRoute).sourceKey)
+
+        val reader = ReaderRoute("w", "c", "ex.b")
+        val backReader = json.decodeFromString(
+            PolymorphicSerializer(NavKey::class),
+            json.encodeToString(PolymorphicSerializer(NavKey::class), reader),
+        )
+        assertEquals("ex.b", (backReader as ReaderRoute).sourceKey)
+
+        // 本地书无源归属，默认空串，既有调用方零改动。
+        assertEquals("", DetailRoute("w").sourceKey)
+        assertEquals("", ReaderRoute("w", "c").sourceKey)
     }
 }

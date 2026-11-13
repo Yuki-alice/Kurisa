@@ -15,8 +15,7 @@
 > - §7 引用迁移完毕：源码树无 `plugin-engine.md` / `ADR-011` / `v4-dual-runtime-DRAFT` 引用（KDoc 改指 `DESIGN.md`/`HOST-SDK.md` 或直写事实，单测断言同步）。
 > - 外部事项（非插件范围，移交并行工作区/M5；2026-11-12 记录）：`feature/reader` 在研手势变更致 `:app:shared-ui` 暂不可编译（含面板接线与热重载单测，此前已绿，并行区合入后重跑即绿）；`data/localimport` 在研测试灯具触发 C1 卫生门禁（`RepoHygieneTest`）。另：导航侧 `ReaderRoute.sourceKey` 接线待 M5 Detail/Reader 屏落实（提供方 `workSourceKey` 缝已就绪）；分段计时 UI 消费待 M5；WASM/独立进程按 ADR-002 明确不实施。
 > - P3（可观测性底座 + 规则测试面板 + 按作品路由缝）：`EngineTelemetry/NetworkTelemetry/HtmlTelemetry`（JS 求值耗时 / 真实请求+缓存命中+去重合并+net 耗时 / 解析查询计数+耗时）+ `SourceRuntime.onTrace` 调用链 trace；`RulesEngine.diagnose/diagnoseDetail/diagnoseContent` 三步诊断 + `SourceRuntime.diagnoseSearch/Detail/Content` 门面（仅规则源，JS 源显式 CONTRACT）+ `SourceCatalog.testRules` 装配出口；规则测试面板 UI 已接线（`RuleTestRoute` + `RuleTestScreen` 三步展示 + `parseRuleTestResult` 映射单测 + `NavRoutesTest` 9 路由锁门，源管理页“规则测试”入口）；`RegistryChapterProvider.workSourceKey` 按作品路由（命中作品源，否则回退首个 enabled 源；导航侧 `ReaderRoute.sourceKey` 待 M5 Detail/Reader 落实后接线）；对应单测绿。
-> - 待办（P3）：规则测试面板 UI（后端 `diagnose()` 已就绪）、多源按作品路由（`ReaderRoute.sourceKey`）、热重载/懒激活、分段计时 UI；34 源官方矩阵待 refs 环境重跑。
-> - 待办：SDK 余组（`Store.cache.getOrPut`、规则 `settings` 段）、P3（测试面板/多源路由/热重载/分段计时 UI）、34 源矩阵 refs 重跑。
+> - 残余待办（非插件系统范围，移交 M5/M6）：多源按作品路由（`ReaderRoute.sourceKey` 接线）、热重载/懒激活、分段计时 UI 消费；34 源官方矩阵 refs 环境重跑。
 
 ## 1. 差距矩阵
 
@@ -105,7 +104,7 @@
 
 **P3 · 工具链与剩余扩展性**
 
-- 规则测试面板：后端三步诊断已就绪（`RulesEngine.diagnose/diagnoseDetail/diagnoseContent`，失败走 `{error,code}` 通道）；Compose UI 待 M5（面板字段即后端返回体，见 `RulesEngineTest.diagnoseExposesThreeSteps`）。
+- 规则测试面板：后端三步诊断已就绪（`RulesEngine.diagnose/diagnoseDetail/diagnoseContent`，失败走 `{error,code}` 通道）；**Compose UI 已接线**（`RuleTestRoute` + `RuleTestScreen` 三步展示 + `parseRuleTestResult` 映射单测 + `NavRoutesTest` 9 路由锁门，源管理页「规则测试」入口；面板字段即后端返回体，见 `RulesEngineTest.diagnoseExposesThreeSteps`）。
 - 分段计时：引擎/网络/解析三段计数与耗时底座已就绪（`Telemetry.kt` + `SourceRuntime.onTrace` 调用链 trace，只记路径/耗时/分类）；UI 日志消费待 M5。
 - 多源按作品路由：提供方缝已就绪（`RegistryChapterProvider.workSourceKey`，命中作品源否则回退，单测锁定）；导航侧 `ReaderRoute.sourceKey` 接线待 M5（Detail/Reader 屏均为占位实现）。
 - 开发期热重载：机制就绪（`installSource` → `manager.invalidate` → 下次调用重装配，无需重启；`SourceCatalogTest.installPersistsAndActivatesImmediately` 锁定）；文件监听式自动重载待开发期工具链。

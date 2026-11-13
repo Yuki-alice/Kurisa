@@ -48,7 +48,7 @@ fun main() {
         db = database,
         httpClient = http,
         cookies = cookies,
-        appVersion = "0.0.0",
+        appVersion = "1.0.0",
         loadScript = { path -> File(path).readText() },
         nowMs = { System.currentTimeMillis() },
     )

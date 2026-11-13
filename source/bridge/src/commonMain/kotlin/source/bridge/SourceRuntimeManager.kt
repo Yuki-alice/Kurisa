@@ -18,7 +18,7 @@ data class PluginRuntimeSpec(
     val capabilities: Set<SourceCapability> = emptySet(),
     val settingsJson: String = "{}",
     val apiVersion: Int = ContractPolicy.CURRENT_API_VERSION,
-    val appVersion: String = "0.0.0",
+    val appVersion: String = "1.0.0",
     val locale: String = "zh_CN",
     val platform: String = "common",
     /**

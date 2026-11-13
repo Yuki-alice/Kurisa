@@ -7,12 +7,14 @@
 
 | 文档 | 定位 |
 | --- | --- |
-| `comic-e2e-plan.md` | **漫画全流程唯一活计划位**：本地导入 + 插件网络源的端到端 walkthrough、断点清单（带 `file:line`）、阶段任务与验收门。小说延后 |
+| `comic-e2e-plan.md` | **漫画全流程唯一活计划位**：本地导入 + 插件网络源的端到端 walkthrough、断点清单（带 `file:line`）、阶段任务与验收门。小说 M4 已落地，本计划聚焦漫画两条 walkthrough |
 | `architecture.md` | 总体架构与 ADR。ADR-002/003、§4.6.3、§4.7 继续有效；§4.3 的单发模型叙述已加指向说明，实现现状以代码为准、目标态以 `plugin-system/DESIGN.md` 为准 |
 | `plugin-system/DESIGN.md` | 插件系统设计（目标态）：运行时生命周期、Host SDK、声明式规则层、安全与性能目标 |
 | `plugin-system/HOST-SDK.md`、`plugin-system/SOURCE-PACKAGE.md` | Host SDK 冻结签名与一体包（含 `rules/v1`）规范 |
 | `contract/source.d.ts`、`contract/source-v4.d.ts` | JS 侧类型声明（v2/v3 冻结、v4 增补），契约形状依据 |
 | `contract/index-schema.json` | 源仓库索引 schema |
+
+> 小说 M4 已落地（2026-11-13 合并 867167e），其交接文档 `novel-reader-handoff.md` 见第 2 节。
 
 ## 2. 参考与历史资料（保留，非规范）
 
@@ -33,12 +35,13 @@
 | `source-compatibility.md`、`real-source-e2e.md` | 34 源兼容矩阵与本地 E2E 结果。**属本地门禁基线**：对应测试需外部 refs 目录，CI 不自动执行 |
 | `contract/manga-example.js`、`novel-example.js`、`v4-example.js` | 契约示例源（`example.*` 合成站点） |
 | `baseline/`、`screenshots/` | 基线与截图资产。`baseline/mangadex-search-one.json` 是 M0 历史实测样本，仅被 `m0-verification-report.md` 引用，**不得复用为新 fixture**（C1） |
+| `design/README.md` | M5 高保真设计原型：13 屏 M3 Expressive 说明 + 可点原型 + tokens，纯前端、C1 合成素材（位于仓库根 `design/`，从 `docs/` 记为 `../design/README.md`）。**设计规格，非仓库实现现状** |
 
 ### 测试门禁口径
 
 `desktopTest` 中的 `RealSourceE2ETest` / `AllSourcesCompatibilityTest` / `SourcesRepoContractTest`
 需 `-Dkurisa.refsDir` 或 `-Dkurisa.sourcesRepoDir` 等外部目录，否则打印 `SKIP` 并按通过计。
-「测试全绿」不等于全流程跑过；可复现的漫画端到端回归以 `comic-e2e-plan.md` §3 为准。
+「测试全绿」不等于全流程跑过；可复现的漫画端到端回归以 `comic-e2e-plan.md` §3 为准。两条 walkthrough 已有自动回归：`app/shared-ui/src/desktopTest/kotlin/app/shared/ComicWalkthroughTest.kt`（网络源）与 `data/localimport/src/commonTest/kotlin/data/localimport/LocalComicWalkthroughTest.kt`（本地 CBZ），均为 `example.*` 合成数据，但仍不等于真实站点跑通。主仓 CI 见 `.github/workflows/ci.yml`（`desktopTest` + `assembleDebug`）。
 
 ## 3. 已归档（`_archive/2026-11-12/`）
 

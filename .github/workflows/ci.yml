@@ -1,0 +1,32 @@
+name: CI
+
+# 主仓 Kotlin Multiplatform 工程门禁（Gradle 9.4.1 / Kotlin 2.4.21 / AGP 9.2.1）。
+# 注意：需要外部 refs 的 RealSourceE2ETest / AllSourcesCompatibilityTest /
+# SourcesRepoContractTest 在缺少目录时会打印 SKIP 并按通过计，
+# 因此 CI 全绿不等于真实站点全流程已跑通。
+# C1 红线：不引入 secrets、不写死任何真实站点域名。
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: Kurisa
+    steps:
+      # 检出到 Kurisa/ 子目录，与上面的 working-directory 保持一致。
+      - uses: actions/checkout@v4
+        with:
+          path: Kurisa
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Run desktop tests and Android debug assemble
+        run: ./gradlew desktopTest :app:android:assembleDebug --console=plain --no-daemon

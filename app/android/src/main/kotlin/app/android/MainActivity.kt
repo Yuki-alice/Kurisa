@@ -64,7 +64,7 @@ class MainActivity : ComponentActivity() {
             db = database,
             httpClient = defaultHttpClient(),
             cookies = cookies,
-            appVersion = "0.0.0",
+            appVersion = "1.0.0",
             loadScript = { path ->
                 val f = File(path)
                 if (f.isAbsolute) f.readText()
