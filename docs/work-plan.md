@@ -5,7 +5,7 @@
 | 文档状态 | **活跃（2026-11-13 起）**。本文是后续实施的唯一计划入口；`comic-e2e-plan.md` 已完成，降为验收记录。**§2 是后端功能专项**，其余章节保留 UI / 平台 / 生态视角，重叠任务以 §2 为准 |
 | 范围 | 核心功能（后端优先）、M5（UI / 设计系统）、M6（平台能力）、M7（发布）与 P2 源生态 |
 | 前置 | P0 清障 + P1 漫画端到端数据链路已落地（主仓 `4b238cf` / `c06ef4f`）；M4 小说已合并 `867167e` |
-| 当前基线 | `desktopTest` **502 用例 / 0 失败 / 0 错误 / 0 跳过**（2026-11-14 凌晨合并远端后复核）；`:app:android:assembleDebug`、iOS 模拟器编译通过；源仓门禁与 `SourcesRepoContractTest`（52 源）真实跑通 |
+| 当前基线 | `desktopTest` **608 用例 / 0 失败 / 0 错误 / 0 跳过**（2026-11-14 双 Agent 合并后本地全量实测，118 个测试类）；`:app:android:assembleDebug`、`verifyCommonMainReaderDatabaseMigration`、源仓 `npm test` 与 `SourcesRepoContractTest`（2 源 / 2 索引）实跑通过 |
 | 最近交接 | **`handoff-2026-11-13.md`**：本轮已落地的核心能力、四处「已实现但没接上」的缺口、接手顺序与已知偶发问题 |
 | 纪律 | `AGENTS.md` 任务→技能路由；C1 主仓零真实站点；ADR-005 漫画/小说共用一条管线；ADR-006 默认不加 `expect/actual`；改桥/Cookie/白名单前先 `security-audit` |
 
@@ -25,15 +25,17 @@
 源管理页「检查更新」（索引由宿主注入、只读本地文件）；`SourceCatalog.explore` 与最小发现页入口。
 另补**最小导航壳**：顶层四页签（书架 / 搜索 / 探索 / 下载）+ 顶栏「源管理 / 设置」，此前 9 条路由注册却无入口可到达。
 
-**Koin 已部分落地**：`AppContainer`（`app/shared-ui`，`koin-core`）已接管共享网络栈
-（`CookieStore` / `HttpClient` / `ImageFetcher` 一份），阅读器不再自建 CookieStore；
-**剩余** `BE-A5`：Search / Detail 两个 VM 工厂仍手写，`koin-compose-viewmodel` 未引入。
+**双 Agent 合并后已接通**（后端专项收口）：`BE-A5` Koin 收口（Search / Detail / Settings 三个 VM 由
+`AppContainer` 提供）；章节缓存写透 + 更新调度器 + 平台触发；历史 / 阅读统计；日志与遥测分段归因
+（`emitCall` 产出 js/net/parse/init）；两仓 `index schema` 统一；规则源灯具回归；Settings 最小可用；
+Cookie 加密持久化与配对 UA 重启恢复；下载分片并发与乱序续传；`verifyMigrations` 打开；
+VIDEO / AUDIO 类型化 payload。五处「数据层已实装但没接上」的断点统一由 `BackendWiring` 收口，
+双端壳构造并启动 `UpdateScheduler`。
 
-**未完成**（本规划要解决的）：
-`BE-A5` 剩余部分（VM 工厂收口）；`settings` 屏仍是 `TODO` 占位；
-`HostUi` 默认拒绝（WebView 登录 M6）；VIDEO/AUDIO 渲染显式抛 CONTRACT；iOS Xcode 壳与三端截图基线；
-截图基线未补进 walkthrough；发版签名与源签名信任模型；两仓 `index schema` 双版本漂移；
-`rules/v1` 覆盖率 1/52；真实站点可用性零回归。
+**仍待办**（表现层 / 平台 / 发布，逐项见 §4.1 明确未完成清单）：
+M5 视觉还原与设计原型定稿；iOS Xcode 壳 / Keychain / WKWebView；Android / iOS 交互式 WebView 登录；
+ADR-010 桌面 WebView helper 进程；发版签名、`applicationId` 占位替换、三端截图基线与真机验证；
+真实站点全流程回归（C1 红线内只能本地 refs 条件门禁）；备份 / 恢复 `BE-B4`（用户指定暂不实现）。
 
 ---
 
@@ -196,7 +198,8 @@ Koin 接线已排进第一批（`BE-A5`）：接线完成后统一走 `viewModel
 | 发版签名 / `applicationId` 占位替换 / 三端截图基线 / 真机验证 | 缺签名密钥、macOS 与设备 |
 | 真实站点回归 | C1 红线禁止真实站点 URL 进主仓，只有本地 refs 条件门禁 |
 | `1.sqm` 的自动迁移校验 | `ALTER TABLE ADD COLUMN` 的列顺序与 CREATE 文本漂移不可达，由 `MigrationAndOfflineTest` 手工覆盖（见 `data/db/MIGRATIONS.md`） |
-| VIDEO / AUDIO 渲染 `BE-C4` | 需改 `ChapterPayload` 与 B 批白名单文件，合并后由装配层统一收口 |
+| VIDEO / AUDIO 播放器表现层 | 后端 `BE-C4` 已完成（类型化 `Video`/`Audio` payload、路径与解析、页数兜底）；播放器 UI 随 M5 落地，当前只产类型化数据 |
+| 规则源回归覆盖口径 | B-7 是灯具选择器回归（14 选择器 / 2 原型 / 9 步骤），**不等价真实站点跑通**；`.workbuddy/refs` 仅 34 个 venera 脚本，历史「52 源」基线无法复现 |
 | 视觉还原 / 设计原型定稿 | 用户口径后置 |
 
 ---
@@ -207,10 +210,10 @@ Koin 接线已排进第一批（`BE-A5`）：接线完成后统一走 `viewModel
 2. **订阅 URL 是将来联网时的安全边界**：`BE-A3` 当前由宿主注入 `fetchIndex` 且只读本地索引文件，模块不联网、fail-closed，未引入任意 URL 请求。若将来改为真正联网订阅，必须先过 `security-audit` + `UrlPolicy` 再合并（`SourceRepoSubscription.refresh` 自身不校验 URL）。
 3. **Cookie 持久化牵动红线**：`BE-B1` 必须保持 `cf_clearance` 与 UA 配对、重定向逐跳复核，先 `security-audit` + `privacy-audit`。
 4. **CI 首次运行**：`.github/workflows/ci.yml` 在 GitHub Actions 上需 Android SDK 37 与 Gradle wrapper 镜像可用；本地 `assembleDebug` 已通过，云端未实测。
-5. **条件门禁仍会 SKIP**：`RealSourceE2ETest` / `AllSourcesCompatibilityTest` / `SourcesRepoContractTest` 缺外部目录时打印 SKIP 按通过计。CI 全绿 ≠ 真实站点全流程跑通；本轮本地已真实跑通 `SourcesRepoContractTest`（52 源）。
-6. **Koin 迁移面**：三个 VM 工厂 + 共享网络栈同时在多个模块，逐模块替换、每步回归。
-7. **schema 变更可回滚**：改索引形状必须先有迁移路径与旧客户端 fail-closed 语义；`verifyMigrations` 打开前需补快照。
-8. **下载分片连续性假设**：`DownloadSink.completedParts` 隐含分片从 0 连续，`BE-B7` 引入乱序完成时必须同步改。
+5. **条件门禁仍会 SKIP**：`RealSourceE2ETest` / `AllSourcesCompatibilityTest` / `SourcesRepoContractTest` 缺外部目录时打印 SKIP 按通过计。CI 全绿 ≠ 真实站点全流程跑通；本次带源仓目录实跑 `SourcesRepoContractTest`（2 源 / 2 索引，非 SKIP），历史「52 源」基线无法复现，不虚报。
+6. **偶发 flake**：`P1NetworkComplementTest.requestAllPreservesOrderAndDedupes` 曾在全量并发下失败 1 次，隔离重跑与合并后全量门均通过；再现时优先单跑确认，不要改网络代码。
+7. **schema 变更可回滚**：`verifyMigrations` 已打开，2–6 号快照与 `--rerun-tasks` 复验流程见 `data/db/MIGRATIONS.md`；`1.sqm` 因列顺序漂移仍由手工用例覆盖。
+8. **下载并发已落地**：`completedParts` 改为 `Set<Int>`（真实索引），分片并发由 `Semaphore` 限流，乱序 / 稀疏断点不丢片。
 
 ---
 
@@ -227,7 +230,7 @@ KURISA_SOURCES_REPO=<源仓绝对路径> ./gradlew :source:bridge:desktopTest \
   --tests "source.bridge.SourcesRepoContractTest"
 ```
 
-- 用例数只增不减（当前 502 基线，合并后全量复核）；0 新增 SKIP；截图基线随 walkthrough 一起入库。
+- 用例数只增不减（当前 **608** 基线，2026-11-14 双 Agent 合并后全量实测）；0 失败 / 0 错误 / 0 新增 SKIP；截图基线随 walkthrough 一起入库。
 - 每个任务独立提交，回滚点写进提交信息；改 schema 必须可回滚。
 - 新文档一律引用本文（`docs/work-plan.md`）、`docs/architecture.md` 与
   `docs/plugin-system/DESIGN.md`；归档区文件不得作为实现依据。
