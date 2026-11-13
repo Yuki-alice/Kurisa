@@ -144,7 +144,7 @@
 
 | 任务 | 改动点 | 验收门 | 回滚 |
 | --- | --- | --- | --- |
-| A1 设计原型定稿 | `design/`（13 屏 M3 Expressive 原型 + tokens）**当前在工作树中整体为未提交删除**，属原型重做中的状态。定稿前不按它排期、不做视觉还原；这批删除由用户自行处理，本规划不提交、不恢复、不引用 | 原型定稿并明确版本；`docs/README.md` 的 design 条目与本表同步 | 无（不排期即无改动） |
+| A1 设计原型定稿 | `design/`（13 屏 M3 Expressive 原型 + tokens）17 个文件已在 `main` 中、工作区干净，但原型版本未定稿。定稿前不按它排期、不做视觉还原，本规划不引用它作为实现依据 | 原型定稿并明确版本；`docs/README.md` 的 design 条目与本表同步 | 无（不排期即无改动） |
 | A2 Explore 屏 | **已完成最小入口**：`SourceCatalog.explore`（`ReaderSourceAssembly.kt`，走 `categoryComics.load`）+ `aggregateExplore` 三态聚合；`ExploreScreen` 由 App 层注入 loader，空 `sourceKey` 表示聚合全部启用源。视觉待定稿 | 有源 / 无源 / 单源失败三态（`ExploreAggregationTest`）；`NavRoutesTest` 不回归 | 独立提交，可单屏关闭 |
 | A3 Shelf 屏（数据层已完成） | `ShelfScreen` 已重写（在线收藏 + 本地书同构分区、封面、导入、删除）并双端注入；加入 / 移出入口已接（`BE-A2`） | 搜索加入 → 书架可见 → 打开详情 → 移出生效；`ShelfBindingsTest` 绿 | 同上 |
 | A4 Downloads / Settings | **已完成接线**：双端构造 `createDownloadController`，详情页「下载本章」入队，下载页消费 tasks 流与暂停/续传/取消（`BE-A1`）。`feature/settings/Settings.kt` 仍是占位 | 下载页能看到真实任务、重启可续传；Settings 状态机测试 | 同上 |
@@ -183,12 +183,28 @@ Koin 接线已排进第一批（`BE-A5`）：接线完成后统一走 `viewModel
 - **不在本轮重构插件引擎 / 扩 JS 契约**：S0/P0/P1/P2/P3 已完工，改动须以基准测试证明收益。
 - **不在设计原型定稿前做视觉还原**（用户口径）；UI 只补齐让后端能力可触达的最小入口。
 
+### 4.1 明确未完成（可达优先口径）
+
+只做能在本机 `desktopTest` / `:app:android:assembleDebug` 证明的功能；以下项只留接口与标注，不宣称完成。
+
+| 项 | 现状 / 原因 |
+| --- | --- |
+| 备份 / 恢复 `BE-B4` | 用户指定暂不实现 |
+| iOS Xcode 壳 / Keychain / WKWebView | `app/ios` 只有 README，Windows 无 macOS / Xcode |
+| Android / iOS 交互式 WebView 登录 | `HostUi.requestLogin` 默认 `Unsupported`；桌面已接 Cookie 导入兜底，平台 WebView 壳未落地 |
+| ADR-010 桌面 WebView helper 进程 | 需系统内核 native host（Windows 为 WebView2），本轮按 ADR-009 走 Cookie 导入兜底 |
+| 发版签名 / `applicationId` 占位替换 / 三端截图基线 / 真机验证 | 缺签名密钥、macOS 与设备 |
+| 真实站点回归 | C1 红线禁止真实站点 URL 进主仓，只有本地 refs 条件门禁 |
+| `1.sqm` 的自动迁移校验 | `ALTER TABLE ADD COLUMN` 的列顺序与 CREATE 文本漂移不可达，由 `MigrationAndOfflineTest` 手工覆盖（见 `data/db/MIGRATIONS.md`） |
+| VIDEO / AUDIO 渲染 `BE-C4` | 需改 `ChapterPayload` 与 B 批白名单文件，合并后由装配层统一收口 |
+| 视觉还原 / 设计原型定稿 | 用户口径后置 |
+
 ---
 
 ## 5. 风险与待拍板
 
-1. **A1 设计原型重做中**：`design/` 的 17 个已跟踪文件当前在工作树中全部为**未提交删除**。**表现层任务全部后置**，不按旧原型排期；这批删除由用户自行处理，本规划不提交、不恢复、不引用。
-2. **订阅 URL 是新的安全边界**：`BE-A3` 的 `fetchIndex` 是唯一引入「用户输入的任意 URL」的链路，`SourceRepoSubscription.refresh` 目前未过 `UrlPolicy`；安全评审前不要合并。
+1. **A1 设计原型定稿前不排期**：`design/` 的 17 个文件已在 `main` 中且工作区干净，但原型版本未定稿。**表现层任务全部后置**，本规划不引用它作为实现依据；定稿后同步本表与 `docs/README.md`。
+2. **订阅 URL 是将来联网时的安全边界**：`BE-A3` 当前由宿主注入 `fetchIndex` 且只读本地索引文件，模块不联网、fail-closed，未引入任意 URL 请求。若将来改为真正联网订阅，必须先过 `security-audit` + `UrlPolicy` 再合并（`SourceRepoSubscription.refresh` 自身不校验 URL）。
 3. **Cookie 持久化牵动红线**：`BE-B1` 必须保持 `cf_clearance` 与 UA 配对、重定向逐跳复核，先 `security-audit` + `privacy-audit`。
 4. **CI 首次运行**：`.github/workflows/ci.yml` 在 GitHub Actions 上需 Android SDK 37 与 Gradle wrapper 镜像可用；本地 `assembleDebug` 已通过，云端未实测。
 5. **条件门禁仍会 SKIP**：`RealSourceE2ETest` / `AllSourcesCompatibilityTest` / `SourcesRepoContractTest` 缺外部目录时打印 SKIP 按通过计。CI 全绿 ≠ 真实站点全流程跑通；本轮本地已真实跑通 `SourcesRepoContractTest`（52 源）。
@@ -211,7 +227,7 @@ KURISA_SOURCES_REPO=<源仓绝对路径> ./gradlew :source:bridge:desktopTest \
   --tests "source.bridge.SourcesRepoContractTest"
 ```
 
-- 用例数只增不减（当前 488 基线）；0 新增 SKIP；截图基线随 walkthrough 一起入库。
+- 用例数只增不减（当前 502 基线，合并后全量复核）；0 新增 SKIP；截图基线随 walkthrough 一起入库。
 - 每个任务独立提交，回滚点写进提交信息；改 schema 必须可回滚。
 - 新文档一律引用本文（`docs/work-plan.md`）、`docs/architecture.md` 与
   `docs/plugin-system/DESIGN.md`；归档区文件不得作为实现依据。

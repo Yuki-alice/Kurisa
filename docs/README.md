@@ -31,11 +31,13 @@
 | `source-compatibility.md`、`real-source-e2e.md` | 源兼容矩阵与本地 E2E 结果。**属本地门禁基线**：对应测试需外部 refs 目录，CI 不自动执行 |
 | `contract/manga-example.js`、`novel-example.js`、`v4-example.js` | 契约示例源（`example.*` 合成站点）。`manga-example.js` 头块能力位已修为 `search,comic` |
 | `baseline/`、`screenshots/` | 基线与截图资产。`baseline/mangadex-search-one.json` 是 M0 历史实测样本，**不得复用为新 fixture**（C1） |
-| `../design/README.md` | M5 高保真设计原型（13 屏 M3 Expressive + tokens + 可点原型，纯前端、C1 合成素材），**设计规格非实现现状**。当前该目录 17 个已跟踪文件在工作树中为**未提交删除**（原型仍在重新设计），定稿前不作为排期依据；这批删除不由规划文档处理，定稿后本条与 `work-plan.md` 的 M5 任务需同步刷新 |
+| `../design/README.md` | M5 高保真设计原型（13 屏 M3 Expressive + tokens + 可点原型，纯前端、C1 合成素材），**设计规格非实现现状**。17 个文件已在 `main` 中、工作区干净，但原型版本未定稿，定稿前不作为排期依据；定稿后本条与 `work-plan.md` 的 M5 任务同步刷新 |
+| `../data/db/MIGRATIONS.md` | `:data:db` 迁移校验机制：2–6 号 schema 快照、`verifyMigrations` 打开状态、`1.sqm` 无法自动校验的原因、快照再生脚本与新增迁移流程 |
 
 ### 测试门禁口径
 
 - 当前基线：全仓 `desktopTest` **502 用例 / 0 失败 / 0 错误 / 0 跳过**（2026-11-14 凌晨合并远端后复核），`:app:android:assembleDebug` 与 iOS 模拟器编译通过。
+- 迁移校验：`data/db/build.gradle.kts` 的 `verifyMigrations` 已打开，2–6 号快照、`1.sqm` 未纳入自动校验的原因与快照再生脚本见 `data/db/MIGRATIONS.md`；新增迁移需带 `--rerun-tasks` 复验。
   本轮新增 31 条：`DownloadManagerTest` 5、`TarArchiveTest` 6、`ShelfViewModelTest` 3、`ShelfBindingsTest` 3、`SourceRepoSubscriptionTest` 9、`SourceRepoUpdatesTest` 5。
 - 两条 walkthrough 已有自动回归：`app/shared-ui/src/desktopTest/kotlin/app/shared/ComicWalkthroughTest.kt`（网络源）与 `data/localimport/src/commonTest/kotlin/data/localimport/LocalComicWalkthroughTest.kt`（本地 CBZ），均为 `example.*` 合成数据 / 内存 Vfs，**仍不等于真实站点跑通**。截图基线待补。
 - 条件门禁：`RealSourceE2ETest` / `AllSourcesCompatibilityTest` 需 `-Dkurisa.refsDir`，`SourcesRepoContractTest` 需 `-Dkurisa.sourcesRepoDir` 或环境变量 `KURISA_SOURCES_REPO`；缺目录时打印 `SKIP` 并按通过计，**CI 全绿不等于全流程跑过**。本轮已带真实源仓目录跑通 `SourcesRepoContractTest`（52 源 / 52 条索引）。
