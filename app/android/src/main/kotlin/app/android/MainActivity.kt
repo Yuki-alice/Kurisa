@@ -15,6 +15,7 @@ import app.cash.sqldelight.driver.android.AndroidSqliteDriver
 import app.shared.App
 import app.shared.AppContainer
 import app.shared.CallbackDownloadSink
+import app.shared.DbCookiePersistence
 import app.shared.createDownloadController
 import app.shared.createShelfBindings
 import app.shared.createSourceCatalog
@@ -66,7 +67,11 @@ class MainActivity : ComponentActivity() {
             nowMs = { System.currentTimeMillis() },
         )
         // 真实源装配（P0）：与桌面同形，无源时退化为 Noop（C1）。
-        val cookies = CookieStore()
+        // BE-B1 / BE-C2：密钥由 Android Keystore 持有，Cookie 只以密文落 reader.db。
+        val cookies = CookieStore(
+            persistence = DbCookiePersistence(database),
+            cipher = KeystoreSecretCipher(),
+        )
         val http = defaultHttpClient()
         val container = AppContainer(cookies, http)
         val bindings = createSourceCatalog(

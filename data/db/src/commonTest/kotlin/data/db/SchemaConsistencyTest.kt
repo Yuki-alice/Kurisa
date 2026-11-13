@@ -62,4 +62,16 @@ class SchemaConsistencyTest {
         assertTrue(!RollbackScripts.V5_TO_V4.contains("reading_progress"))
         assertTrue(!RollbackScripts.V5_TO_V4.contains("bookmark"))
     }
+
+    @Test
+    fun cookieRebuildMigrationIsReversibleAndScopedToOneTable() {
+        // v6 的 5.sqm 重建 cookie 表：旧库含明文 value，新库只有 value_enc。
+        assertTrue(RollbackScripts.V5_COOKIE.contains("value TEXT NOT NULL"))
+        assertTrue(RollbackScripts.V6_TO_V5.contains("cookie_v5"))
+        assertTrue(RollbackScripts.V6_TO_V5.contains("DROP TABLE cookie"))
+        // 回滚不得波及其他表
+        assertTrue(!RollbackScripts.V6_TO_V5.contains("reading_progress"))
+        assertTrue(!RollbackScripts.V6_TO_V5.contains("highlight"))
+        assertTrue(!RollbackScripts.V6_TO_V5.contains("work"))
+    }
 }

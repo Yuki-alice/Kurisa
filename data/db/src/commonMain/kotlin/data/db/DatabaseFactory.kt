@@ -74,6 +74,27 @@ object RollbackScripts {
     /** v5 → v4：去掉 `highlight` 表（M4 划线；纯新增表，回滚即删表）。 */
     val V5_TO_V4 = "DROP TABLE highlight;"
 
+    /** v5 基线的 cookie 表（明文 value + domain/name 主键），供 5.sqm 迁移测试建旧库。 */
+    val V5_COOKIE = """
+        CREATE TABLE cookie (
+          domain TEXT NOT NULL, name TEXT NOT NULL, value TEXT NOT NULL,
+          expires_at INTEGER, PRIMARY KEY(domain, name)
+        );
+    """.trimIndent()
+
+    /**
+     * v6 → v5：重建旧 cookie 表。加密记录不回滚成明文（密钥轮换后也无从解密），
+     * 直接丢弃；其余 12 张表一列不动。执行前调用方须备份 DB 文件。
+     */
+    val V6_TO_V5 = """
+        CREATE TABLE cookie_v5 (
+          domain TEXT NOT NULL, name TEXT NOT NULL, value TEXT NOT NULL,
+          expires_at INTEGER, PRIMARY KEY(domain, name)
+        );
+        DROP TABLE cookie;
+        ALTER TABLE cookie_v5 RENAME TO cookie;
+    """.trimIndent()
+
     /** v1 基线（无 settings_json），供迁移测试建 v1 库。 */
     val V1_SOURCE = """
         CREATE TABLE source (

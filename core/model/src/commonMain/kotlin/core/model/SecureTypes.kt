@@ -61,3 +61,22 @@ data class SourceAuditEvent(
     val atEpochMs: Long,
     val note: String = "",
 )
+
+/**
+ * 同步敏感值加解密出口（BE-C2，平台注入；ADR-006 不新增 expect/actual）。
+ *
+ * 与 [SecureStorage] 的区别：[SecureStorage] 是冻结的 suspend 形状，供后续 token / 账号态使用；
+ * 本接口是同步的，供 Cookie 仓库在既有同步 API 内把 value 加密后落盘。
+ * 实现约定（MASVS-CRYPTO）：AES-256-GCM、每次加密独立随机 IV、密钥不落源码、
+ * 密钥由平台密钥库或用户私有目录的受保护文件持有；密文自包含 IV 与认证标签。
+ *
+ * 平台实现：Android Keystore / 桌面加密文件；iOS Keychain 随 iOS 平台壳落地，
+ * 未注入实现的宿主应保持纯内存语义，不得退化为明文落盘。
+ */
+interface SecretCipher {
+    /** 返回自包含密文（随机 IV + 密文 + 认证标签），绝不返回明文。 */
+    fun encrypt(plain: String): String
+
+    /** 密文损坏或密钥轮换导致认证失败时返回 null，由调用方按失效丢弃。 */
+    fun decrypt(payload: String): String?
+}

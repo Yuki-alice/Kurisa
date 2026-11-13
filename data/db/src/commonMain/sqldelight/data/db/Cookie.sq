@@ -1,17 +1,30 @@
+-- BE-B1：Cookie 值只存密文；UA 与 clearance 同行绑定；主键补全 path（RFC 6265）。
 CREATE TABLE cookie (
   domain TEXT NOT NULL,
   name TEXT NOT NULL,
-  value TEXT NOT NULL,
+  path TEXT NOT NULL DEFAULT '/',
+  value_enc TEXT NOT NULL,
   expires_at INTEGER,
-  PRIMARY KEY(domain, name)
+  paired_user_agent TEXT,
+  source TEXT NOT NULL DEFAULT 'SEED',
+  invalid_reason TEXT,
+  obtained_at INTEGER NOT NULL DEFAULT 0,
+  http_only INTEGER NOT NULL DEFAULT 0,
+  secure INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY(domain, name, path)
 );
 
 upsertCookie:
-INSERT OR REPLACE INTO cookie (domain, name, value, expires_at)
-VALUES (?, ?, ?, ?);
+INSERT OR REPLACE INTO cookie
+  (domain, name, path, value_enc, expires_at, paired_user_agent, source,
+   invalid_reason, obtained_at, http_only, secure)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 
-selectCookies:
-SELECT * FROM cookie WHERE domain = ?;
+selectAllCookies:
+SELECT * FROM cookie;
 
 deleteCookiesOfHost:
-DELETE FROM cookie WHERE domain = ?;
+DELETE FROM cookie WHERE lower(ltrim(domain, '.')) = lower(?);
+
+clearCookies:
+DELETE FROM cookie;

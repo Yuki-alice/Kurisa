@@ -9,6 +9,7 @@ import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
 import app.shared.App
 import app.shared.AppContainer
 import app.shared.CallbackDownloadSink
+import app.shared.DbCookiePersistence
 import app.shared.createDownloadController
 import app.shared.createShelfBindings
 import app.shared.createSourceCatalog
@@ -45,9 +46,14 @@ fun main() {
     )
     // 真实源装配（P0）：registry + runtime 复用同一 CookieStore/HttpClient，
     // 无安装源时 RegistryChapterProvider 退化为 Noop 语义（C1）。
-    val cookies = CookieStore()
-    val http = defaultHttpClient()
+    // BE-B1 / BE-C2：Cookie 只以 AES-256-GCM 密文落 reader.db，密钥留在用户私有目录；
+    // 重启后恢复 cf_clearance 与配对 UA，不再每次重开都重新过盾。
     val appDir = File(System.getProperty("user.home"), ".kurisa").apply { mkdirs() }
+    val cookies = CookieStore(
+        persistence = DbCookiePersistence(database),
+        cipher = FileSecretCipher(File(appDir, "cookie.key")),
+    )
+    val http = defaultHttpClient()
     // 本地库（P2 阅读闭环：`local:` 前缀作品走本地源；目录不存在即空库，可直接放入 TXT/EPUB/CBZ/PDF/目录）。
     val booksDir = File(appDir, "books").apply { mkdirs() }
     val localFs = LocalSourceFileSystem.fromDirectory(booksDir.absolutePath)
