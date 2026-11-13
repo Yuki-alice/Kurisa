@@ -48,6 +48,7 @@ kotlin {
             implementation(project(":core:reader"))
             implementation(project(":core:designsystem"))
             implementation(project(":data:repository"))
+            implementation(project(":data:download"))
             implementation(project(":data:localimport"))
             implementation(project(":data:network"))
             implementation(project(":data:db"))
