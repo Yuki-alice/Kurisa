@@ -28,6 +28,7 @@ kotlin {
             implementation(project(":core:model"))
             implementation(project(":core:reader"))
             implementation(project(":data:images"))
+    implementation(project(":data:network"))
             implementation(libs.korlibs.io)
             implementation(libs.xmlutil.core)
             implementation(libs.ksoup)

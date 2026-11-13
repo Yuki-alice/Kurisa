@@ -15,8 +15,9 @@ class SchemaConsistencyTest {
         val tables = listOf(
             "source", "work", "chapter", "reading_progress", "shelf",
             "shelf_item", "download_task", "source_kv", "cookie", "bookmark", "local_book",
+            "highlight",
         )
-        assertTrue(tables.size == 11)
+        assertTrue(tables.size == 12)
         assertTrue(tables.contains("work"))
         assertTrue(tables.contains("shelf_item"))
     }
@@ -36,5 +37,29 @@ class SchemaConsistencyTest {
         assertTrue(down.contains("INSERT INTO source_v1"))
         // 回滚只丢 settings_json，不得丢 key/name/version
         assertTrue(down.contains("`key`, name, version"))
+    }
+
+    @Test
+    fun novelAnchorMigrationIsAdditiveAndReversible() {
+        val forward = listOf(
+            "ALTER TABLE reading_progress ADD COLUMN char_offset INTEGER NOT NULL DEFAULT -1;",
+            "ALTER TABLE reading_progress ADD COLUMN layout_key TEXT NOT NULL DEFAULT '';",
+        )
+        assertTrue(forward.all { it.startsWith("ALTER TABLE") && !it.contains("DROP") })
+        val down = RollbackScripts.V4_TO_V3
+        assertTrue(down.contains("reading_progress_v3"))
+        assertTrue(down.contains("INSERT INTO reading_progress_v3"))
+        // 回滚只丢两个新列，不得丢 work_id/chapter_id/percent
+        assertTrue(down.contains("work_id, chapter_id, page_index"))
+        assertTrue(down.contains("percent"))
+        assertTrue(RollbackScripts.V3_PROGRESS.contains("work_id TEXT PRIMARY KEY"))
+    }
+
+    @Test
+    fun highlightTableIsAdditiveAndReversible() {
+        // v5 新增整表（见 4.sqm），禁止改已有表；回滚即删表，不碰其他表。
+        assertTrue(RollbackScripts.V5_TO_V4.contains("DROP TABLE highlight"))
+        assertTrue(!RollbackScripts.V5_TO_V4.contains("reading_progress"))
+        assertTrue(!RollbackScripts.V5_TO_V4.contains("bookmark"))
     }
 }

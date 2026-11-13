@@ -784,7 +784,7 @@ Idle → ResolvingChapter → Loading → Ready → Reading
 
 ### 6.3 小说阅读器
 
-- **解析**：EPUB / CBZ / ZIP 容器用 **Kompress**（纯 Kotlin 压缩归档），OPF / NCX / XHTML 用 **XmlUtil** 或 **Ksoup**，TXT 编码探测（UTF-8 / GBK / GB18030）用 **korlibs** 的 Charsets/Encodings，章节标题正则自行定义；CBZ 内图片按文件名自然排序转图片页。全部在 `commonMain`，无平台依赖。
+- **解析**：EPUB / CBZ / ZIP 容器用 **korlibs-io**（`openAsZip` + `localVfs`，项目既有依赖，不另引 Kompress），OPF / NCX / XHTML 用 **XmlUtil** 或 **Ksoup**，TXT 编码探测（UTF-8 / GBK / GB18030）用 **korlibs** 的 Charsets/Encodings（`GbkCodec` 纯 Kotlin 表），章节标题正则自行定义；CBZ 内图片按文件名自然排序转图片页。全部在 `commonMain`，无平台依赖。
 - **排版分页**：基于 CMP `Paragraph` / `TextLayoutResult` 测量，按视口尺寸缓存分页结果；字号/行距/段距/字体变化后局部重排，避免全书重算。
 - **能力**：目录跳转、书签、划线、笔记、全文搜索、夜间/ sepia 主题、翻页动画（仿真 / 滑动 / 无）、进度百分比与剩余阅读时间估算。
 - **HTML 正文**：走受限标签白名单渲染，图片资源经 `novel.onImageResolve` 重写后交给图片管线。
@@ -796,7 +796,7 @@ Idle → ResolvingChapter → Loading → Ready → Reading
 | EPUB / TXT / CBZ / ZIP | 纯 Kotlin（zip + XML + 文本） | 无                                                                                                                    |
 | PDF                    | KMP 渲染               | **ComposePdfReader**（`dev.nucleusframework:pdfium`，Compose-first、渐进渲染、可选文本）；M0 已确认覆盖 JVM / Android / iOS，无需 `PdfRenderer` / `PDFKit` / `PDFBox` 三端 actual |
 | 图片目录 / 文件夹             | 文件枚举 + 自然排序              | `FileSystem` expect/actual                                                                                           |
-| 拖放导入                   | 桌面专属                     | Compose for Desktop `onDragAndDrop`                                                                                  |
+| 文件选择导入                 | 桌面 FileDialog / Android SAF（经 `PickLocalFiles` 接口注入； iOS 待验证） | 平台壳提供选择器实现，`LocalBookImporter` 负责落盘 + 入库（幂等）；拖放导入暂不做 |
 
 导入后生成与在线作品同构的 `Work / Chapter`，书架统一展示，来源标记为 `local`。
 
@@ -822,7 +822,7 @@ QuickJS 引擎与三端链接由 `quickjs-kt` 依赖提供，归入 ②，无需
 
 | 接口                | Android                             | iOS                           | Desktop JVM                       | 说明                                                                                     |
 | ----------------- | ----------------------------------- | ----------------------------- | --------------------------------- | -------------------------------------------------------------------------------------- |
-| `AppDirectories`  | app-specific + SAF 导出               | `Application Support`         | `AppDirs`                         | `FileKit` 负责选择/保存，`kotlinx-io / Okio` 负责读写                                             |
+| `AppDirectories`  | app-specific + SAF 导出               | `Application Support`         | `AppDirs`                         | 选择经 `PickLocalFiles` 接口（桌面 FileDialog / Android SAF，FileKit 经实测不可用已撤）；本地书读写走 `korlibs` VfsFile |
 | `DesktopShell`    | —                                   | —                             | 窗口尺寸 / 系统托盘 / 菜单栏 / 快捷键 / 拖放      | 桌面专属，其他端空实现；拖放可用 **Compose DND**                                                       |
 | `PlatformRuntime` | 独立 `:source` 进程（可选）+ WorkManager 绑定 | BGTaskScheduler 绑定 + Keychain | 协程常驻 + 加密文件（KVault/KSafe 不覆盖 JVM） | 后台调度主体用 **KMP WorkManager**（Android/iOS），安全存储用 **KVault / KSafe**（Android/iOS），此处只补齐缺口 |
 

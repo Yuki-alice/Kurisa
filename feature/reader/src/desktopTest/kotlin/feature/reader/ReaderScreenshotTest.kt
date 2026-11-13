@@ -143,16 +143,19 @@ class ReaderScreenshotTest {
         return file
     }
 
-    /** 断言图片非空白：采样网格出现 3 种以上颜色（页面+文字/UI缺一不可全同色）。 */
+    /** 断言图片非空白：采样网格出现多种颜色（页面+文字/UI缺一不可全同色）。
+     * 文字页正文只占顶部区域，8x8 稀疏网格会全部落在白底上误判为空白，
+     * 因此用 24x24 加密网格（576 点，仍是 O(1) 开销）保证命中正文行。 */
     private fun assertRendered(image: ImageBitmap, label: String, minColors: Int = 3) {
         val map = image.toPixelMap()
         val colors = HashSet<Int>()
         val w = map.width
         val h = map.height
-        for (gx in 0 until 8) {
-            for (gy in 0 until 8) {
-                val x = (gx * w / 8).coerceIn(0, w - 1)
-                val y = (gy * h / 8).coerceIn(0, h - 1)
+        val n = 24
+        for (gx in 0 until n) {
+            for (gy in 0 until n) {
+                val x = (gx * w / n).coerceIn(0, w - 1)
+                val y = (gy * h / n).coerceIn(0, h - 1)
                 val c = map[x, y]
                 colors += (c.red * 255).toInt() shl 16 or ((c.green * 255).toInt() shl 8) or (c.blue * 255).toInt()
                 if (colors.size > minColors) break
@@ -343,5 +346,87 @@ class ReaderScreenshotTest {
         // 红底页 + 阅读器底色至少 2 色。
         assertRendered(shot, "pdf", minColors = 2)
         // PDF 渲染由 pdfium 异步完成，不强制非空白断言（截图人工复核）。
+    }
+
+    @Test
+    fun novelReaderRendersRichTextWithSearchAndHighlight() {
+        // 富文本全链路渲染证据：行内样式 + 搜索高亮 + 划线底色 + 外链 + 列表同一屏。
+        val provider = object : ChapterProvider {
+            override suspend fun chapters(workId: String) =
+                listOf(core.reader.ChapterRef("c1", "第一章", 0))
+
+            override suspend fun payload(workId: String, chapterId: String): ChapterPayload =
+                ChapterPayload.Text(
+                    body = "<h2>第一章 开端</h2>" +
+                        "<p>正文<b>加粗</b>与<i>斜体</i>混合 <a href=\"https://example.com/x\">外链</a>。</p>" +
+                        "<ul><li>条目一</li><li>条目二</li></ul>",
+                    format = core.model.TextFormat.HTML,
+                )
+        }
+        val m = ReaderViewModel(
+            workId = "w",
+            chapterId = "c1",
+            machine = core.reader.ReaderStateMachine(),
+            chapters = provider,
+            saveProgress = SaveReadingProgressUseCase(NoopProgress()),
+            loadProgress = LoadReadingProgressUseCase(NoopProgress()),
+            pages = LoadPageBytesUseCase(PngImages(emptyList())),
+            domains = emptySet(),
+            settingsStore = InMemoryReaderSettingsStore(
+                ReadingConfig(theme = core.reader.ReaderTheme.WHITE),
+            ),
+        )
+        rule.setContent { ReaderScreenVm(workId = "w", onBack = {}, vm = m) }
+        rule.waitUntil(15_000) { m.state.value.novel != null }
+        rule.waitUntil(15_000) { m.state.value.pageCount > 0 }
+        // 划线整段 + 搜索命中，覆盖高亮三层叠加路径。
+        val anchor = m.state.value.novel?.blocks?.firstOrNull { it.kind == core.model.NovelBlockKind.PARAGRAPH }
+        assertTrue(anchor != null)
+        m.onIntent(ReaderContract.Intent.ToggleBlockHighlight(anchor.charStart, anchor.charStart + 4))
+        m.onIntent(ReaderContract.Intent.SearchQueryChanged("外链"))
+        rule.mainClock.advanceTimeBy(1_000)
+        rule.waitForIdle()
+        val shot = rule.onRoot().captureToImage()
+        saveEvidence("reader-novel-rich.png", shot)
+        assertRendered(shot, "novel-rich", minColors = 2)
+    }
+
+    @Test
+    fun novelReaderRendersStructuredText() {
+        val provider = object : ChapterProvider {
+            override suspend fun chapters(workId: String) =
+                listOf(core.reader.ChapterRef("c1", "第一章", 0))
+
+            override suspend fun payload(workId: String, chapterId: String): ChapterPayload =
+                ChapterPayload.Text(
+                    body = "<h2>第一章 开端</h2>" +
+                        "<p>这是一段用于验证小说排版分页的正文内容，包含足够长的句子以触发文本测量与分页。</p>" +
+                        "<script>evil()</script><p>第二段正文继续显示。</p>",
+                    format = core.model.TextFormat.HTML,
+                )
+        }
+        val m = ReaderViewModel(
+            workId = "w",
+            chapterId = "c1",
+            machine = core.reader.ReaderStateMachine(),
+            chapters = provider,
+            saveProgress = SaveReadingProgressUseCase(NoopProgress()),
+            loadProgress = LoadReadingProgressUseCase(NoopProgress()),
+            pages = LoadPageBytesUseCase(PngImages(emptyList())),
+            domains = emptySet(),
+            settingsStore = InMemoryReaderSettingsStore(
+                ReadingConfig(theme = core.reader.ReaderTheme.WHITE),
+            ),
+        )
+        rule.setContent { ReaderScreenVm(workId = "w", onBack = {}, vm = m) }
+        rule.waitUntil(15_000) { m.state.value.novel != null }
+        // 等虚拟页回传后再截，保证 HorizontalPager 已按分页结果布局。
+        rule.waitUntil(15_000) { m.state.value.pageCount > 0 }
+        rule.mainClock.advanceTimeBy(1_000)
+        rule.waitForIdle()
+        val shot = rule.onRoot().captureToImage()
+        saveEvidence("reader-novel-paged.png", shot)
+        // 白底 + 深色文字至少 2 色；HTML 标签与 script 内容不应出现在渲染树。
+        assertRendered(shot, "novel", minColors = 2)
     }
 }

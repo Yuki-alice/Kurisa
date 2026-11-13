@@ -48,6 +48,7 @@ kotlin {
             implementation(project(":core:reader"))
             implementation(project(":core:designsystem"))
             implementation(project(":data:repository"))
+            implementation(project(":data:localimport"))
             implementation(project(":data:network"))
             implementation(project(":data:db"))
             implementation(project(":source:bridge"))
@@ -72,6 +73,8 @@ kotlin {
             implementation(kotlin("test-junit"))
             implementation(libs.sqldelight.sqlite.driver)
             implementation(libs.ktor.client.mock)
+            implementation(libs.compose.ui.test.junit4)
+            implementation(compose.desktop.currentOs)
         }
     }
 }

@@ -13,3 +13,6 @@ VALUES (?, ?, ?, ?, ?, ?);
 
 selectLocalBooks:
 SELECT * FROM local_book ORDER BY imported_at DESC;
+
+deleteLocalBook:
+DELETE FROM local_book WHERE id = ?;

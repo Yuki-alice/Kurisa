@@ -178,6 +178,35 @@ class BridgeChapterProviderTest {
     }
 
     @Test
+    fun resolveNovelImageAppliesOnImageResolveConfig() = runTest {
+        val calls = object : SourceCalls {
+            override suspend fun searchWorks(keyword: String, optionsJson: String, page: Int) = ""
+            override suspend fun defaultSearchOptions() = "[]"
+            override suspend fun loadWorkDetails(workId: String, kind: ContentKind) = ""
+            override suspend fun loadChapterPayload(workId: String, chapterId: String, kind: ContentKind) = ""
+            override suspend fun invoke(path: String, argsJson: String) = ""
+            override suspend fun novelImageResolve(url: String) = ImageLoadConfig(
+                url = "https://cdn.example.com/novel-rewritten.jpg",
+                headers = mapOf("Referer" to "https://example.com/"),
+                maxRetries = 2,
+            )
+        }
+        val p = BridgeChapterProvider(calls, ContentKind.NOVEL)
+        val request = p.resolveNovelImage("https://example.com/novel-original.jpg")
+        assertEquals("https://example.com/novel-original.jpg", request.url)
+        assertEquals("https://cdn.example.com/novel-rewritten.jpg", request.effectiveUrl)
+        assertEquals("https://example.com/", request.headers["Referer"])
+        assertEquals(2, request.maxRetries)
+    }
+
+    @Test
+    fun resolveNovelImageDefaultsToPassthrough() = runTest {
+        val p = BridgeChapterProvider(FakeCalls(), ContentKind.NOVEL)
+        val request = p.resolveNovelImage("https://cdn.example.com/a.png")
+        assertEquals("https://cdn.example.com/a.png", request.effectiveUrl)
+    }
+
+    @Test
     fun dispatchersConfined() = runTest {
         val d = DefaultSourceDispatchers()
         assertTrue(d.dispatcherFor("a") === d.dispatcherFor("a"))

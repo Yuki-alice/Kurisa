@@ -82,6 +82,8 @@ data class ReadingConfig(
     val flashWhite: Boolean = false,
     /** 自动裁边（对齐 Komikku cropBorders；解码层按需裁剪并写回缓存）。 */
     val cropBorders: Boolean = false,
+    /** 小说排版（漫画字段不复用；变化触发 LayoutKey 失效与局部重排）。 */
+    val typography: NovelTypography = NovelTypography(),
 )
 
 /**
@@ -123,6 +125,14 @@ interface ChapterProvider {
         ReaderPageRequest(url)
 
     /**
+     * 小说文内图片解析（`novel.onImageResolve` 接线点）。
+     * 默认直通 URL；`BridgeChapterProvider` 覆盖为按源配置重写。
+     * 与 [resolvePage] 不同：小说图片在正文解析后批量重写（ViewModel 侧），
+     * 不在每次取页时逐一执行 JS，避免超长章对几十张图重复进桥。
+     */
+    suspend fun resolveNovelImage(url: String): ReaderPageRequest = ReaderPageRequest(url)
+
+    /**
      * 源内直读字节（PDF 等专用阅读器章节用；默认不支持）。
      * @param chapterId 章节定位（本地源为 `"$manga/$entry"` 路径）。
      */
@@ -130,10 +140,13 @@ interface ChapterProvider {
         throw UnsupportedOperationException("该源不支持直读：$chapterId")
 }
 
-/** payload → 可渲染页数（小说正文分页随 M4，此处 Text 计 1 页）。 */
-fun pageCountOf(payload: ChapterPayload): Int = when (payload) {
+/**
+ * payload → 可渲染页数。小说虚拟页数由 UI 排版完成后通过 [novelPages] 覆盖（M4）；
+ * 不传时仍按 1 页，保证漫画路径与旧调用方语义不变。
+ */
+fun pageCountOf(payload: ChapterPayload, novelPages: Int? = null): Int = when (payload) {
     is ChapterPayload.Images -> payload.urls.size.coerceAtLeast(1)
-    is ChapterPayload.Text -> 1
+    is ChapterPayload.Text -> novelPages?.coerceAtLeast(1) ?: 1
 }
 
 /**
@@ -154,6 +167,16 @@ class ReaderStateMachine {
     private var chapterIndex: Int = -1
     private var requestedChapterId: String? = null
     private var lastPayload: ChapterPayload? = null
+    /** 小说虚拟页数（UI 排版完成后回传；漫画恒为 null）。 */
+    private var novelPageCount: Int? = null
+
+    /** 小说虚拟页数回填：`pageTo` / 预加载窗口 / 页数显示统一走有效页数。 */
+    fun setNovelPageCount(count: Int) {
+        novelPageCount = count.coerceAtLeast(1)
+    }
+
+    /** 当前小说载荷（含 format，供 ViewModel 结构化解析）。 */
+    fun currentNovelPayload(): ChapterPayload.Text? = lastPayload as? ChapterPayload.Text
 
     fun setConfig(config: ReadingConfig) {
         this.config = config
@@ -176,8 +199,8 @@ class ReaderStateMachine {
         val cur = _state.value
         val (w, c, total) = when (cur) {
             is ReaderState.Ready -> Triple(cur.workId, cur.chapterId, cur.pageCount)
-            is ReaderState.Reading -> Triple(cur.workId, cur.chapterId, pageCountOf(lastPayload ?: return))
-            is ReaderState.Preloading -> Triple(cur.workId, cur.chapterId, pageCountOf(lastPayload ?: return))
+            is ReaderState.Reading -> Triple(cur.workId, cur.chapterId, pageCountOf(lastPayload ?: return, novelPageCount))
+            is ReaderState.Preloading -> Triple(cur.workId, cur.chapterId, pageCountOf(lastPayload ?: return, novelPageCount))
             else -> return
         }
         _state.value = ReaderState.Reading(w, c, index.coerceIn(0, (total - 1).coerceAtLeast(0)))
@@ -193,6 +216,7 @@ class ReaderStateMachine {
         chapterList = emptyList()
         chapterIndex = -1
         lastPayload = null
+        novelPageCount = null
         _state.value = ReaderState.Idle
     }
 
@@ -320,7 +344,7 @@ class ReaderStateMachine {
     }
 
     /** 当前章节总页数（无载荷时 0）。 */
-    fun currentPageCount(): Int = lastPayload?.let(::pageCountOf) ?: 0
+    fun currentPageCount(): Int = lastPayload?.let { pageCountOf(it, novelPageCount) } ?: 0
 
     /** 当前页图片 URL（漫画 Images；小说/未知为空，UI 据此分支）。 */
     fun currentPageUrls(): List<String> =
@@ -338,9 +362,9 @@ class ReaderStateMachine {
      */
     fun preloadWindow(before: Int = 1, after: Int = 2): List<Int> {
         val (page, total) = when (val cur = _state.value) {
-            is ReaderState.Reading -> cur.pageIndex to pageCountOf(lastPayload ?: return emptyList())
+            is ReaderState.Reading -> cur.pageIndex to pageCountOf(lastPayload ?: return emptyList(), novelPageCount)
             is ReaderState.Ready -> 0 to cur.pageCount
-            is ReaderState.Preloading -> cur.pageIndex to pageCountOf(lastPayload ?: return emptyList())
+            is ReaderState.Preloading -> cur.pageIndex to pageCountOf(lastPayload ?: return emptyList(), novelPageCount)
             else -> return emptyList()
         }
         if (total <= 0) return emptyList()
@@ -361,12 +385,14 @@ class ReaderStateMachine {
             fail("provider 缺失", false)
             return
         }
+        // 切章先清空虚拟页数，待 Viewer 排版完成后重新回填，避免沿用上一章页数。
+        novelPageCount = null
         loading(w, c)
         val payload = runCatching { p.payload(w, c) }.getOrElse {
             fail("章节加载失败：${it.message}", true)
             return
         }
         lastPayload = payload
-        ready(w, c, pageCountOf(payload))
+        ready(w, c, pageCountOf(payload, novelPageCount))
     }
 }

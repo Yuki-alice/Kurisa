@@ -11,14 +11,25 @@ import app.shared.createSourceCatalog
 import data.db.ReaderDatabase
 import data.network.CookieStore
 import data.network.defaultHttpClient
+import data.localimport.LOCAL_WORK_PREFIX
+import data.localimport.LocalChapterProvider
+import data.localimport.LocalRoutingChapterProvider
+import data.localimport.LocalSourceFileSystem
+import data.repository.createBookmarkRepository
+import data.repository.createLocalBookRepository
 import data.repository.createProgressRepository
 import data.repository.createReaderSettingsStore
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import java.awt.FileDialog
 import java.io.File
 
 /** 桌面入口（产品显示名只落配置层，此处标题即一例）。 */
 fun main() {
     val database = openReaderDatabase()
     val progress = createProgressRepository(database)
+    val bookmarks = createBookmarkRepository(database)
+    val localBooks = createLocalBookRepository(database)
     val settings = createReaderSettingsStore(
         db = database,
         nowMs = { System.currentTimeMillis() },
@@ -28,6 +39,10 @@ fun main() {
     val cookies = CookieStore()
     val http = defaultHttpClient()
     val appDir = File(System.getProperty("user.home"), ".kurisa").apply { mkdirs() }
+    // 本地库（P2 阅读闭环：`local:` 前缀作品走本地源；目录不存在即空库，可直接放入 TXT/EPUB/CBZ/PDF/目录）。
+    val booksDir = File(appDir, "books").apply { mkdirs() }
+    val localFs = LocalSourceFileSystem.fromDirectory(booksDir.absolutePath)
+    val localChapters = LocalChapterProvider(localFs) { it.removePrefix(LOCAL_WORK_PREFIX) }
     val sourcesDir = File(appDir, "sources").apply { mkdirs() }
     val bindings = createSourceCatalog(
         db = database,
@@ -44,10 +59,29 @@ fun main() {
             state = rememberWindowState(width = 1000.dp, height = 720.dp),
         ) {
             App(
-                readerChapters = bindings.chapters,
+                readerChapters = LocalRoutingChapterProvider(localChapters, bindings.chapters),
                 readerDomains = bindings.currentDomains(),
                 readerProgress = progress,
                 readerSettings = settings,
+                bookmarkRepository = bookmarks,
+                localFs = localFs,
+                localBooks = localBooks,
+                pickLocalFiles = {
+                    withContext(Dispatchers.IO) {
+                        val dialog = FileDialog(null as java.awt.Frame?, "导入本地书", FileDialog.LOAD)
+                        dialog.isMultipleMode = true
+                        dialog.filenameFilter = java.io.FilenameFilter { _, name ->
+                            name.substringAfterLast('.', "").lowercase() in
+                                setOf("txt", "epub", "cbz", "zip", "pdf")
+                        }
+                        dialog.isVisible = true
+                        val chosen = dialog.files?.toList().orEmpty()
+                        dialog.dispose()
+                        chosen.mapNotNull { f ->
+                            runCatching { f.name to f.readBytes() }.getOrNull()
+                        }
+                    }
+                },
                 sourceCatalog = bindings,
                 saveSourceScript = { key, version, script, format ->
                     val ext = if (format == "rules/v1") "$version.rules.json" else "$version.js"

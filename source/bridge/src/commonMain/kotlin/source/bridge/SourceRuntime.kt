@@ -120,7 +120,7 @@ class SourceRuntime(
     }
 
     /** `novel.onImageResolve` → 归一化配置（与图片共用剥离/复核语义）。未声明时返回 null。 */
-    suspend fun novelImageResolve(url: String): ImageLoadConfig? {
+    override suspend fun novelImageResolve(url: String): ImageLoadConfig? {
         if (!descriptor.hasNovelImageResolve) return null
         val args = buildJsonArray {
             add(kotlinx.serialization.json.JsonPrimitive(url))

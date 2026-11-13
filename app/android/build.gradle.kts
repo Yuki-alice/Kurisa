@@ -35,6 +35,7 @@ dependencies {
     implementation(project(":app:shared-ui"))
     implementation(project(":data:db"))
     implementation(project(":data:repository"))
+    implementation(project(":data:localimport"))
     implementation(project(":data:network"))
     implementation(project(":core:reader"))
     implementation(libs.sqldelight.android.driver)

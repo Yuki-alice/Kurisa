@@ -5,13 +5,15 @@ CREATE TABLE reading_progress (
   scroll_offset REAL,
   percent REAL NOT NULL,
   updated_at INTEGER NOT NULL,
-  synced INTEGER NOT NULL DEFAULT 0
+  synced INTEGER NOT NULL DEFAULT 0,
+  char_offset INTEGER NOT NULL DEFAULT -1,
+  layout_key TEXT NOT NULL DEFAULT ''
 );
 
 upsertProgress:
 INSERT OR REPLACE INTO reading_progress
-  (work_id, chapter_id, page_index, scroll_offset, percent, updated_at, synced)
-VALUES (?, ?, ?, ?, ?, ?, ?);
+  (work_id, chapter_id, page_index, scroll_offset, percent, updated_at, synced, char_offset, layout_key)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);
 
 selectProgress:
 SELECT * FROM reading_progress WHERE work_id = ?;

@@ -38,6 +38,7 @@ kotlin {
             implementation(project(":source:contract"))
             implementation(project(":source:hostapi"))
             implementation(project(":data:db"))
+            implementation(project(":data:localimport"))
             implementation(project(":data:network"))
             implementation(libs.sqldelight.coroutines.extensions)
             implementation(libs.kotlinx.serialization.json)
@@ -48,6 +49,7 @@ kotlin {
         }
         getByName("desktopTest").dependencies {
             implementation(kotlin("test-junit"))
+            implementation(libs.korlibs.io)
             implementation(libs.sqldelight.sqlite.driver)
             implementation(libs.ktor.client.mock)
             implementation(libs.kotlinx.coroutines.test)
