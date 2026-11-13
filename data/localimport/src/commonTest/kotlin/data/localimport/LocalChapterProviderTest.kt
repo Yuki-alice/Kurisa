@@ -49,9 +49,10 @@ class LocalChapterProviderTest {
     fun chaptersDescSkipsNonChapters() = runTest {
         val chapters = provider(seed()).chapters("M")
         // 漫画/归档章节保持原顺序；文本书以 `<path>#<index>` 追加，不影响漫画章节。
+        // 展示名去归档扩展名（.cbz/.epub），id 仍是原路径。
         val comicTitles = chapters.filterNot { it.id.contains('#') }.map { it.title }
         assertEquals(
-            listOf("vol.cbz", "ch02", "ch01", "book.epub").sortedWith(NaturalOrder).reversed(),
+            listOf("vol", "ch02", "ch01", "book").sortedWith(NaturalOrder).reversed(),
             comicTitles,
         )
         assertTrue(chapters.all { it.id.startsWith("M/") })

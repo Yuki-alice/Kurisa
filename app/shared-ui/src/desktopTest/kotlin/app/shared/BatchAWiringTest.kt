@@ -41,7 +41,7 @@ class BatchAWiringTest {
     @Test
     fun exploreWithoutInstalledSourceReturnsExplicitError() = runTest {
         val page = catalog().explore(sourceKey = "com.example.missing")
-        assertTrue(page.works.isEmpty())
+        assertTrue(page.hits.isEmpty())
         assertEquals(listOf("无可用源"), page.errors)
     }
 

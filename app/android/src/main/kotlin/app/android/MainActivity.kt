@@ -13,14 +13,15 @@ import kotlin.coroutines.Continuation
 import kotlin.coroutines.resume
 import app.cash.sqldelight.driver.android.AndroidSqliteDriver
 import app.shared.App
+import app.shared.AppContainer
 import app.shared.CallbackDownloadSink
 import app.shared.createDownloadController
-import app.shared.downloadTaskDirName
 import app.shared.createShelfBindings
 import app.shared.createSourceCatalog
+import app.shared.downloadTaskDirName
 import core.model.ChapterPayload
-import data.db.ReaderDatabase
 import data.download.KtorRangeFetcher
+import data.db.ReaderDatabase
 import data.network.CookieStore
 import data.network.defaultHttpClient
 import data.localimport.LOCAL_WORK_PREFIX
@@ -56,7 +57,6 @@ class MainActivity : ComponentActivity() {
         val progress = createProgressRepository(database)
         val bookmarks = createBookmarkRepository(database)
         val localBooks = createLocalBookRepository(database)
-        val shelf = createShelfBindings(database) { System.currentTimeMillis() }
         // 本地库（P2 阅读闭环：`local:` 前缀作品走本地源；filesDir/books 可直接放入 TXT/EPUB/CBZ/PDF/目录）。
         val booksDir = File(filesDir, "books").apply { mkdirs() }
         val localFs = LocalSourceFileSystem.fromDirectory(booksDir.absolutePath)
@@ -68,6 +68,7 @@ class MainActivity : ComponentActivity() {
         // 真实源装配（P0）：与桌面同形，无源时退化为 Noop（C1）。
         val cookies = CookieStore()
         val http = defaultHttpClient()
+        val container = AppContainer(cookies, http)
         val bindings = createSourceCatalog(
             db = database,
             httpClient = http,
@@ -81,9 +82,9 @@ class MainActivity : ComponentActivity() {
             nowMs = { System.currentTimeMillis() },
         )
         val readerChapters = LocalRoutingChapterProvider(localChapters, bindings.chapters)
-        // 下载编排（BE-A1）：分片落 filesDir/downloads，抓取走白名单 + 配对 UA。
+        // 在线书架（A2）与下载编排（A1）：与桌面同形，只是根目录换成 filesDir。
+        val shelf = createShelfBindings(database) { System.currentTimeMillis() }
         val downloadsDir = File(filesDir, "downloads").apply { mkdirs() }
-        val sourcesDir = File(filesDir, "sources")
         val downloads = createDownloadController(
             db = database,
             fetcher = KtorRangeFetcher(
@@ -94,14 +95,16 @@ class MainActivity : ComponentActivity() {
             sink = CallbackDownloadSink(
                 listParts = { taskId ->
                     withContext(Dispatchers.IO) {
-                        File(downloadsDir, downloadTaskDirName(taskId)).listFiles { f -> f.name.endsWith(".part") }
+                        File(downloadsDir, downloadTaskDirName(taskId))
+                            .listFiles { f -> f.name.endsWith(".part") }
                             ?.mapNotNull { it.name.removeSuffix(".part").toIntOrNull() }
                             ?.sorted().orEmpty()
                     }
                 },
                 readBytes = { taskId ->
                     withContext(Dispatchers.IO) {
-                        File(downloadsDir, downloadTaskDirName(taskId)).listFiles { f -> f.name.endsWith(".part") }
+                        File(downloadsDir, downloadTaskDirName(taskId))
+                            .listFiles { f -> f.name.endsWith(".part") }
                             ?.sumOf { it.length() } ?: 0L
                     }
                 },
@@ -120,6 +123,7 @@ class MainActivity : ComponentActivity() {
             resolveUrls = { task ->
                 val payload = runCatching { readerChapters.payload(task.workId, task.chapterId) }
                     .getOrNull() as? ChapterPayload.Images
+                // 本地书 URL 形如 `path!/entry`，走不了 Range 抓取，只放行 http(s)。
                 payload?.urls.orEmpty().filter {
                     it.startsWith("https://") || it.startsWith("http://")
                 }
@@ -135,7 +139,6 @@ class MainActivity : ComponentActivity() {
                 bookmarkRepository = bookmarks,
                 localFs = localFs,
                 localBooks = localBooks,
-                shelf = shelf,
                 pickLocalFiles = {
                     val uris = suspendCancellableCoroutine<List<Uri>> { cont ->
                         importContinuation?.resume(emptyList())
@@ -157,21 +160,22 @@ class MainActivity : ComponentActivity() {
                     }
                 },
                 sourceCatalog = bindings,
+                shelf = shelf,
+                downloads = downloads,
+                // 源仓库索引只读 app 私有目录，不联网。
+                fetchRepoIndex = {
+                    withContext(Dispatchers.IO) {
+                        File(File(filesDir, "sources"), "index.json").takeIf { it.isFile }?.readText()
+                    }
+                },
+                container = container,
+                onPickLocalDirectory = null,
                 saveSourceScript = { key, version, script, format ->
                     val ext = if (format == "rules/v1") "$version.rules.json" else "$version.js"
                     val f = File(File(File(filesDir, "sources"), key), ext)
                     f.parentFile?.mkdirs()
                     f.writeText(script)
                     f.absolutePath
-                },
-                downloads = downloads,
-                // 源仓库索引只读本地文件，不发起任意 URL 请求（fail-closed）。
-                fetchRepoIndex = {
-                    withContext(Dispatchers.IO) {
-                        val index = File(sourcesDir, "index.json")
-                        if (!index.isFile) error("未找到本地源仓库索引：${index.absolutePath}")
-                        index.readText()
-                    }
                 },
             )
         }

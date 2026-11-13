@@ -5,7 +5,7 @@
 | 文档状态 | **活跃（2026-11-13 起）**。本文是后续实施的唯一计划入口；`comic-e2e-plan.md` 已完成，降为验收记录。**§2 是后端功能专项**，其余章节保留 UI / 平台 / 生态视角，重叠任务以 §2 为准 |
 | 范围 | 核心功能（后端优先）、M5（UI / 设计系统）、M6（平台能力）、M7（发布）与 P2 源生态 |
 | 前置 | P0 清障 + P1 漫画端到端数据链路已落地（主仓 `4b238cf` / `c06ef4f`）；M4 小说已合并 `867167e` |
-| 当前基线 | `desktopTest` **499 用例 / 0 失败 / 0 错误 / 0 跳过**（2026-11-13 夜 A 批接线后）；`:app:android:assembleDebug`、iOS 模拟器编译通过；源仓门禁与 `SourcesRepoContractTest`（52 源）真实跑通 |
+| 当前基线 | `desktopTest` **502 用例 / 0 失败 / 0 错误 / 0 跳过**（2026-11-14 凌晨合并远端后复核）；`:app:android:assembleDebug`、iOS 模拟器编译通过；源仓门禁与 `SourcesRepoContractTest`（52 源）真实跑通 |
 | 最近交接 | **`handoff-2026-11-13.md`**：本轮已落地的核心能力、四处「已实现但没接上」的缺口、接手顺序与已知偶发问题 |
 | 纪律 | `AGENTS.md` 任务→技能路由；C1 主仓零真实站点；ADR-005 漫画/小说共用一条管线；ADR-006 默认不加 `expect/actual`；改桥/Cookie/白名单前先 `security-audit` |
 
@@ -25,8 +25,12 @@
 源管理页「检查更新」（索引由宿主注入、只读本地文件）；`SourceCatalog.explore` 与最小发现页入口。
 另补**最小导航壳**：顶层四页签（书架 / 搜索 / 探索 / 下载）+ 顶栏「源管理 / 设置」，此前 9 条路由注册却无入口可到达。
 
+**Koin 已部分落地**：`AppContainer`（`app/shared-ui`，`koin-core`）已接管共享网络栈
+（`CookieStore` / `HttpClient` / `ImageFetcher` 一份），阅读器不再自建 CookieStore；
+**剩余** `BE-A5`：Search / Detail 两个 VM 工厂仍手写，`koin-compose-viewmodel` 未引入。
+
 **未完成**（本规划要解决的）：
-`BE-A5` Koin 未接线（VM 工厂仍手写）；`settings` 屏仍是 `TODO` 占位；
+`BE-A5` 剩余部分（VM 工厂收口）；`settings` 屏仍是 `TODO` 占位；
 `HostUi` 默认拒绝（WebView 登录 M6）；VIDEO/AUDIO 渲染显式抛 CONTRACT；iOS Xcode 壳与三端截图基线；
 截图基线未补进 walkthrough；发版签名与源签名信任模型；两仓 `index schema` 双版本漂移；
 `rules/v1` 覆盖率 1/52；真实站点可用性零回归。
@@ -72,7 +76,7 @@
 | A ✅ | 加入 / 移出书架 | `ShelfBindings.kt:44`、`:75` 已由搜索 / 详情 / 书架屏回调触发（`BE-A2`） |
 | A ✅ | 源订阅入口 | `ReaderSourceAssembly.kt:510`、`:524` 已由源管理页「检查更新」触发（`BE-A3`） |
 | A ✅ | Explore 后端出口 | `SourceCatalog.explore`（`ReaderSourceAssembly.kt:370`）已补，`ExploreScreen` 消费（`BE-A4`） |
-| A 待开工 | Koin 未接线（3 个手写 VM 工厂 + 共享网络栈靠参数注入） | `gradle/libs.versions.toml:25` 仅声明依赖，无模块引用（`BE-A5`） |
+| A 部分落地 | Koin 只接管了共享网络栈；Search / Detail 的 VM 工厂仍手写 | `app/shared-ui/.../AppContainer.kt:27` 有 `startKoin`；`Search.kt:143`、`Detail.kt:132` 仍是手写 Factory（`BE-A5`） |
 | B 能力缺失 | Cookie 持久化 / 章节表落地 / 更新调度 / 备份恢复 / 历史统计 / 日志后端 / 遥测消费出口 | `CookieStore.kt:15`、`data/db/build.gradle.kts:67`、`Common.kt:63` |
 | B | SecureStorage 平台后端、HostUi / WebView 登录 | `SecureTypes.kt:44`、`HostApiImpls.kt:349` |
 | C 架构收口 | `verifyMigrations` 关闭、两仓 schema 漂移、VIDEO/AUDIO 分支、真实站点零回归 | `data/db/build.gradle.kts:67`、`SourceRuntime.kt:207` |
@@ -89,7 +93,7 @@
 | **BE-A2** | 书架闭环 | `SearchScreen` 结果行 / `DetailScreen` 加 `onAddToShelf`，`ShelfWorkRow` 加「移出」；`App` 接 `addFromSearch` / `removeFromSource` | — | 搜索加入 → 书架可见 → 打开详情 → 移出生效 | A3 |
 | **BE-A3** | 源订阅入口 | `SourcesScreen`「检查更新」→ `planRepoUpdates` / `refreshRepoUpdates`；`fetchIndex` 由宿主注入并**先过 `security-audit` + `UrlPolicy`**（这是唯一引入用户任意 URL 的链路） | — | 坏索引不崩、minApp 过滤生效、候选可展示；`UrlPolicyTest` 绿 | — |
 | **BE-A4** | Explore 后端出口 | 在 `SourceCatalog` 补 `explore/category` 出口，复用 `runtimeFor` 装配与能力门；结果带 `sourceKey` | — | 有源 / 无源 / 单源失败三态用例；不影响现有 search 基线 | A2 |
-| **BE-A5** | Koin 接线 | `app/shared-ui` 集中 VM 工厂，替换 Search/Detail/Reader 三个手写 Factory；共享 `CookieStore`/`HttpClient` 改 DI 提供；需补 `koin-compose-viewmodel:4.2.2` | BE-A1, BE-A2 | 逐模块替换、每步全量回归；用例数只增不减 | B1 |
+| **BE-A5** | Koin 收口（剩余部分） | 共享网络栈已由 `AppContainer` 接管（`koin-core`）；**剩余**：补 `koin-compose-viewmodel:4.2.2`，把 `SearchViewModelFactory`（`Search.kt:143`）与 `DetailViewModelFactory`（`Detail.kt:132`）换成 `viewModelOf` / `koinViewModel` | BE-A1, BE-A2 | 逐模块替换、每步全量回归；用例数只增不减 | B1 |
 | **BE-B1** | Cookie 持久化 | `CookieStore` 落 `cookie` 表，`cf_clearance` 与 `pairedUserAgent` 绑定不变；先 `security-audit` + `privacy-audit` | BE-A3 | 重启后登录态与配对 UA 可恢复；`CookieStoreTest` / `UrlPolicyTest` 绿 | B2 |
 | **BE-B2** | 章节缓存与更新对比 | `chapter` 表接 `BridgeChapterProvider.chapters`，写 `updated_at` 供增量对比 | — | 章节列表离线可读；更新对比用例 | — |
 | **BE-B3** | 更新调度器 | 纯 Kotlin 轮询编排（按源 → `chapter.updated_at` 对比 → 更新候选），平台触发走接口注入；ADR-006 不加 `expect/actual` | BE-B2 | 调度器单测 + 三端可编译；不依赖真实站点 | — |
@@ -119,7 +123,10 @@
 > 该壳是临时形态，原型定稿后整体换样。
 > 安全口径：下载复用 `KtorRangeFetcher` 既有的白名单逐跳复核与 `cf_clearance`/配对 UA，
 > 订阅链路 fail-closed 不引入新网络出口。回归见 `BatchAWiringTest` / `ExploreAggregationTest`。
-> **第一批剩余**：`BE-A5`（Koin 接线）尚未开工，是第一批的收尾项；做完即第一批闭环。
+> **第一批剩余**：`BE-A5`（Koin 收口）——共享网络栈已由 `AppContainer` 接管，
+> 只剩 Search / Detail 两个 VM 工厂待换 `viewModelOf`；做完即第一批闭环。
+> 上述 A1–A4 能力已于 2026-11-14 凌晨在远端重做的 UI / 装配基线上重放并回归
+> （在线书架、加入/移出、检查更新、Explore、下载编排、最小导航壳均按新接口重新接线）。
 
 ---
 
@@ -151,7 +158,7 @@ Koin 接线已排进第一批（`BE-A5`）：接线完成后统一走 `viewModel
 
 | 任务 | 改动点 | 验收门 | 风险 |
 | --- | --- | --- | --- |
-| B1 Koin 接线 | 见 `BE-A5`：集中 VM 工厂，替换三个手写 Factory，共享网络栈改 DI 提供（**第一批收尾项**） | 全量 499 用例不回归；三端编译绿 | 逐模块替换，禁止一次性改全部屏 |
+| B1 Koin 收口 | 见 `BE-A5`：共享网络栈已在容器内，剩余两个 VM 工厂（Search / Detail）改 `viewModelOf`（**第一批收尾项**） | 全量 502 用例不回归；三端编译绿 | 逐模块替换，禁止一次性改全部屏 |
 | B2 HostUi / WebView 登录 | `source/bridge/.../HostApiImpls.kt:349` 的 `NoopHostUi` 默认拒绝；按 `security-audit`（MASVS-NETWORK/PLATFORM/CODE）落地 `cf_clearance` 与 `pairedUserAgent` 绑定，桌面走 Cookie 导入兜底（ADR-009） | 安全评审通过 + `UrlPolicyTest` 与 `CookieStoreTest` 绿 | 安全红线，先评审后编码 |
 | B3 VIDEO/AUDIO 渲染 | `SourceRuntime.pathForDetails/pathForPayload` 与 `BridgeChapterProvider.payload` 目前对 VIDEO/AUDIO 抛 CONTRACT；见 `BE-C4` | 新增用例覆盖两类 payload；不影响 MANGA/NOVEL 基线 | 独立于阅读器主干，可暂不启用 |
 | B4 分段计时 UI | `EngineTelemetry` / `NetworkTelemetry` / `HtmlTelemetry` 与 `SourceRuntime.onTrace` 已有底座，缺消费面板（见 `BE-B6`） | 面板能展示一次调用的 init/net/parse 分段 | 纯展示，风险低 |

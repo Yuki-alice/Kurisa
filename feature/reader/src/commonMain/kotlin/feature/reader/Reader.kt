@@ -166,13 +166,18 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 import kotlinx.serialization.Serializable
 
-/** 阅读器（漫画 & 小说共用外壳，内部分支；Viewer 由阅读模式选择）。 */
+/**
+ * 阅读器（漫画 & 小说共用外壳，内部分支；Viewer 由阅读模式选择）。
+ *
+ * [sourceKey] 是作品归属源（B4）：空串表示未指定，由 provider 自行回退首个启用源；
+ * 多源并存时必须带上，否则永远读第一个源。[title] 仅用于顶栏，未知时回退章节名。
+ */
 @Serializable
 data class ReaderRoute(
     val workId: String,
     val chapterId: String,
-    /** 作品归属源（B4：App 层据此绑定按作品路由；本地书为空串）。 */
     val sourceKey: String = "",
+    val title: String = "",
 ) : NavKey
 
 @Composable
@@ -191,22 +196,22 @@ fun ReaderScreen(
     /** 书签持久化（默认内存态；平台壳传入 SQLDelight 实现）。 */
     bookmarks: BookmarkRepository = NoopBookmarkRepository,
     /**
-     * 共享网络栈（B3）：平台壳把源装配用的同一个 [CookieStore] / [io.ktor.client.HttpClient]
-     * 传进来，阅读器图片出口与源请求共享 Cookie 与配对 UA；不传时退化为独立实例，
-     * 保证既有调用方与单测零改动。Koin 收口 VM 工厂仍属后续项。
+     * 共享图片出口（由 AppContainer 注入，与源侧共用 CookieStore/HttpClient）。
+     * 为空时（预览/单测）才回落到临时实例，生产路径不得为空（B3）。
      */
-    cookies: CookieStore? = null,
-    httpClient: io.ktor.client.HttpClient? = null,
+    imageFetcher: ImageFetcher? = null,
 ) {
-    val sharedCookies = remember(cookies) { cookies ?: CookieStore() }
-    val sharedHttpClient = remember(httpClient) { httpClient ?: defaultHttpClient() }
-    val images: ImageFetcher = remember(localFs, sharedCookies, sharedHttpClient) {
-        val network = SourceImageFetcher(SourceHttpClient(sharedHttpClient, sharedCookies) { 0L })
+    // 网络栈：优先用容器注入的共享实例；本地作品再叠加本地抓取器。
+    // 不再在此处 `remember { CookieStore() }`——那会与源侧配对 UA 脱钩（B3）。
+    val images: ImageFetcher = remember(localFs, imageFetcher) {
+        val network = imageFetcher
+            ?: SourceImageFetcher(SourceHttpClient(defaultHttpClient(), CookieStore()) { 0L })
         localFs?.let { LocalImageFetcher(it, network) } ?: network
     }
-    val vm: ReaderViewModel = viewModel(
-        key = "reader:$workId:$chapterId",
-        factory = ReaderViewModelFactory(
+    // Koin 场景下依赖由 AppContainer 提供（共享图片出口）；VM 本身用 lifecycle
+    // 的 initializer DSL 构造，不再维护手写 ViewModelProvider.Factory（S2）。
+    val vm: ReaderViewModel = viewModel(key = "reader:$workId:$chapterId") {
+        ReaderViewModel(
             workId = workId,
             chapterId = chapterId,
             chapters = chapters,
@@ -217,8 +222,8 @@ fun ReaderScreen(
             settingsStore = settingsStore,
             mangaTitle = mangaTitle,
             bookmarks = bookmarks,
-        ),
-    )
+        )
+    }
     ReaderScreenVm(
         workId = workId,
         onBack = onBack,

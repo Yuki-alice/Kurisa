@@ -25,7 +25,6 @@ import androidx.navigation3.runtime.rememberNavBackStack
 import androidx.navigation3.ui.NavDisplay
 import androidx.savedstate.serialization.SavedStateConfiguration
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
@@ -40,19 +39,23 @@ import core.model.DownloadTask
 import core.reader.ChapterProvider
 import core.reader.ReaderSettingsStore
 import data.download.DownloadController
+import data.images.ImageRequest
+import data.localimport.LocalLibrary
 import data.localimport.LocalSourceFileSystem
 import data.localimport.LocalSourceScanner
+import data.localimport.localMangaName
 import data.repository.BookmarkRepository
-import core.model.LocalBook
 import data.repository.LocalBookImporter
 import data.repository.LocalBookRepository
 import data.repository.LocalLibrarySync
 import data.repository.NoopBookmarkRepository
 import data.repository.NoopLocalBookRepository
+import core.model.LocalBook
 import data.repository.ProgressRepository
+import feature.detail.DetailChapterUi
+import feature.detail.DetailData
 import feature.detail.DetailRoute
 import feature.detail.DetailScreen
-import feature.detail.WorkDetailUi
 import feature.downloads.DownloadTaskUi
 import feature.downloads.DownloadsRoute
 import feature.downloads.DownloadsScreen
@@ -66,17 +69,19 @@ import feature.reader.NoopProgressRepository
 import feature.reader.ReaderRoute
 import feature.reader.ReaderScreen
 import feature.search.SearchPageUi
-import feature.search.SearchWorkUi
+import feature.search.SearchResultUi
 import feature.search.SearchRoute
 import feature.search.SearchScreen
+import feature.search.SearchSourceUi
 import feature.settings.SettingsRoute
 import feature.settings.SettingsScreen
 import feature.shelf.ShelfRoute
 import feature.shelf.ShelfScreen
+import feature.shelf.ShelfWorkUi
 import feature.sources.InstallOutcomeUi
-import feature.sources.InstallPreviewUi
 import feature.sources.RepoUpdateRowUi
 import feature.sources.RepoUpdatesUi
+import feature.sources.InstallPreviewUi
 import feature.sources.RuleTestResultUi
 import feature.sources.RuleTestRoute
 import feature.sources.RuleTestScreen
@@ -105,10 +110,13 @@ val appSerializersModule = SerializersModule {
 
 /**
  * 全 App 入口（ADR-008）。
- * ViewModel 工厂集中于此（配合 Koin，M5 接入）；各 feature 禁止自建 scope。
+ * ViewModel 工厂集中于此（Koin 容器见 [AppContainer]，M5 起统一从容器取）。
  *
  * [readerChapters]/[readerDomains] 是阅读器的真实源注入点：
  * 平台壳/SourceRuntime 装配好后传入；默认 Noop 保证 C1（主仓零预置源）。
+ *
+ * [localLibraryRoot]/[onPickLocalDirectory] 是本地导入入口（B1）：
+ * 桌面壳提供系统目录选择器；未提供时书架只展示在线内容，不伪造能力。
  */
 @Composable
 fun App(
@@ -122,8 +130,6 @@ fun App(
     localFs: LocalSourceFileSystem? = null,
     /** 本地书仓库（平台壳传入 SQLDelight 实现；为空时跳过启动扫描）。 */
     localBooks: LocalBookRepository = NoopLocalBookRepository,
-    /** 书架装配（平台壳传入 SQLDelight 实现；null = 在线收藏分区不展示）。 */
-    shelf: ShelfBindings? = null,
     /** 本地书选择器（平台壳注入：桌面 FileDialog / Android SAF；iOS 暂缺传 null）。 */
     pickLocalFiles: (suspend () -> List<Pair<String, ByteArray>>)? = null,
     /** 源目录（平台壳装配后传入；null = 无源管理能力，列表空，开关无操作）。 */
@@ -133,13 +139,21 @@ fun App(
      * Android 写 `filesDir/sources/...`；返回 installPath。null = 不支持安装）。
      */
     saveSourceScript: (suspend (key: String, version: String, script: String, format: String) -> String)? = null,
-    /** 下载编排（平台壳构造；null = 下载页空态、详情页不显示「下载本章」）。 */
+    /** 本地库根目录（null = 未选择；桌面壳可从配置恢复）。 */
+    localLibraryRoot: String? = null,
+    /** 系统目录选择器（挂起，内部切到平台线程；返回 null = 用户取消）。 */
+    onPickLocalDirectory: (suspend () -> String?)? = null,
+    /** 在线书架装配（null = 无 SQLDelight 库，书架只显示本地内容）。 */
+    shelf: ShelfBindings? = null,
+    /** 下载编排（null = 未装配，下载页为空、详情页不显示「下载」）。 */
     downloads: DownloadController? = null,
     /**
-     * 源仓库索引读取（宿主注入，**只读本地文件、不发起任意 URL 请求**）。
-     * null = 「检查更新」返回未配置，fail-closed 不联网。
+     * 源仓库索引读取（宿主注入；本轮只读本地文件，**不联网**）。
+     * null = 未配置，源管理页的「检查更新」返回明确的未配置提示。
      */
-    fetchRepoIndex: (suspend () -> String)? = null,
+    fetchRepoIndex: (suspend () -> String?)? = null,
+    /** 应用级依赖容器（S2）：共享 CookieStore/HttpClient/ImageFetcher；null = 无共享栈。 */
+    container: AppContainer? = null,
 ) {
     AppTheme {
         val backStack = rememberNavBackStack(
@@ -151,15 +165,69 @@ fun App(
         // 阅读器白名单随启用/禁用刷新；已打开的阅读器沿用旧集合，新打开的生效。
         var domains by remember { mutableStateOf(readerDomains) }
         val scope = rememberCoroutineScope()
+
+        // ---- 在线书架（A2）----
+        // 数据层（ShelfBindings）早已就绪，此前只差把它变成书架屏可消费的流。
+        var onlineWorks by remember { mutableStateOf(emptyList<ShelfWorkUi>()) }
+        LaunchedEffect(shelf) {
+            if (shelf == null) return@LaunchedEffect
+            runCatching { shelf.ensureDefault() }
+            shelf.observeUi().collect { onlineWorks = it }
+        }
+
+        // ---- 本地库（B1/B2）----
+        var localRoot by remember { mutableStateOf(localLibraryRoot) }
+        var localWorks by remember { mutableStateOf(emptyList<ShelfWorkUi>()) }
+        var picking by remember { mutableStateOf(false) }
+        val localLibrary = remember(localRoot) {
+            localRoot?.takeIf { it.isNotBlank() }?.let {
+                LocalLibrary(LocalSourceFileSystem.fromDirectory(it))
+            }
+        }
+        LaunchedEffect(localLibrary) {
+            localWorks = if (localLibrary == null) {
+                emptyList()
+            } else {
+                withContext(Dispatchers.Default) {
+                    localLibrary.works().map { w ->
+                        ShelfWorkUi(
+                            workId = w.workId,
+                            title = w.title,
+                            subtitle = "${w.chapterCount} 话",
+                            sourceKey = "",
+                            badge = "本地",
+                            coverBytes = w.coverBytes,
+                        )
+                    }
+                }
+            }
+        }
+        // 本地/在线组合器：按 workId 前缀分派，阅读器只认一个 ChapterProvider。
+        val compositeChapters = remember(localLibrary, readerChapters) {
+            localLibrary?.let {
+                LocalFirstChapterProvider(it.chapterProvider(), readerChapters)
+            } ?: readerChapters
+        }
+        val pickHandler: (() -> Unit)? = onPickLocalDirectory?.let { pick ->
+            {
+                scope.launch {
+                    picking = true
+                    val dir = runCatching { pick() }.getOrNull()
+                    if (!dir.isNullOrBlank()) localRoot = dir
+                    picking = false
+                }
+            }
+        }
+
         LaunchedEffect(sourceCatalog) {
             sourceItems = withContext(Dispatchers.Default) {
                 sourceCatalog?.snapshotUi().orEmpty()
             }
         }
         // 本地库状态（书架同构展示用；导入/扫描后刷新）。
-        val localBookFlow = remember { MutableStateFlow(emptyList<LocalBook>()) }
+        var localBookList by remember { mutableStateOf(emptyList<LocalBook>()) }
         suspend fun refreshLocalBooks() {
-            localBookFlow.value = runCatching { localBooks.list() }.getOrDefault(emptyList())
+            localBookList = runCatching { localBooks.list() }.getOrDefault(emptyList())
         }
         suspend fun syncLocalLibrary() {
             val fs = localFs ?: return
@@ -175,18 +243,8 @@ fun App(
         LaunchedEffect(localFs, localBooks) {
             withContext(Dispatchers.Default) { syncLocalLibrary() }
         }
-        // 默认书架幂等保证（老库首次启动补行）；在线收藏流由 ViewModel 消费。
-        LaunchedEffect(shelf) {
-            runCatching { shelf?.ensureDefault() }
-        }
-        val onlineShelf = remember(shelf) {
-            shelf?.observeUi() ?: flowOf(emptyList())
-        }
-        val coverLoader: (suspend (String) -> ByteArray?)? = remember(sourceCatalog) {
-            sourceCatalog?.let { catalog -> { url: String -> catalog.coverBytes(url) } }
-        }
-        // 最小导航壳：顶层四页签 + 顶栏「源管理 / 设置」。视觉待原型定稿后整体换样，
-        // 这里只为让后端能力可触达（详情 / 阅读器仍全屏沉浸，不显示导航壳）。
+        // 最小导航壳：顶层四页签 + 顶栏「源管理 / 设置」。
+        // 视觉待 design/ 原型定稿后整体换样；详情与阅读器保持全屏沉浸。
         val current = backStack.lastOrNull()
         Column(Modifier.fillMaxSize()) {
             if (current.showsAppChrome()) {
@@ -199,278 +257,350 @@ fun App(
                 }
             }
             Box(Modifier.weight(1f)) {
-                NavDisplay(
-                    backStack = backStack,
-                    onBack = { backStack.removeLastOrNull() },
-                    entryProvider = { key: NavKey ->
-                        when (key) {
-                            is ShelfRoute -> NavEntry(key) {
-                                ShelfScreen(
-                                    onOpenDetail = { workId, sourceKey ->
-                                        sourceCatalog?.bindWork(workId, sourceKey)
-                                        backStack.add(DetailRoute(workId, sourceKey))
-                                    },
-                                    onlineWorks = onlineShelf,
-                                    localBooks = localBookFlow,
-                                    pickLocalFiles = pickLocalFiles,
-                                    coverLoader = coverLoader,
-                                    onOpenLocalBook = { workId ->
-                                        scope.launch {
-                                            val first = runCatching { readerChapters.chapters(workId) }
-                                                .getOrNull()?.firstOrNull() ?: return@launch
-                                            backStack.add(ReaderRoute(workId, first.id))
-                                        }
-                                    },
-                                    onDeleteLocalBook = { workId ->
-                                        scope.launch {
-                                            withContext(Dispatchers.Default) {
-                                                val fs = localFs ?: return@withContext
-                                                runCatching {
-                                                    LocalBookImporter(fs, localBooks) {
-                                                        kotlin.time.Clock.System.now().toEpochMilliseconds()
-                                                    }.remove(workId)
-                                                }
-                                                syncLocalLibrary()
+        NavDisplay(
+            backStack = backStack,
+            onBack = { backStack.removeLastOrNull() },
+            entryProvider = { key: NavKey ->
+                when (key) {
+                    is ShelfRoute -> NavEntry(key) {
+                        ShelfScreen(
+                            works = localWorks + onlineWorks,
+                            localRootLabel = localRoot,
+                            picking = picking,
+                            onPickDirectory = pickHandler,
+                            onOpenWork = { w ->
+                                backStack.add(DetailRoute(w.workId, w.sourceKey, w.title))
+                            },
+                            onOpenSources = { backStack.add(SourcesRoute) },
+                            onOpenSearch = { backStack.add(SearchRoute) },
+                            // 导入库（M4）与目录扫描（S1）并存；本地 id 必须走组合器，
+                            // 否则 `local:` 前缀会被在线源当成站点 id。
+                            localBooks = localBookList,
+                            pickLocalFiles = pickLocalFiles,
+                            onOpenLocalBook = { workId ->
+                                scope.launch {
+                                    val first = runCatching { compositeChapters.chapters(workId) }
+                                        .getOrNull()?.firstOrNull() ?: return@launch
+                                    val title = localBookList.firstOrNull { it.id == workId }?.title.orEmpty()
+                                    backStack.add(ReaderRoute(workId, first.id, "", title))
+                                }
+                            },
+                            onDeleteLocalBook = { workId ->
+                                scope.launch {
+                                    withContext(Dispatchers.Default) {
+                                        val fs = localFs
+                                        if (fs != null) {
+                                            runCatching {
+                                                LocalBookImporter(fs, localBooks) {
+                                                    kotlin.time.Clock.System.now().toEpochMilliseconds()
+                                                }.remove(workId)
                                             }
+                                            syncLocalLibrary()
                                         }
-                                    },
-                                    onImportFiles = localFs?.let { fs ->
-                                        { files: List<Pair<String, ByteArray>> ->
-                                            withContext(Dispatchers.Default) {
-                                                runCatching {
-                                                    LocalBookImporter(fs, localBooks) {
-                                                        kotlin.time.Clock.System.now().toEpochMilliseconds()
-                                                    }.import(files)
-                                                }
-                                                syncLocalLibrary()
-                                            }
+                                    }
+                                }
+                            },
+                            onRemoveWork = shelf?.let { bindings ->
+                                { work ->
+                                    scope.launch {
+                                        runCatching {
+                                            bindings.removeFromSource(work.sourceKey, work.workId)
                                         }
-                                    },
-                                    onRemoveFromShelf = shelf?.let { bindings ->
-                                        { workId, sourceKey ->
-                                            scope.launch {
-                                                bindings.removeFromSource(sourceKey, workId)
-                                            }
+                                    }
+                                }
+                            },
+                            onImportFiles = localFs?.let { fs ->
+                                { files: List<Pair<String, ByteArray>> ->
+                                    withContext(Dispatchers.Default) {
+                                        runCatching {
+                                            LocalBookImporter(fs, localBooks) {
+                                                kotlin.time.Clock.System.now().toEpochMilliseconds()
+                                            }.import(files)
                                         }
-                                    },
+                                        syncLocalLibrary()
+                                    }
+                                }
+                            },
+                        )
+                    }
+                    is ExploreRoute -> NavEntry(key) {
+                        ExploreScreen(
+                            sourceKey = key.sourceKey,
+                            onOpenDetail = { workId, sourceKey ->
+                                backStack.add(DetailRoute(workId, sourceKey))
+                            },
+                            onBack = { backStack.removeLastOrNull() },
+                            loader = sourceCatalog?.let { catalog ->
+                                { sourceKey, page ->
+                                    val result = catalog.explore(
+                                        sourceKey = sourceKey,
+                                        page = page,
+                                    )
+                                    ExplorePageUi(
+                                        works = result.hits.map {
+                                            ExploreWorkUi(
+                                                workId = it.workId,
+                                                title = it.title,
+                                                sourceKey = it.sourceKey,
+                                            )
+                                        },
+                                        errors = result.errors,
+                                    )
+                                }
+                            },
+                        )
+                    }
+                    is SearchRoute -> NavEntry(key) {
+                        val searchSources = remember(sourceItems, sourceCatalog) {
+                            sourceCatalog?.enabledSources()
+                                ?.map { SearchSourceUi(it.key, it.name) }
+                                .orEmpty()
+                        }
+                        SearchScreen(
+                            sources = searchSources,
+                            onAddToShelf = shelf?.let { bindings ->
+                                { work, sourceKey ->
+                                    scope.launch {
+                                        runCatching { bindings.addFromSearch(work, sourceKey) }
+                                    }
+                                }
+                            },
+                            onOpenDetail = { workId, sourceKey, title ->
+                                backStack.add(DetailRoute(workId, sourceKey, title))
+                            },
+                            search = { sourceKey, keyword, page ->
+                                sourceCatalog?.search(sourceKey, keyword, page)
+                                    ?.let { p ->
+                                        val doms = sourceCatalog.currentDomains()
+                                        SearchPageUi(
+                                            works = p.works.map { w ->
+                                                SearchResultUi(
+                                                    workId = w.id,
+                                                    title = w.title,
+                                                    coverBytes = w.cover?.takeIf { it.isNotBlank() }?.let { url ->
+                                                        runCatching {
+                                                            container?.imageFetcher?.fetch(
+                                                                ImageRequest(url = url, domains = doms),
+                                                            )?.bytes
+                                                        }.getOrNull()
+                                                    },
+                                                )
+                                            },
+                                            maxPage = p.maxPage,
+                                        )
+                                    } ?: SearchPageUi()
+                            },
+                        )
+                    }
+                    is DetailRoute -> NavEntry(key) {
+                        DetailScreen(
+                            workId = key.workId,
+                            sourceKey = key.sourceKey,
+                            title = key.title,
+                            onOpenReader = { w, c, chapterTitle ->
+                                backStack.add(
+                                    ReaderRoute(w, c, key.sourceKey, chapterTitle.ifBlank { key.title }),
                                 )
-                            }
-                            is ExploreRoute -> NavEntry(key) {
-                                ExploreScreen(
-                                    key.sourceKey,
-                                    onOpenDetail = { workId ->
-                                        sourceCatalog?.bindWork(workId, key.sourceKey)
-                                        backStack.add(DetailRoute(workId, key.sourceKey))
-                                    },
-                                    loader = { src, page ->
-                                        withContext(Dispatchers.Default) {
-                                            val result = sourceCatalog?.explore(sourceKey = src, page = page)
-                                                ?: SearchPageUi(errors = listOf("未装配源目录"))
-                                            ExplorePageUi(
-                                                works = result.works.map {
-                                                    ExploreWorkUi(it.workId, it.title, it.sourceKey)
-                                                },
-                                                errors = result.errors,
+                            },
+                            onBack = { backStack.removeLastOrNull() },
+                            onAddToShelf = shelf?.let { bindings ->
+                                {
+                                    scope.launch {
+                                        runCatching {
+                                            bindings.addFromSearch(
+                                                SearchResultUi(workId = key.workId, title = key.title),
+                                                key.sourceKey,
                                             )
                                         }
-                                    },
-                                )
-                            }
-                            is SearchRoute -> NavEntry(key) {
-                                SearchScreen(
-                                    loader = { keyword, page ->
-                                        withContext(Dispatchers.Default) {
-                                            sourceCatalog?.search(keyword, page)
-                                                ?: SearchPageUi(errors = listOf("未装配源目录"))
-                                        }
-                                    },
-                                    onOpenDetail = { work ->
-                                        sourceCatalog?.bindWork(work.workId, work.sourceKey)
-                                        backStack.add(
-                                            DetailRoute(work.workId, work.sourceKey, work.title),
-                                        )
-                                    },
-                                    onAddToShelf = shelf?.let { bindings ->
-                                        { work -> scope.launch { bindings.addFromSearch(work) } }
-                                    },
-                                )
-                            }
-                            is DetailRoute -> NavEntry(key) {
-                                sourceCatalog?.bindWork(key.workId, key.sourceKey)
-                                DetailScreen(
-                                    workId = key.workId,
-                                    sourceKey = key.sourceKey,
-                                    title = key.title,
-                                    loader = { workId, sourceKey ->
-                                        withContext(Dispatchers.Default) {
-                                            sourceCatalog?.detail(workId, sourceKey)
-                                                ?: WorkDetailUi(workId, sourceKey, workId, error = "未装配源目录")
-                                        }
-                                    },
-                                    onOpenReader = { w, c ->
-                                        sourceCatalog?.bindWork(w, key.sourceKey)
-                                        backStack.add(ReaderRoute(w, c, key.sourceKey))
-                                    },
-                                    onBack = { backStack.removeLastOrNull() },
-                                    onAddToShelf = shelf?.let { bindings ->
-                                        {
-                                            scope.launch {
-                                                bindings.addFromSearch(
-                                                    SearchWorkUi(
-                                                        workId = key.workId,
-                                                        sourceKey = key.sourceKey,
-                                                        title = key.title,
-                                                    ),
-                                                )
-                                            }
-                                        }
-                                    },
-                                    onDownloadChapter = downloads?.let { controller ->
-                                        { chapterId ->
-                                            scope.launch {
-                                                controller.enqueue(
-                                                    DownloadTask(
-                                                        id = "${key.sourceKey}|${key.workId}|$chapterId",
-                                                        workId = key.workId,
-                                                        chapterId = chapterId,
-                                                        priority = 10,
-                                                        createdAtEpochMs = kotlin.time.Clock.System
-                                                            .now().toEpochMilliseconds(),
-                                                    ),
-                                                )
-                                            }
-                                        }
-                                    },
-                                )
-                            }
-                            is ReaderRoute -> NavEntry(key) {
-                                sourceCatalog?.bindWork(key.workId, key.sourceKey)
-                                ReaderScreen(
-                                    key.workId, key.chapterId,
-                                    onBack = { backStack.removeLastOrNull() },
-                                    chapters = readerChapters,
-                                    domains = domains,
-                                    progress = readerProgress,
-                                    settingsStore = readerSettings,
-                                    bookmarks = bookmarkRepository,
-                                    localFs = localFs,
-                                    cookies = sourceCatalog?.cookies,
-                                    httpClient = sourceCatalog?.httpClient,
-                                )
-                            }
-                            is SourcesRoute -> NavEntry(key) {
-                                SourcesScreen(
-                                    items = sourceItems,
-                                    onOpenRuleTest = { backStack.add(RuleTestRoute) },
-                                    onToggle = { toggleKey, enabled ->
-                                        scope.launch {
-                                            val ok = withContext(Dispatchers.Default) {
-                                                sourceCatalog?.setEnabled(toggleKey, enabled) ?: false
-                                            }
-                                            if (ok) {
-                                                sourceItems = withContext(Dispatchers.Default) {
-                                                    sourceCatalog?.snapshotUi().orEmpty()
-                                                }
-                                                domains = withContext(Dispatchers.Default) {
-                                                    sourceCatalog?.currentDomains() ?: readerDomains
-                                                }
-                                            }
-                                        }
-                                    },
-                                    onPreviewInstall = { script ->
-                                        withContext(Dispatchers.Default) {
-                                            sourceCatalog?.previewInstall(script)
-                                                ?: InstallPreviewUi(error = "未装配")
-                                        }
-                                    },
-                                    onConfirmInstall = { script, confirmed ->
-                                        val saver = saveSourceScript
-                                        val outcome = withContext(Dispatchers.Default) {
-                                            if (sourceCatalog == null || saver == null) {
-                                                InstallOutcomeUi.Rejected("未装配")
-                                            } else {
-                                                sourceCatalog.installSource(
-                                                    script,
-                                                    saveScript = saver,
-                                                    confirmed = confirmed,
-                                                )
-                                            }
-                                        }
-                                        if (outcome is InstallOutcomeUi.Installed) {
-                                            sourceItems = withContext(Dispatchers.Default) {
-                                                sourceCatalog?.snapshotUi().orEmpty()
-                                            }
-                                            domains = withContext(Dispatchers.Default) {
-                                                sourceCatalog?.currentDomains() ?: readerDomains
-                                            }
-                                        }
-                                        outcome
-                                    },
-                                    onCheckUpdates = sourceCatalog?.let { catalog ->
-                                        {
-                                            val fetcher = fetchRepoIndex
-                                            if (fetcher == null) {
-                                                RepoUpdatesUi(error = "未配置源仓库索引（宿主未注入本地索引读取）")
-                                            } else {
-                                                // 索引只由宿主注入（本地文件），本链路不发起任意 URL 请求。
-                                                val result = catalog.refreshRepoUpdates { fetcher() }
-                                                RepoUpdatesUi(
-                                                    rows = result.candidates.map { candidate ->
-                                                        RepoUpdateRowUi(
-                                                            key = candidate.key,
-                                                            version = candidate.version,
-                                                            installedVersion = candidate.installedVersion,
-                                                            reason = candidate.reason,
-                                                        )
-                                                    },
-                                                    error = result.error,
-                                                )
-                                            }
-                                        }
-                                    },
-                                )
-                            }
-                            is RuleTestRoute -> NavEntry(key) {
-                                RuleTestScreen(
-                                    sources = sourceItems,
-                                    onBack = { backStack.removeLastOrNull() },
-                                    onDiagnose = { k, kw, page, w, c ->
-                                        withContext(Dispatchers.Default) {
-                                            val raw = runCatching {
-                                                sourceCatalog?.testRules(k, kw, page, w, c)
-                                            }.getOrNull()
-                                            if (raw == null) {
-                                                RuleTestResultUi(error = "未装配")
-                                            } else {
-                                                parseRuleTestResult(raw)
-                                            }
-                                        }
-                                    },
-                                )
-                            }
-                            is DownloadsRoute -> NavEntry(key) {
-                                val taskFlow = remember(downloads) {
-                                    downloads?.tasks?.map { list -> list.map { it.toUi() } }
-                                        ?: flowOf(emptyList())
+                                    }
                                 }
-                                DownloadsScreen(
-                                    tasks = taskFlow,
-                                    onPause = { id ->
-                                        downloads?.let { c -> scope.launch { c.pause(id) } }
-                                    },
-                                    onResume = { id ->
-                                        downloads?.let { c -> scope.launch { c.resume(id) } }
-                                    },
-                                    onCancel = { id ->
-                                        downloads?.let { c -> scope.launch { c.cancel(id) } }
-                                    },
-                                )
-                            }
-                            is SettingsRoute -> NavEntry(key) { SettingsScreen() }
-                            else -> error("未知路由：$key")
+                            },
+                            onDownloadChapter = downloads?.let { controller ->
+                                { chapterId, _ ->
+                                    scope.launch {
+                                        runCatching {
+                                            controller.enqueue(
+                                                DownloadTask(
+                                                    id = "${key.sourceKey}|${key.workId}|$chapterId",
+                                                    workId = key.workId,
+                                                    chapterId = chapterId,
+                                                    priority = 10,
+                                                    createdAtEpochMs = kotlin.time.Clock.System
+                                                        .now().toEpochMilliseconds(),
+                                                ),
+                                            )
+                                        }
+                                    }
+                                }
+                            },
+                            load = {
+                                val localName = localMangaName(key.workId)
+                                if (localName != null) {
+                                    val libWork = localLibrary?.work(localName)
+                                    val chapters = compositeChapters.chapters(key.workId)
+                                    DetailData(
+                                        title = libWork?.title ?: key.title,
+                                        description = "本地库作品，共 ${chapters.size} 话。",
+                                        meta = "${chapters.size} 话 · 本地库",
+                                        coverBytes = libWork?.coverBytes,
+                                        chapters = chapters.map { DetailChapterUi(it.id, it.title) },
+                                    )
+                                } else {
+                                    val provider = sourceCatalog?.providerFor(key.sourceKey)
+                                    val chapters = provider?.chapters(key.workId).orEmpty()
+                                    val info = sourceCatalog?.workInfo(key.sourceKey, key.workId)
+                                    val coverBytes = info?.cover?.takeIf { it.isNotBlank() }?.let { url ->
+                                        runCatching {
+                                            container?.imageFetcher?.fetch(
+                                                ImageRequest(
+                                                    url = url,
+                                                    domains = sourceCatalog.currentDomains(),
+                                                ),
+                                            )?.bytes
+                                        }.getOrNull()
+                                    }
+                                    DetailData(
+                                        title = info?.title?.takeIf { it.isNotBlank() } ?: key.title,
+                                        description = info?.description.orEmpty(),
+                                        // 来源单独用 chip 展示，这里只放话数，避免同一信息出现两次。
+                                        meta = if (chapters.isEmpty()) "" else "${chapters.size} 话",
+                                        coverBytes = coverBytes,
+                                        chapters = chapters.map { DetailChapterUi(it.id, it.title) },
+                                    )
+                                }
+                            },
+                        )
+                    }
+                    is ReaderRoute -> NavEntry(key) {
+                        val isLocal = localMangaName(key.workId) != null
+                        // 按路由 sourceKey 绑定（B4）；本地作品走组合器，未指定源时沿用默认 provider。
+                        val chapters = remember(key.sourceKey, sourceCatalog, compositeChapters, isLocal) {
+                            if (isLocal) compositeChapters
+                            else sourceCatalog?.providerFor(key.sourceKey) ?: readerChapters
                         }
-                    },
-                )
+                        ReaderScreen(
+                            key.workId, key.chapterId,
+                            onBack = { backStack.removeLastOrNull() },
+                            chapters = chapters,
+                            domains = domains,
+                            progress = readerProgress,
+                            settingsStore = readerSettings,
+                            bookmarks = bookmarkRepository,
+                            // B1：本地作品的图片出口必须叠加本地抓取器，否则出不了图。
+                            // 目录扫描（localLibrary.fs）与导入库（平台 fs）都是本地作品。
+                            localFs = if (isLocal) (localLibrary?.fs ?: localFs) else null,
+                            mangaTitle = key.title,
+                            imageFetcher = container?.imageFetcher,
+                        )
+                    }
+                    is SourcesRoute -> NavEntry(key) {
+                        SourcesScreen(
+                            items = sourceItems,
+                            onCheckUpdates = sourceCatalog?.let { catalog ->
+                                {
+                                    val raw = fetchRepoIndex?.invoke()
+                                    if (raw.isNullOrBlank()) {
+                                        RepoUpdatesUi(
+                                            error = "未配置源仓库索引（本轮只读本地文件，不联网）",
+                                        )
+                                    } else {
+                                        val refreshed = catalog.refreshRepoUpdates { raw }
+                                        RepoUpdatesUi(
+                                            rows = refreshed.candidates.map { c ->
+                                                RepoUpdateRowUi(
+                                                    key = c.key,
+                                                    version = c.version,
+                                                    installedVersion = c.installedVersion,
+                                                    reason = c.reason,
+                                                )
+                                            },
+                                            error = refreshed.error,
+                                        )
+                                    }
+                                }
+                            },
+                            onOpenRuleTest = { backStack.add(RuleTestRoute) },
+                            onToggle = { toggleKey, enabled ->
+                                scope.launch {
+                                    val ok = withContext(Dispatchers.Default) {
+                                        sourceCatalog?.setEnabled(toggleKey, enabled) ?: false
+                                    }
+                                    if (ok) {
+                                        sourceItems = withContext(Dispatchers.Default) {
+                                            sourceCatalog?.snapshotUi().orEmpty()
+                                        }
+                                        domains = withContext(Dispatchers.Default) {
+                                            sourceCatalog?.currentDomains() ?: readerDomains
+                                        }
+                                    }
+                                }
+                            },
+                            onPreviewInstall = { script ->
+                                withContext(Dispatchers.Default) {
+                                    sourceCatalog?.previewInstall(script)
+                                        ?: InstallPreviewUi(error = "未装配")
+                                }
+                            },
+                            onConfirmInstall = { script, confirmed ->
+                                val saver = saveSourceScript
+                                val outcome = withContext(Dispatchers.Default) {
+                                    if (sourceCatalog == null || saver == null) {
+                                        InstallOutcomeUi.Rejected("未装配")
+                                    } else {
+                                        sourceCatalog.installSource(
+                                            script,
+                                            saveScript = saver,
+                                            confirmed = confirmed,
+                                        )
+                                    }
+                                }
+                                if (outcome is InstallOutcomeUi.Installed) {
+                                    sourceItems = withContext(Dispatchers.Default) {
+                                        sourceCatalog?.snapshotUi().orEmpty()
+                                    }
+                                    domains = withContext(Dispatchers.Default) {
+                                        sourceCatalog?.currentDomains() ?: readerDomains
+                                    }
+                                }
+                                outcome
+                            },
+                        )
+                    }
+                    is RuleTestRoute -> NavEntry(key) {
+                        RuleTestScreen(
+                            sources = sourceItems,
+                            onBack = { backStack.removeLastOrNull() },
+                            onDiagnose = { k, kw, page, w, c ->
+                                withContext(Dispatchers.Default) {
+                                    val raw = runCatching {
+                                        sourceCatalog?.testRules(k, kw, page, w, c)
+                                    }.getOrNull()
+                                    if (raw == null) {
+                                        RuleTestResultUi(error = "未装配")
+                                    } else {
+                                        parseRuleTestResult(raw)
+                                    }
+                                }
+                            },
+                        )
+                    }
+                    is DownloadsRoute -> NavEntry(key) {
+                        val taskFlow = remember(downloads) {
+                            downloads?.tasks?.map { list -> list.map { it.toUi() } }
+                                ?: flowOf(emptyList())
+                        }
+                        DownloadsScreen(
+                            tasks = taskFlow,
+                            onPause = { id -> downloads?.let { c -> scope.launch { c.pause(id) } } },
+                            onResume = { id -> downloads?.let { c -> scope.launch { c.resume(id) } } },
+                            onCancel = { id -> downloads?.let { c -> scope.launch { c.cancel(id) } } },
+                        )
+                    }
+                    is SettingsRoute -> NavEntry(key) { SettingsScreen() }
+                    else -> error("未知路由：$key")
+                }
+            },
+        )
             }
             if (current.showsAppChrome()) {
                 NavigationBar {

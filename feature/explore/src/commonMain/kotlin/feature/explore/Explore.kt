@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
@@ -25,7 +26,7 @@ import kotlinx.serialization.Serializable
 
 /** 按源探索页（结果由 App 层从 `SourceCatalog.explore` 映射，feature 不认识装配层）。 */
 @Serializable
-data class ExploreRoute(val sourceKey: String) : NavKey
+data class ExploreRoute(val sourceKey: String = "") : NavKey
 
 /** 发现结果展示行；[sourceKey] 随行带到详情，避免多源下回退首个 enabled 源。 */
 data class ExploreWorkUi(
@@ -41,13 +42,16 @@ data class ExplorePageUi(
 )
 
 /**
- * 最小功能入口：按源加载一页发现结果。
- * 视觉还原待 `design/` 原型定稿后整体换样，本轮只保证后端能力可触达。
+ * 最小功能入口：按源加载一页发现结果（空 [sourceKey] = 聚合全部启用源）。
+ *
+ * 视觉还原待 `design/` 原型定稿后整体换样，本轮只保证后端能力可触达；
+ * 未注入 [loader] 时明确显示「未装配源目录」，不放假入口。
  */
 @Composable
 fun ExploreScreen(
     sourceKey: String,
-    onOpenDetail: (String) -> Unit,
+    onOpenDetail: (workId: String, sourceKey: String) -> Unit,
+    onBack: () -> Unit = {},
     loader: (suspend (String, Int) -> ExplorePageUi)? = null,
 ) {
     var page by remember(sourceKey) { mutableStateOf<ExplorePageUi?>(null) }
@@ -69,6 +73,7 @@ fun ExploreScreen(
         )
         if (loader == null) {
             Text("未装配源目录", style = MaterialTheme.typography.bodySmall)
+            Button(onClick = onBack) { Text("返回") }
             return@Column
         }
         if (loading) CircularProgressIndicator()
@@ -81,7 +86,9 @@ fun ExploreScreen(
         ) {
             items(page?.works.orEmpty(), key = { "${it.sourceKey}|${it.workId}" }) { work ->
                 Card(
-                    Modifier.fillMaxWidth().clickable { onOpenDetail(work.workId) },
+                    Modifier.fillMaxWidth().clickable {
+                        onOpenDetail(work.workId, work.sourceKey)
+                    },
                 ) {
                     Column(Modifier.padding(Tokens.spacingM)) {
                         Text(work.title, style = MaterialTheme.typography.titleSmall)
@@ -90,8 +97,12 @@ fun ExploreScreen(
                 }
             }
         }
-        if (!loading && page != null && page!!.works.isEmpty() && page!!.errors.isEmpty()) {
+        val loaded = page
+        if (!loading && loaded != null && loaded.works.isEmpty() && loaded.errors.isEmpty()) {
             Text("暂无内容", style = MaterialTheme.typography.bodySmall)
+        }
+        if (!loading) {
+            Button(onClick = onBack) { Text("返回") }
         }
     }
 }

@@ -35,11 +35,22 @@
 
 ### 测试门禁口径
 
-- 当前基线：全仓 `desktopTest` **499 用例 / 0 失败 / 0 错误 / 0 跳过**（2026-11-13 夜 A 批接线后复核），`:app:android:assembleDebug` 与 iOS 模拟器编译通过。
+- 当前基线：全仓 `desktopTest` **502 用例 / 0 失败 / 0 错误 / 0 跳过**（2026-11-14 凌晨合并远端后复核），`:app:android:assembleDebug` 与 iOS 模拟器编译通过。
   本轮新增 31 条：`DownloadManagerTest` 5、`TarArchiveTest` 6、`ShelfViewModelTest` 3、`ShelfBindingsTest` 3、`SourceRepoSubscriptionTest` 9、`SourceRepoUpdatesTest` 5。
 - 两条 walkthrough 已有自动回归：`app/shared-ui/src/desktopTest/kotlin/app/shared/ComicWalkthroughTest.kt`（网络源）与 `data/localimport/src/commonTest/kotlin/data/localimport/LocalComicWalkthroughTest.kt`（本地 CBZ），均为 `example.*` 合成数据 / 内存 Vfs，**仍不等于真实站点跑通**。截图基线待补。
 - 条件门禁：`RealSourceE2ETest` / `AllSourcesCompatibilityTest` 需 `-Dkurisa.refsDir`，`SourcesRepoContractTest` 需 `-Dkurisa.sourcesRepoDir` 或环境变量 `KURISA_SOURCES_REPO`；缺目录时打印 `SKIP` 并按通过计，**CI 全绿不等于全流程跑过**。本轮已带真实源仓目录跑通 `SourcesRepoContractTest`（52 源 / 52 条索引）。
 - 主仓 CI 见 `.github/workflows/ci.yml`（`desktopTest` + `:app:android:assembleDebug`）；源仓门禁见 `Kurisa-Sources/.github/workflows/validate.yml`（`npm test`）。
+
+漫画两条 walkthrough 已于 2026-11-13 固化为**无条件执行**的 desktopTest（不需要外部 refs）：
+`app/shared-ui/src/desktopTest/.../LocalComicWalkthroughTest.kt`（复制 `docs/sample-library/`
+真实漫画库后扫描）与 `NetworkComicWalkthroughTest.kt`（MockEngine + `example.com` 合成站点，
+CDN 返回的也是真实漫画页）。二者逐页截图到 `docs/screenshots/comic-*.png`，
+并断言「整图颜色数 ≥ 800（阅读器 ≥ 1500）」——色块占位图必然失败，真图必然通过。
+截图测试需要显示器，CI/无头环境用 `xvfb-run -a ./gradlew desktopTest`。
+
+> 素材是真实的：`docs/sample-library/` 放的是 Pepper & Carrot（David Revoy，CC-BY 4.0）
+> 已发表作品的原页。早期版本用 Java2D 画色块当漫画页，测试能过但截图证明不了渲染，
+> 已于 2026-11-13 全部替换（见 `comic-e2e-plan.md` §8.5）。
 
 ## 3. 已归档
 

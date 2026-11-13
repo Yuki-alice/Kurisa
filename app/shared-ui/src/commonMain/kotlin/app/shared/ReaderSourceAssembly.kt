@@ -13,21 +13,13 @@ import feature.sources.InstallOutcomeUi
 import feature.sources.InstallPreviewUi
 import feature.sources.SourceUiItem
 import io.ktor.client.HttpClient
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.update
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
-import kotlinx.serialization.json.JsonElement
-import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
-import feature.detail.ChapterUiItem
-import feature.detail.WorkDetailUi
-import feature.search.SearchPageUi
-import feature.search.SearchWorkUi
 import source.bridge.BridgeChapterProvider
 import source.bridge.CryptoHostConvert
 import source.bridge.HostUtilsImpl
@@ -56,27 +48,6 @@ import source.registry.SourceRepoSubscription
 import source.registry.UpdateCandidate
 
 /**
- * 源仓库更新建议（App 层纯展示行）。
- *
- * 与 feature 层的 `SourceUiItem` 同属 UI 行，但为避免 feature 反向依赖
- * `:source:registry`，本行定义在 App 层，字段均为基础/可空类型。
- * [downloadUrl] 取索引条目的 `url`，缺省回退 `filename`（二者皆无时为 null）。
- */
-data class SourceUpdateUi(
-    val key: String,
-    val version: String,
-    val installedVersion: String?,
-    val reason: String,
-    val downloadUrl: String?,
-)
-
-/** 一次订阅刷新的 App 层结果：候选展示行 + 失败原因（成功时为 null）。 */
-data class RepoRefreshUi(
-    val candidates: List<SourceUpdateUi>,
-    val error: String?,
-)
-
-/**
  * 阅读器真实源装配（P0，composition root）。
  *
  * 位置说明（模块边界）：
@@ -87,9 +58,17 @@ data class RepoRefreshUi(
  * 路由策略（P3 按作品路由 + 单活跃源回退）：
  * - `workSourceKey(workId)` 命中可用源时走作品源；否则取 registry 首个 enabled 源；
  *   无源时退化为 Noop 语义（空目录 + payload 抛错），与 [feature.reader.NoopChapterProvider] 一致，保 C1。
- * - B4 已接线：`ReaderRoute` / `DetailRoute` 携带 sourceKey，App 层经
- *   [SourceCatalog.bindWork] 写入 [WorkSourceIndex]，本提供方据此命中作品源。
+ * - 导航侧 `ReaderRoute` 携带 sourceKey 为后续项（需导航签名变更，见 ADR-008）；
+ *   接线后调用方传入映射即可，本提供方无需再改。
  */
+/**
+ * 宿主版本（源的 `minAppVersion` 门禁按此比较）。
+ *
+ * B6 的成因是壳传 `0.0.0` 而示例源声明 `1.0.0`，导致验证源直接装不上；
+ * 统一到 `1.0.0` 并收口为一处常量，避免平台壳再次漂移。
+ */
+const val DEFAULT_APP_VERSION: String = "1.0.0"
+
 data class ReaderSourceBindings(
     val chapters: ChapterProvider,
     val domains: Set<String>,
@@ -103,27 +82,6 @@ private object NoopChapters : ChapterProvider {
     override suspend fun chapters(workId: String): List<ChapterRef> = emptyList()
     override suspend fun payload(workId: String, chapterId: String): ChapterPayload =
         throw IllegalStateException("无可用源")
-}
-
-/**
- * 作品归属索引（B4）：`workId → sourceKey`。
- *
- * 搜索/发现页拿到结果后由 App 层 [SourceCatalog.bindWork] 写入；`RegistryChapterProvider`
- * 只认 workId（ChapterProvider 契约），因此按作品命中源必须经过这层映射。
- * 用 [MutableStateFlow] 承载不可变快照，`update` 原子写、`value` 同步读，
- * 跨 UI 线程与 Dispatchers.Default 可见，且不引入平台相关锁。
- */
-class WorkSourceIndex {
-    private val bindings = MutableStateFlow<Map<String, String>>(emptyMap())
-
-    fun bind(workId: String, sourceKey: String) {
-        if (workId.isBlank() || sourceKey.isBlank()) return
-        bindings.update { it + (workId to sourceKey) }
-    }
-
-    fun keyFor(workId: String): String? = bindings.value[workId]
-
-    fun size(): Int = bindings.value.size
 }
 
 /** 活跃源查询抽象（RegistryChapterProvider 只依赖此口，可单测）。 */
@@ -150,12 +108,18 @@ class RegistryChapterProvider(
     private val lookup: ActiveSourceLookup,
     private val acquire: suspend (PluginRuntimeSpec) -> SourceCalls,
     private val loadScript: suspend (installPath: String) -> String,
-    private val appVersion: String = "1.0.0",
+    private val appVersion: String = DEFAULT_APP_VERSION,
     /**
-     * 按作品路由（P3 + B4）：`workId → sourceKey`，生产装配接 [WorkSourceIndex]；
-     * 未绑定 / 未知 key / 被禁用源时回退首个 enabled 源（现行为零变）。
+     * 按作品路由（P3）：`workId → sourceKey`（调用方由书架/详情的作品归属提供，
+     * 后续 `ReaderRoute` 携带 sourceKey 后直传；导航未接线前保持默认）。
+     * 返回 null/未知 key/被禁用源时回退首个 enabled 源（现行为零变）。
      */
     private val workSourceKey: (workId: String) -> String? = { null },
+    /**
+     * 路由指定源（B4）：`ReaderRoute.sourceKey` / `DetailRoute.sourceKey` 直接透传。
+     * 非空且启用时优先于 [workSourceKey] 映射，避免多源并存时永远读首个启用源。
+     */
+    private val preferredSourceKey: String? = null,
 ) : ChapterProvider {
     // P0: 脚本内容按 installPath 缓存（key = sha256），命中缓存不再每页读盘。
     // 记录更新/回滚后 sha 变化即失效重读；并发重复加载仅多一次 IO，结果一致。
@@ -164,8 +128,12 @@ class RegistryChapterProvider(
     private fun activeRecord(): SourceRecord? =
         lookup.enabledKeys().firstOrNull()?.let { lookup.get(it) }
 
-    /** 按作品路由：映射命中且源可用时走作品源，否则回退首个 enabled 源。 */
+    /** 按作品路由：路由指定源 > 作品归属映射 > 首个 enabled 源。 */
     private fun recordFor(workId: String): SourceRecord? {
+        val preferred = preferredSourceKey?.takeIf { it.isNotBlank() }
+        if (preferred != null && lookup.enabledKeys().contains(preferred)) {
+            lookup.get(preferred)?.let { return it }
+        }
         val mapped = runCatching { workSourceKey(workId) }.getOrNull()
         if (!mapped.isNullOrBlank() && lookup.enabledKeys().contains(mapped)) {
             lookup.get(mapped)?.let { return it }
@@ -193,9 +161,25 @@ class RegistryChapterProvider(
         return BridgeChapterProvider(runtime, kind)
     }
 
-    /** 装配输入收口（阅读链路、测试面板与搜索/详情出口共用同一签名/路由语义）。 */
-    internal fun specFor(record: SourceRecord, script: String): PluginRuntimeSpec =
-        runtimeSpecFor(record, script, appVersion)
+    /** 装配输入收口（阅读链路与测试面板共用同一签名/路由语义）。 */
+    internal fun specFor(record: SourceRecord, script: String): PluginRuntimeSpec {
+        val domains = parseStringList(record.domainsJson).toSet()
+        val capabilities = parseStringList(record.capabilitiesJson)
+            .mapNotNull { SourceCapability.of(it) }.toSet()
+        return PluginRuntimeSpec(
+            key = record.key,
+            script = script,
+            domains = domains,
+            capabilities = capabilities,
+            settingsJson = record.settingsJson,
+            apiVersion = record.apiVersion,
+            appVersion = appVersion,
+            scriptSha256 = record.sha256,
+            // 过渡启发式（P2）：DB 无 format 列前，按安装路径后缀与脚本内容判定；
+            // P3 增加 format 列 + 迁移后改为读列（见 SOURCE-PACKAGE §5）。
+            format = detectFormat(record.installPath, script),
+        )
+    }
 
     override suspend fun chapters(workId: String): List<ChapterRef> {
         val rec = recordFor(workId) ?: return emptyList()
@@ -221,30 +205,6 @@ class RegistryChapterProvider(
         lookup.enabledKeys().flatMapTo(mutableSetOf()) { key ->
             lookup.get(key)?.let { parseStringList(it.domainsJson) }.orEmpty()
         }
-}
-
-/** 装配输入归一化（顶层复用：阅读链路 / 测试面板 / 搜索详情出口）。 */
-internal fun runtimeSpecFor(
-    record: SourceRecord,
-    script: String,
-    appVersion: String,
-): PluginRuntimeSpec {
-    val domains = parseStringList(record.domainsJson).toSet()
-    val capabilities = parseStringList(record.capabilitiesJson)
-        .mapNotNull { SourceCapability.of(it) }.toSet()
-    return PluginRuntimeSpec(
-        key = record.key,
-        script = script,
-        domains = domains,
-        capabilities = capabilities,
-        settingsJson = record.settingsJson,
-        apiVersion = record.apiVersion,
-        appVersion = appVersion,
-        scriptSha256 = record.sha256,
-        // 过渡启发式（P2）：DB 无 format 列前，按安装路径后缀与脚本内容判定；
-        // P3 增加 format 列 + 迁移后改为读列（见 SOURCE-PACKAGE §5）。
-        format = detectFormat(record.installPath, script),
-    )
 }
 
 internal fun parseStringList(raw: String): List<String> =
@@ -294,7 +254,7 @@ fun createReaderBindings(
     httpClient: HttpClient,
     cookies: CookieStore,
     loadScript: suspend (installPath: String) -> String,
-    appVersion: String = "1.0.0",
+    appVersion: String = DEFAULT_APP_VERSION,
     nowMs: () -> Long = { 0L },
 ): ReaderSourceBindings {
     val catalog = createSourceCatalog(db, httpClient, cookies, loadScript, appVersion, nowMs)
@@ -315,153 +275,27 @@ class SourceCatalog internal constructor(
     private val lookup: ActiveSourceLookup,
     private val nowMs: () -> Long,
     private val loadScript: suspend (installPath: String) -> String = { error("未装配脚本加载器") },
-    private val appVersion: String = "1.0.0",
-    private val workIndex: WorkSourceIndex = WorkSourceIndex(),
-    /** B3：与源请求共享的 CookieStore / HttpClient，阅读器图片出口复用（配对 UA 不脱链）。 */
-    val cookies: CookieStore = CookieStore(),
-    val httpClient: HttpClient? = null,
+    private val appVersion: String = DEFAULT_APP_VERSION,
 ) {
     fun snapshot(): List<SourceRecord> = registry.all()
 
     /**
-     * 绑定作品归属（B4）：搜索/发现结果进入详情或阅读前调用。
-     * 绑定后 `chapters/payload/resolvePage` 按该源装配，不再回退首个 enabled 源。
-     */
-    fun bindWork(workId: String, sourceKey: String) {
-        if (sourceKey.isBlank() || lookup.get(sourceKey) == null) return
-        workIndex.bind(workId, sourceKey)
-    }
-
-    /** 已启用源 key（搜索页展示 / 单源筛选用）。 */
-    fun enabledSourceKeys(): List<String> = lookup.enabledKeys()
-
-    /**
-     * 跨已启用源聚合搜索（B5）。单源失败只记入 errors，不拖垮其余源；
-     * 结果行自带 sourceKey，供详情/阅读按作品路由。
-     */
-    suspend fun search(keyword: String, page: Int = 1, sourceKey: String? = null): SearchPageUi {
-        val records = if (sourceKey.isNullOrBlank()) {
-            lookup.enabledKeys().mapNotNull { lookup.get(it) }
-        } else {
-            listOfNotNull(lookup.get(sourceKey))
-        }
-        val works = mutableListOf<SearchWorkUi>()
-        val errors = mutableListOf<String>()
-        var maxPage = 1
-        for (rec in records) {
-            runCatching {
-                val raw = runtimeFor(rec).searchWorks(keyword, "[]", page)
-                val parsed = parseSearchPage(raw, rec)
-                works += parsed.works
-                maxPage = maxOf(maxPage, parsed.maxPage)
-            }.onFailure { errors += "${rec.name}（${rec.key}）：${it.message ?: "搜索失败"}" }
-        }
-        return SearchPageUi(works = works, errors = errors, maxPage = maxPage)
-    }
-
-    /**
-     * 发现 / 分类页后端出口（BE-A4）。
+     * 按源 key 绑定章节提供方（B4）。
      *
-     * 统一走契约 `categoryComics.load`（`docs/contract/source.d.ts:95`，参数
-     * `category, param, options, page`；category 为空时传空串），结果与搜索同形
-     * （`works/comics` 归一化）。能力未声明 / 引擎不支持该路径的源会被能力门或
-     * 引擎拒绝，按「单源失败」记入 errors，不拖垮其余源。
+     * 空 key 复用默认 [chapters]（首个启用源）；非空时构造带 `preferredSourceKey` 的
+     * 同名 provider——脚本缓存彼此独立，代价是每个路由持有自己的小缓存，换来
+     * 多源并存时不再静默读到错误的源。Key 未安装/被禁用时内部回退默认语义。
      */
-    suspend fun explore(
-        sourceKey: String? = null,
-        category: String = "",
-        page: Int = 1,
-    ): SearchPageUi {
-        val records = if (sourceKey.isNullOrBlank()) {
-            lookup.enabledKeys().mapNotNull { lookup.get(it) }
-        } else {
-            listOfNotNull(lookup.get(sourceKey))
-        }
-        val args = JsonArray(
-            listOf(
-                JsonPrimitive(category),
-                JsonPrimitive(""),
-                JsonArray(emptyList<JsonElement>()),
-                JsonPrimitive(page),
-            ),
-        ).toString()
-        return aggregateExplore(
-            records = records,
-            call = { rec -> runtimeFor(rec).invoke("categoryComics.load", args) },
-            parse = ::parseSearchPage,
+    fun providerFor(sourceKey: String?): ChapterProvider {
+        val key = sourceKey?.trim().orEmpty()
+        if (key.isEmpty()) return chapters
+        return RegistryChapterProvider(
+            lookup = lookup,
+            acquire = { spec -> manager.acquire(spec) },
+            loadScript = loadScript,
+            appVersion = appVersion,
+            preferredSourceKey = key,
         )
-    }
-
-    /** 作品详情（B5）：按 sourceKey 精确取源，返回标题 + 归一化章节列表。 */
-    suspend fun detail(workId: String, sourceKey: String): WorkDetailUi {
-        val rec = lookup.get(sourceKey)
-            ?: return WorkDetailUi(workId, sourceKey, workId, error = "未知源：$sourceKey")
-        return runCatching {
-            val kind = parseKinds(rec.kindsJson).firstOrNull() ?: ContentKind.MANGA
-            val raw = runtimeFor(rec).loadWorkDetails(workId, kind)
-            val obj = runCatching { Json.parseToJsonElement(raw).jsonObject }
-                .getOrElse { throw IllegalArgumentException("详情非法 JSON：${it.message}") }
-            val title = obj["title"]?.jsonPrimitive?.contentOrNull
-                ?: (obj["work"] as? JsonObject)?.get("title")?.jsonPrimitive?.contentOrNull
-                ?: workId
-            WorkDetailUi(workId, sourceKey, title, parseChapterRows(obj["chapters"]))
-        }.getOrElse {
-            WorkDetailUi(workId, sourceKey, workId, error = it.message ?: "详情加载失败")
-        }
-    }
-
-    /** 按记录装配长驻运行时（复用 manager 缓存；脚本由 loadScript 提供）。 */
-    private suspend fun runtimeFor(rec: SourceRecord): SourceCalls =
-        manager.acquire(runtimeSpecFor(rec, loadScript(rec.installPath), appVersion))
-
-    /** `SearchPage.works/comics` 归一化；兼容直接返回数组的旧源。 */
-    private fun parseSearchPage(raw: String, rec: SourceRecord): SearchPageUi {
-        val root = runCatching { Json.parseToJsonElement(raw) }.getOrElse {
-            throw IllegalArgumentException("搜索结果非法 JSON：${it.message}")
-        }
-        val array = when (root) {
-            is JsonObject -> (root["works"] ?: root["comics"]) as? JsonArray
-            is JsonArray -> root
-            else -> null
-        } ?: throw IllegalArgumentException("搜索结果缺 works/comics")
-        val works = array.mapNotNull { el ->
-            val o = el as? JsonObject ?: return@mapNotNull null
-            val id = o["id"]?.jsonPrimitive?.contentOrNull ?: return@mapNotNull null
-            SearchWorkUi(
-                workId = id,
-                sourceKey = rec.key,
-                title = o["title"]?.jsonPrimitive?.contentOrNull ?: id,
-                subtitle = o["subtitle"]?.jsonPrimitive?.contentOrNull ?: "",
-                cover = o["cover"]?.jsonPrimitive?.contentOrNull,
-                kindLabel = o["kind"]?.jsonPrimitive?.contentOrNull ?: "manga",
-                sourceLabel = rec.name,
-            )
-        }
-        val maxPage = (root as? JsonObject)?.get("maxPage")?.jsonPrimitive?.contentOrNull
-            ?.toIntOrNull()?.coerceAtLeast(1) ?: 1
-        return SearchPageUi(works, emptyList(), maxPage)
-    }
-
-    /** 与 `BridgeChapterProvider` 同形的三形状归一化（object / array）。 */
-    private fun parseChapterRows(el: JsonElement?): List<ChapterUiItem> = when (el) {
-        is JsonObject -> el.entries.mapIndexed { i, (id, v) ->
-            val title = if (v is JsonObject) {
-                v["title"]?.jsonPrimitive?.contentOrNull ?: id
-            } else {
-                runCatching { v.jsonPrimitive.contentOrNull }.getOrNull() ?: id
-            }
-            ChapterUiItem(id, title, i + 1)
-        }
-        is JsonArray -> el.mapIndexedNotNull { i, item ->
-            val o = item as? JsonObject ?: return@mapIndexedNotNull null
-            val id = o["id"]?.jsonPrimitive?.contentOrNull ?: return@mapIndexedNotNull null
-            ChapterUiItem(
-                id,
-                o["title"]?.jsonPrimitive?.contentOrNull ?: id,
-                o["ordinal"]?.jsonPrimitive?.contentOrNull?.toIntOrNull() ?: (i + 1),
-            )
-        }
-        else -> emptyList()
     }
 
     suspend fun setEnabled(key: String, enabled: Boolean): Boolean {
@@ -476,36 +310,73 @@ class SourceCatalog internal constructor(
         }
 
     /**
-     * 封面字节（书架缩略图）。
+     * 作品概要（S2 详情页）：按源 key 调用 `loadInfo` 并归一化标题/简介/封面。
      *
-     * 强制走 [SourceHttpClient]：首跳与逐跳重定向白名单、Cookie、配对 UA、Cloudflare
-     * 分类全部继承阅读链路，禁止 UI 直接联网；任何失败返回 null（封面缺失不阻断列表）。
-     * 未装配网络栈、或封面域名不在当前启用源白名单时返回 null（安全优先）。
+     * 章节仍由 [providerFor] 的 `chapters()` 提供（同一源、同一次解析），
+     * 此处只补 UI 需要的元数据；解析失败返回空对象，页面回退路由里的标题提示。
      */
-    suspend fun coverBytes(url: String): ByteArray? {
-        if (url.isBlank()) return null
-        val client = httpClient ?: return null
+    suspend fun workInfo(sourceKey: String, workId: String): SourceWorkInfo {
+        val key = sourceKey.trim()
+        val rec = (if (key.isEmpty()) lookup.enabledKeys().firstOrNull() else key)
+            ?.let { lookup.get(it) }
+            ?: return SourceWorkInfo()
+        val kind = parseKinds(rec.kindsJson).firstOrNull() ?: ContentKind.MANGA
         return runCatching {
-            SourceHttpClient(client, cookies, nowMs)
-                .getBytes(url, currentDomains())
-                .bytes
-        }.getOrNull()
+            val runtime = acquireRuntime(rec)
+            SourceWorkInfo.parse(runtime.loadWorkDetails(workId, kind))
+        }.getOrElse { SourceWorkInfo() }
     }
 
-    /** 源管理页快照（Record → UI 行，映射收口于此，feature 只收纯展示字段）。 */
-    fun snapshotUi(): List<SourceUiItem> = snapshot().map { it.toUiItem() }
+    /**
+     * 搜索（S2 搜索页）：按源 key 走 `search.load` / `search.page`，兼容
+     * `works`（规则源）与 `comics`（Venera 契约）两种返回字段。
+     */
+    suspend fun search(sourceKey: String, keyword: String, page: Int): SourceSearchPage {
+        val key = sourceKey.trim().ifEmpty { lookup.enabledKeys().firstOrNull().orEmpty() }
+        val rec = lookup.get(key)
+            ?: throw IllegalStateException("源未安装：$key")
+        val runtime = acquireRuntime(rec)
+        val options = runCatching { runtime.defaultSearchOptions() }.getOrDefault("[]")
+        return SourceSearchPage.parse(runtime.searchWorks(keyword, options, page))
+    }
 
     /**
-     * 源仓库更新计划的纯数据出口（不联网）。
+     * 发现 / 分类出口（BE-A4）：统一走契约 `categoryComics.load`
+     * （参数 `category, param, options, page`；无分类时传空串）。
      *
-     * 索引原始 JSON 由调用方（宿主/源管理页）注入，本方法只做
-     * `SourceIndexParser.parse` → 已装列表取自 [snapshot] → `SourceRepoPlanner.plan`
-     * → 映射为 [SourceUpdateUi]，全程无 IO、不碰域名白名单。
-     *
-     * **fail-closed**：解析失败或计划计算抛异常时返回 `emptyList()` 而非抛出，
-     * 让源管理页直接展示「无更新」，避免坏索引/脏数据把 UI 带崩。
-     *
-     * @param appVersionOverride 覆盖构造时的装配版本做 minApp 过滤；null 用装配版本。
+     * 与 [search] 的差别只在契约路径，结果同样归一化为 `works/comics`。
+     * 未声明 CATEGORY 能力或引擎拒绝该路径的源按「单源失败」记入 errors，
+     * 不拖垮其余源；无启用源时返回显式错误而不是空列表。
+     */
+    suspend fun explore(
+        sourceKey: String? = null,
+        category: String = "",
+        page: Int = 1,
+    ): ExploreResult {
+        val key = sourceKey?.trim().orEmpty()
+        val records = if (key.isEmpty()) enabledSources() else listOfNotNull(lookup.get(key))
+        val args = JsonArray(
+            listOf(
+                JsonPrimitive(category),
+                JsonPrimitive(""),
+                JsonArray(emptyList()),
+                JsonPrimitive(page),
+            ),
+        ).toString()
+        return aggregateExplore(
+            records = records,
+            call = { rec -> acquireRuntime(rec).invoke("categoryComics.load", args) },
+            parse = { raw, rec ->
+                SourceSearchPage.parse(raw).works.map {
+                    ExploreHit(sourceKey = rec.key, workId = it.id, title = it.title)
+                }
+            },
+        )
+    }
+
+    /**
+     * 源仓库更新候选（纯计算，不联网）：索引 JSON 由宿主读取后传入。
+     * 解析失败收敛为空列表（源管理页显示「无候选」而不是崩）。
      */
     fun planRepoUpdates(rawIndexJson: String, appVersionOverride: String? = null): List<SourceUpdateUi> =
         runCatching {
@@ -516,10 +387,10 @@ class SourceCatalog internal constructor(
         }.getOrElse { emptyList() }
 
     /**
-     * 订阅刷新的 UI 出口：网络拉取由宿主以 [fetchIndex] 注入，本模块不自己联网、
-     * 不碰白名单。拉取/解析失败由 [SourceRepoSubscription.refresh] 收敛为
-     * `RepoRefreshResult.error`（此处透传为 [RepoRefreshUi.error]），候选映射为纯展示行；
-     * 协程取消（CancellationException）按结构化并发原样抛出，不吞。
+     * 订阅刷新的 UI 出口：网络拉取由宿主以 [fetchIndex] 注入（本轮只读本地索引文件），
+     * 本模块不自己联网、不碰白名单。拉取/解析失败由 [SourceRepoSubscription.refresh]
+     * 收敛为 `RepoRefreshResult.error`（此处透传为 [RepoRefreshUi.error]）；
+     * 协程取消按结构化并发原样抛出，不吞。
      */
     suspend fun refreshRepoUpdates(fetchIndex: suspend () -> String): RepoRefreshUi {
         val result = SourceRepoSubscription(fetchIndex).refresh(
@@ -531,6 +402,25 @@ class SourceCatalog internal constructor(
             error = result.error,
         )
     }
+
+    /** 源 key 列表（搜索页的源选择器；只列启用源）。 */
+    fun enabledSources(): List<SourceRecord> =
+        lookup.enabledKeys().mapNotNull { lookup.get(it) }
+
+    private suspend fun acquireRuntime(rec: SourceRecord): SourceCalls =
+        manager.acquire(
+            RegistryChapterProvider(
+                lookup = lookup,
+                acquire = { spec -> manager.acquire(spec) },
+                loadScript = loadScript,
+                appVersion = appVersion,
+                preferredSourceKey = rec.key,
+            ).specFor(rec, loadScript(rec.installPath)),
+        )
+
+
+    /** 源管理页快照（Record → UI 行，映射收口于此，feature 只收纯展示字段）。 */
+    fun snapshotUi(): List<SourceUiItem> = snapshot().map { it.toUiItem() }
 
     /**
      * 规则测试面板后端入口（P3 工具链；Compose UI 消费本方法）。
@@ -640,44 +530,12 @@ internal fun SourceRecord.toUiItem(): SourceUiItem = SourceUiItem(
     verifiedLabel = if (signatureOk) "已签名" else "未验证（旧仓库兼容）",
 )
 
-/** `UpdateCandidate`（source:registry）→ App 层展示行，映射收口于此。 */
-private fun UpdateCandidate.toUpdateUi(): SourceUpdateUi = SourceUpdateUi(
-    key = entry.key,
-    version = entry.version,
-    installedVersion = installedVersion,
-    reason = reason,
-    downloadUrl = entry.url ?: entry.filename,
-)
-
-/**
- * 发现 / 分类结果的跨源聚合（BE-A4 纯逻辑，注入 call 便于三态单测）。
- * 无源返回空页 + 显式提示；单源失败只记入 errors，不拖垮其余源。
- */
-internal suspend fun aggregateExplore(
-    records: List<SourceRecord>,
-    call: suspend (SourceRecord) -> String,
-    parse: (String, SourceRecord) -> SearchPageUi,
-): SearchPageUi {
-    if (records.isEmpty()) return SearchPageUi(errors = listOf("无可用源"))
-    val works = mutableListOf<SearchWorkUi>()
-    val errors = mutableListOf<String>()
-    var maxPage = 1
-    for (rec in records) {
-        runCatching {
-            val parsed = parse(call(rec), rec)
-            works += parsed.works
-            maxPage = maxOf(maxPage, parsed.maxPage)
-        }.onFailure { errors += "${rec.name}（${rec.key}）：${it.message ?: "发现失败"}" }
-    }
-    return SearchPageUi(works = works, errors = errors, maxPage = maxPage)
-}
-
 fun createSourceCatalog(
     db: ReaderDatabase,
     httpClient: HttpClient,
     cookies: CookieStore,
     loadScript: suspend (installPath: String) -> String,
-    appVersion: String = "1.0.0",
+    appVersion: String = DEFAULT_APP_VERSION,
     nowMs: () -> Long = { 0L },
 ): SourceCatalog {
     val registry = SourceRegistry(db)
@@ -706,21 +564,13 @@ fun createSourceCatalog(
         hosts = hosts,
     )
     val lookup = RegistryLookup(registry)
-    val workIndex = WorkSourceIndex()
     val provider = RegistryChapterProvider(
         lookup = lookup,
         acquire = { spec -> manager.acquire(spec) },
         loadScript = loadScript,
         appVersion = appVersion,
-        // B4：按作品路由接真映射（此前恒 null，多源下永远回退首个 enabled 源）。
-        workSourceKey = { workIndex.keyFor(it) },
     )
-    return SourceCatalog(
-        registry, manager, provider, lookup, nowMs, loadScript, appVersion,
-        workIndex = workIndex,
-        cookies = cookies,
-        httpClient = httpClient,
-    )
+    return SourceCatalog(registry, manager, provider, lookup, nowMs, loadScript, appVersion)
 }
 
 /**
@@ -746,3 +596,137 @@ private fun kvOrMem(
         runCatching { mem.delete(sourceKey, key) }
     }
 }
+
+/** 作品概要（详情页顶栏用；解析失败保持空，页面回退路由标题）。 */
+data class SourceWorkInfo(
+    val title: String = "",
+    val description: String = "",
+    val cover: String? = null,
+    val tags: List<String> = emptyList(),
+) {
+    companion object {
+        fun parse(raw: String): SourceWorkInfo {
+            val obj = runCatching { Json.parseToJsonElement(raw).jsonObject }.getOrNull()
+                ?: return SourceWorkInfo()
+            fun str(vararg keys: String): String? = keys.firstNotNullOfOrNull { k ->
+                obj[k]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }
+            }
+            val tags = runCatching {
+                obj["tags"]?.jsonArray?.mapNotNull { it.jsonPrimitive.contentOrNull }.orEmpty()
+            }.getOrDefault(emptyList())
+            return SourceWorkInfo(
+                title = str("title", "name").orEmpty(),
+                description = str("description", "desc").orEmpty(),
+                cover = str("cover", "coverUrl"),
+                tags = tags,
+            )
+        }
+    }
+}
+
+/** 搜索结果条目（sourceWorkId 原样保留，路由与源调用都以它为键）。 */
+data class SourceWorkSummary(
+    val id: String,
+    val title: String,
+    val cover: String? = null,
+)
+
+/**
+ * 搜索页结果。
+ *
+ * 字段兼容：Venera 契约返回 `comics`，规则源返回 `works`；两者都缺时按空处理，
+ * 不把形状差异暴露给 UI。
+ */
+data class SourceSearchPage(
+    val works: List<SourceWorkSummary> = emptyList(),
+    val maxPage: Int = 1,
+) {
+    companion object {
+        fun parse(raw: String): SourceSearchPage {
+            val obj = runCatching { Json.parseToJsonElement(raw).jsonObject }.getOrNull()
+                ?: return SourceSearchPage()
+            val arr = obj["works"] ?: obj["comics"] ?: obj["list"]
+            val works = runCatching {
+                arr?.jsonArray?.mapNotNull { el ->
+                    val o = el.jsonObject
+                    val id = o["id"]?.jsonPrimitive?.contentOrNull
+                        ?: o["url"]?.jsonPrimitive?.contentOrNull
+                        ?: return@mapNotNull null
+                    val title = o["title"]?.jsonPrimitive?.contentOrNull
+                        ?: o["name"]?.jsonPrimitive?.contentOrNull
+                        ?: id
+                    SourceWorkSummary(
+                        id = id,
+                        title = title,
+                        cover = o["cover"]?.jsonPrimitive?.contentOrNull,
+                    )
+                }.orEmpty()
+            }.getOrDefault(emptyList())
+            val maxPage = obj["maxPage"]?.jsonPrimitive?.contentOrNull?.toIntOrNull() ?: 1
+            return SourceSearchPage(works, maxPage.coerceAtLeast(1))
+        }
+    }
+}
+
+/**
+ * 发现结果单行。
+ *
+ * 必须逐条携带 [sourceKey]：多源聚合时详情/阅读要按作品路由，
+ * 少了它就只能回退首个启用源（B4 的老问题）。
+ */
+data class ExploreHit(
+    val sourceKey: String,
+    val workId: String,
+    val title: String,
+)
+
+/** 一次发现请求的聚合结果：结果与错误并存。 */
+data class ExploreResult(
+    val hits: List<ExploreHit> = emptyList(),
+    val errors: List<String> = emptyList(),
+)
+
+/**
+ * 跨源聚合发现结果（纯逻辑，可在不起 JS 引擎的情况下测三态）。
+ *
+ * - 无源 → 显式 `errors=["无可用源"]`，不伪造空列表成功；
+ * - 单源失败 → 记入 errors，其余源照常返回；
+ * - 解析/调用异常一律收敛为错误文案，不向上抛（页面不能因为一个源崩掉）。
+ */
+internal suspend fun aggregateExplore(
+    records: List<SourceRecord>,
+    call: suspend (SourceRecord) -> String,
+    parse: (String, SourceRecord) -> List<ExploreHit>,
+): ExploreResult {
+    if (records.isEmpty()) return ExploreResult(errors = listOf("无可用源"))
+    val hits = mutableListOf<ExploreHit>()
+    val errors = mutableListOf<String>()
+    for (rec in records) {
+        runCatching { hits += parse(call(rec), rec) }
+            .onFailure { errors += "${rec.name}（${rec.key}）：${it.message ?: "发现加载失败"}" }
+    }
+    return ExploreResult(hits = hits, errors = errors)
+}
+
+/** 源仓库更新候选（App 层展示行；feature 侧有同构的 `RepoUpdateRowUi`）。 */
+data class SourceUpdateUi(
+    val key: String,
+    val version: String,
+    val installedVersion: String?,
+    val reason: String,
+    val downloadUrl: String?,
+)
+
+/** 一次订阅刷新的 App 层结果：候选 + 失败原因（成功时为 null）。 */
+data class RepoRefreshUi(
+    val candidates: List<SourceUpdateUi>,
+    val error: String?,
+)
+
+private fun UpdateCandidate.toUpdateUi(): SourceUpdateUi = SourceUpdateUi(
+    key = entry.key,
+    version = entry.version,
+    installedVersion = installedVersion,
+    reason = reason,
+    downloadUrl = entry.url ?: entry.filename,
+)

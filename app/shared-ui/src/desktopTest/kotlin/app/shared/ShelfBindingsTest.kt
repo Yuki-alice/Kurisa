@@ -3,7 +3,8 @@ package app.shared
 import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
 import core.model.workStableId
 import data.db.ReaderDatabase
-import feature.search.SearchWorkUi
+import feature.search.SearchResultUi
+import source.contract.ContentKind
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
@@ -23,13 +24,8 @@ class ShelfBindingsTest {
         val bindings = createShelfBindings(openDb()) { 7L }
         bindings.ensureDefault()
 
-        val work = SearchWorkUi(
-            workId = "w1",
-            sourceKey = "ex.b",
-            title = "B-W1",
-            kindLabel = "manga",
-        )
-        bindings.addFromSearch(work)
+        val work = SearchResultUi(workId = "w1", title = "B-W1")
+        bindings.addFromSearch(work, sourceKey = "ex.b")
 
         val items = bindings.observe().first()
         assertEquals(1, items.size)
@@ -38,7 +34,7 @@ class ShelfBindingsTest {
         assertEquals(7L, items.single().addedAtEpochMs)
 
         // 幂等：同作品重复加入不产生第二行。
-        bindings.addFromSearch(work)
+        bindings.addFromSearch(work, sourceKey = "ex.b")
         assertEquals(1, bindings.observe().first().size)
 
         bindings.remove(items.single().workId)
@@ -49,8 +45,8 @@ class ShelfBindingsTest {
     fun removeFromSourceRebuildsStableId() = runTest {
         val bindings = createShelfBindings(openDb()) { 7L }
         bindings.ensureDefault()
-        val work = SearchWorkUi(workId = "w1", sourceKey = "ex.b", title = "B-W1")
-        bindings.addFromSearch(work)
+        val work = SearchResultUi(workId = "w1", title = "B-W1")
+        bindings.addFromSearch(work, sourceKey = "ex.b")
         assertEquals(1, bindings.observeUi().first().size)
 
         // UI 行只有源内 id + sourceKey，删除必须真正生效。
@@ -64,12 +60,9 @@ class ShelfBindingsTest {
         val bindings = createShelfBindings(openDb()) { 9L }
         bindings.ensureDefault()
         bindings.addFromSearch(
-            SearchWorkUi(
-                workId = "n1",
-                sourceKey = "ex.novel",
-                title = "小说一",
-                kindLabel = "novel",
-            ),
+            SearchResultUi(workId = "n1", title = "小说一"),
+            sourceKey = "ex.novel",
+            kind = ContentKind.NOVEL,
         )
         assertEquals("novel", bindings.observe().first().single().work.kind.serial)
     }

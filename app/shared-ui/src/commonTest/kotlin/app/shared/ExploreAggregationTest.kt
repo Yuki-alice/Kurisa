@@ -1,8 +1,6 @@
 package app.shared
 
 import core.model.SourceRecord
-import feature.search.SearchPageUi
-import feature.search.SearchWorkUi
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -31,50 +29,45 @@ class ExploreAggregationTest {
         updatedAtEpochMs = 0L,
     )
 
-    /** 与生产 parseSearchPage 同形的替身：把原始串当作 workId 回显。 */
-    private val parse: (String, SourceRecord) -> SearchPageUi = { raw, rec ->
-        SearchPageUi(
-            works = listOf(SearchWorkUi(workId = raw, sourceKey = rec.key, title = raw)),
-            maxPage = 2,
-        )
+    /** 与生产同形的替身：把原始串当作 workId，sourceKey 回填来源。 */
+    private val parse: (String, SourceRecord) -> List<ExploreHit> = { raw, rec ->
+        listOf(ExploreHit(sourceKey = rec.key, workId = raw, title = raw))
     }
 
     @Test
     fun noSourceReturnsExplicitError() = runTest {
-        val page = aggregateExplore(
+        val result = aggregateExplore(
             records = emptyList(),
             call = { error("无源时不应触发引擎调用") },
             parse = parse,
         )
-        assertTrue(page.works.isEmpty())
-        assertEquals(listOf("无可用源"), page.errors)
+        assertTrue(result.hits.isEmpty())
+        assertEquals(listOf("无可用源"), result.errors)
     }
 
     @Test
-    fun successfulSourceYieldsWorksAndPageCount() = runTest {
-        val page = aggregateExplore(
+    fun successfulSourceYieldsHitsWithSourceKey() = runTest {
+        val result = aggregateExplore(
             records = listOf(record("com.example.a")),
             call = { "w1" },
             parse = parse,
         )
-        assertEquals(listOf("w1"), page.works.map { it.workId })
-        assertEquals("com.example.a", page.works.single().sourceKey)
-        assertEquals(2, page.maxPage)
-        assertTrue(page.errors.isEmpty())
+        assertEquals(listOf("w1"), result.hits.map { it.workId })
+        assertEquals("com.example.a", result.hits.single().sourceKey)
+        assertTrue(result.errors.isEmpty())
     }
 
     @Test
     fun failingSourceDoesNotBreakOtherSources() = runTest {
         val a = record("com.example.a")
-        val b = record("com.example.b")
-        val page = aggregateExplore(
-            records = listOf(a, b),
+        val result = aggregateExplore(
+            records = listOf(a, record("com.example.b")),
             call = { rec -> if (rec.key == a.key) error("能力未声明") else "w2" },
             parse = parse,
         )
-        assertEquals(listOf("w2"), page.works.map { it.workId })
-        assertEquals(1, page.errors.size)
-        assertTrue(page.errors.single().contains("能力未声明"))
-        assertTrue(page.errors.single().contains(a.key))
+        assertEquals(listOf("w2"), result.hits.map { it.workId })
+        assertEquals(1, result.errors.size)
+        assertTrue(result.errors.single().contains("能力未声明"))
+        assertTrue(result.errors.single().contains(a.key))
     }
 }

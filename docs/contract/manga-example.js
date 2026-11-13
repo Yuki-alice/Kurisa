@@ -5,7 +5,7 @@
 // @apiVersion   2
 // @minApp       1.0.0
 // @kind         manga
-// @domains      manga.example.com
+// @domains      manga.example.com,cdn.example.com
 // @capabilities search,comic
 // ==/SourceScript==
 
@@ -32,7 +32,9 @@ class DemoManga extends ComicSource {
       const comics = doc.querySelectorAll('.w').map((el, i) => ({
         id: 'w' + (i + 1),
         title: el.text,
-        kind: 'manga'
+        kind: 'manga',
+        // 封面走同一 CDN：书架/搜索页要有图，纯文字列表认不出作品。
+        cover: `https://cdn.example.com/cover/${i + 1}.jpg`
       }))
       doc.dispose()
       return { comics, maxPage: 3 }
@@ -47,11 +49,17 @@ class DemoManga extends ComicSource {
       doc.dispose()
       return new ComicDetails({
         title,
+        cover: `https://cdn.example.com/cover/${id}.jpg`,
+        description: '演示源作品：用于验证「装源 → 搜索 → 详情 → 出图」全链路。',
         chapters: new Map([['c1', { id: 'c1', title: '第1话' }]])
       })
     },
     loadEp: async (comicId, epId) => {
-      return { images: [`https://cdn.example.com/${comicId}/${epId}/p1.jpg`] }
+      // 多页而不是单页：单页测不出翻页/预取/页码，也看不出阅读器真实观感。
+      const images = Array.from({ length: 8 }, (_, i) =>
+        `https://cdn.example.com/${comicId}/${epId}/p${i + 1}.jpg`
+      )
+      return { images }
     }
   }
 }

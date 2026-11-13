@@ -7,14 +7,15 @@ import androidx.compose.ui.window.rememberWindowState
 import app.cash.sqldelight.db.QueryResult
 import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
 import app.shared.App
+import app.shared.AppContainer
 import app.shared.CallbackDownloadSink
 import app.shared.createDownloadController
-import app.shared.downloadTaskDirName
 import app.shared.createShelfBindings
 import app.shared.createSourceCatalog
+import app.shared.downloadTaskDirName
 import core.model.ChapterPayload
-import data.db.ReaderDatabase
 import data.download.KtorRangeFetcher
+import data.db.ReaderDatabase
 import data.network.CookieStore
 import data.network.defaultHttpClient
 import data.localimport.LOCAL_WORK_PREFIX
@@ -29,6 +30,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.awt.FileDialog
 import java.io.File
+import javax.swing.JFileChooser
+import javax.swing.SwingUtilities
 
 /** 桌面入口（产品显示名只落配置层，此处标题即一例）。 */
 fun main() {
@@ -36,7 +39,6 @@ fun main() {
     val progress = createProgressRepository(database)
     val bookmarks = createBookmarkRepository(database)
     val localBooks = createLocalBookRepository(database)
-    val shelf = createShelfBindings(database) { System.currentTimeMillis() }
     val settings = createReaderSettingsStore(
         db = database,
         nowMs = { System.currentTimeMillis() },
@@ -51,6 +53,8 @@ fun main() {
     val localFs = LocalSourceFileSystem.fromDirectory(booksDir.absolutePath)
     val localChapters = LocalChapterProvider(localFs) { it.removePrefix(LOCAL_WORK_PREFIX) }
     val sourcesDir = File(appDir, "sources").apply { mkdirs() }
+    // S2：共享容器（CookieStore/HttpClient/ImageFetcher 一份，阅读器与源侧配对一致）。
+    val container = AppContainer(cookies, http)
     val bindings = createSourceCatalog(
         db = database,
         httpClient = http,
@@ -60,7 +64,9 @@ fun main() {
         nowMs = { System.currentTimeMillis() },
     )
     val readerChapters = LocalRoutingChapterProvider(localChapters, bindings.chapters)
-    // 下载编排（BE-A1）：分片落本地目录，抓取仍走 KtorRangeFetcher 的白名单 + 配对 UA。
+    // 在线书架（A2）：数据层已就绪，装配层只做映射。
+    val shelf = createShelfBindings(database) { System.currentTimeMillis() }
+    // 下载编排（A1）：分片落本地目录，抓取仍走 KtorRangeFetcher 的白名单 + 配对 UA。
     val downloadsDir = File(appDir, "downloads").apply { mkdirs() }
     val downloads = createDownloadController(
         db = database,
@@ -119,7 +125,6 @@ fun main() {
                 bookmarkRepository = bookmarks,
                 localFs = localFs,
                 localBooks = localBooks,
-                shelf = shelf,
                 pickLocalFiles = {
                     withContext(Dispatchers.IO) {
                         val dialog = FileDialog(null as java.awt.Frame?, "导入本地书", FileDialog.LOAD)
@@ -144,18 +149,47 @@ fun main() {
                     f.writeText(script)
                     f.absolutePath
                 },
+                // B1：桌面用系统目录选择器（Swing 在 IO 线程弹，避免阻塞 Compose 的 AWT 主线程）。
+                onPickLocalDirectory = { pickLocalDirectory() },
+                // 启动时直接打开指定库：`-Dkurisa.library=<dir>` 或 `KURISA_LIBRARY=<dir>`。
+                // 用途一是「设了就不用每次点选目录」，二是自动化验证能起真窗口看真实库。
+                localLibraryRoot = System.getenv("KURISA_LIBRARY")
+                    ?: System.getProperty("kurisa.library"),
+                shelf = shelf,
                 downloads = downloads,
-                // 源仓库索引只读本地文件，不发起任意 URL 请求（fail-closed）。
+                // 源仓库索引只读本地文件：本轮不引入「用户任意 URL」的网络链路。
                 fetchRepoIndex = {
                     withContext(Dispatchers.IO) {
-                        val index = File(sourcesDir, "index.json")
-                        if (!index.isFile) error("未找到本地源仓库索引：${index.absolutePath}")
-                        index.readText()
+                        File(sourcesDir, "index.json").takeIf { it.isFile }?.readText()
                     }
                 },
+                container = container,
             )
         }
     }
+}
+
+/**
+ * 桌面目录选择器（B1）。
+ *
+ * `JFileChooser` 必须在 EDT 上调用，而 Compose Desktop 的 AWT 主线程就是 EDT；
+ * 直接在组合线程里 `invokeAndWait` 会自锁，因此整体放到 IO 线程再投递到 EDT。
+ * 无图形环境（headless）时返回 null，由书架显示「未选择本地库」，不崩。
+ */
+private suspend fun pickLocalDirectory(): String? = withContext(Dispatchers.IO) {
+    runCatching {
+        var picked: String? = null
+        SwingUtilities.invokeAndWait {
+            val chooser = JFileChooser().apply {
+                fileSelectionMode = JFileChooser.DIRECTORIES_ONLY
+                dialogTitle = "选择漫画目录"
+            }
+            if (chooser.showOpenDialog(null) == JFileChooser.APPROVE_OPTION) {
+                picked = chooser.selectedFile?.absolutePath
+            }
+        }
+        picked
+    }.getOrNull()
 }
 
 /**

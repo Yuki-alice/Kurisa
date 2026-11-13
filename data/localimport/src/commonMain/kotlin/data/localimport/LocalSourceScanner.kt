@@ -173,13 +173,20 @@ class LocalSourceScanner(
 
     private suspend fun firstImageCover(mangaName: String, chapters: List<ScannedChapter>): String? {
         for (chapter in chapters) {
-            val format = FormatDetector.byExtension(chapter.name)
-            if (format == LocalFormat.DIRECTORY) {
-                val files = fs.listEntries(chapter.url)
+            // 目录章节的 name 没有扩展名，`byExtension` 判不出 DIRECTORY；
+            // 直接试着列目录，能列就是目录（归档路径会抛，落到下面分支）。
+            val dirFiles = runCatching { fs.listEntries(chapter.url) }.getOrNull()
+            // 注意用 isNotEmpty：对文件路径列目录可能返回空表而不是抛异常，
+            // 只判 null 会把归档章节误当成「空目录」跳过。
+            if (!dirFiles.isNullOrEmpty()) {
+                val images = dirFiles
                     .filter { !it.isDirectory && FormatDetector.isImageName(it.name) }
                     .sortedWith { a, b -> NaturalOrder.compare(a.name, b.name) }
-                if (files.isNotEmpty()) return "${chapter.url}/${files.first().name}"
-            } else if (FormatDetector.isSupportedArchive(format)) {
+                if (images.isNotEmpty()) return "${chapter.url}/${images.first().name}"
+                continue
+            }
+            val format = FormatDetector.byExtension(chapter.name)
+            if (FormatDetector.isSupportedArchive(format)) {
                 val reader = try {
                     fs.openArchive(chapter.url)
                 } catch (_: Exception) {

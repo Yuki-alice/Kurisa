@@ -6,7 +6,7 @@ import data.db.ReaderDatabase
 import data.repository.ShelfRepository
 import data.repository.ShelfWork
 import data.repository.createShelfRepository
-import feature.search.SearchWorkUi
+import feature.search.SearchResultUi
 import feature.shelf.ShelfWorkUi
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
@@ -17,7 +17,7 @@ import source.contract.Work
  * 书架装配（核心数据链路，不依赖任何 UI）。
  *
  * 平台壳传入 SQLDelight DB；App 启动时 [ensureDefault]；后续详情/搜索页拿到
- * [SearchWorkUi] 后调 [addFromSearch] 即可落库，宿主 ID 由 `workStableId(sourceKey, workId)`
+ * [SearchResultUi] 后调 [addFromSearch] 即可落库，宿主 ID 由 `workStableId(sourceKey, workId)`
  * 生成（禁止用 URL 作主键，见架构 §5.1）。表现层（M5 书架屏）只需消费 [observe]。
  */
 class ShelfBindings(
@@ -40,21 +40,26 @@ class ShelfBindings(
     fun observeUi(shelfId: String = DEFAULT_SHELF_ID): Flow<List<ShelfWorkUi>> =
         observe(shelfId).map { works -> works.map { it.toUi() } }
 
-    /** 从搜索/详情结果加入书架；重复加入由 work/stableId 的 upsert 保证幂等。 */
-    suspend fun addFromSearch(work: SearchWorkUi, shelfId: String = DEFAULT_SHELF_ID) {
-        val kind = if (work.kindLabel.equals("novel", ignoreCase = true)) {
-            ContentKind.NOVEL
-        } else {
-            ContentKind.MANGA
-        }
+    /**
+     * 从搜索结果加入书架；重复加入由 work/stableId 的 upsert 保证幂等。
+     *
+     * `sourceKey` 由调用方（装配层）从当前搜索的源回填：`SearchResultUi` 只带作品信息，
+     * 不带归属源；丢了它书架行就无法回到正确的源。
+     */
+    suspend fun addFromSearch(
+        work: SearchResultUi,
+        sourceKey: String,
+        kind: ContentKind = ContentKind.MANGA,
+        shelfId: String = DEFAULT_SHELF_ID,
+    ) {
         repository.addToShelf(
             shelfId = shelfId,
-            sourceKey = work.sourceKey,
+            sourceKey = sourceKey,
             work = Work(
                 id = work.workId,
                 title = work.title,
                 subtitle = work.subtitle.ifBlank { null },
-                cover = work.cover,
+                cover = null,
                 kind = kind,
             ),
             nowMs = nowMs(),
@@ -88,11 +93,12 @@ class ShelfBindings(
 /** 数据层书架行 → 书架屏 UI 行（映射收口在 App 层，feature 不依赖 data:repository）。 */
 private fun ShelfWork.toUi(): ShelfWorkUi = ShelfWorkUi(
     workId = work.id,
-    sourceKey = sourceKey,
     title = work.title,
     subtitle = work.subtitle.orEmpty(),
-    cover = work.cover,
-    kindLabel = work.kind.serial,
+    sourceKey = sourceKey,
+    badge = if (work.kind == ContentKind.NOVEL) "小说" else "在线",
+    // 在线封面 URL 在数据层，字节由 App 层按需抓取（M5 统一网格封面时补）。
+    coverBytes = null,
 )
 
 fun createShelfBindings(db: ReaderDatabase, nowMs: () -> Long): ShelfBindings =

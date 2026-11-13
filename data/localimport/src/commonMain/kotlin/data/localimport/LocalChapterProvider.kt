@@ -33,7 +33,7 @@ class LocalChapterProvider(
     override suspend fun chapters(workId: String): List<ChapterRef> {
         val manga = resolveManga(workId)
         val chapters = scanner.scanManga(manga, manga).chapters.mapIndexed { index, c ->
-            ChapterRef(id = c.url, title = c.titleOverride ?: c.name, ordinal = index)
+            ChapterRef(id = c.url, title = c.titleOverride ?: displayTitle(c.name), ordinal = index)
         }.toMutableList()
         // 文本书章节：扫描器按漫画目录语义过滤了 TXT，这里在同构章节列表后追加。
         for (entry in fs.mangaEntries(manga)) {
@@ -63,6 +63,20 @@ class LocalChapterProvider(
             }
         }
         return chapters
+    }
+
+    /**
+     * 章节展示名：去掉归档扩展名（`.cbz`/`.zip`/`.epub`/`.pdf`）。
+     *
+     * 文件名是磁盘概念，读者只关心「第几话」；扩展名留在 id 里（读写仍按原路径）。
+     */
+    private fun displayTitle(name: String): String {
+        val format = FormatDetector.byExtension(name)
+        return if (FormatDetector.isSupportedArchive(format) || format == LocalFormat.PDF) {
+            name.substringBeforeLast('.', name)
+        } else {
+            name
+        }
     }
 
     override suspend fun rawBytes(workId: String, chapterId: String): ByteArray =
