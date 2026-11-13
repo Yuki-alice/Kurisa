@@ -537,6 +537,8 @@ fun createSourceCatalog(
     loadScript: suspend (installPath: String) -> String,
     appVersion: String = DEFAULT_APP_VERSION,
     nowMs: () -> Long = { 0L },
+    /** BE-C3：按源声明域名注入 HostUi；默认仍是 NoopHostUi，不改变既有测试与行为。 */
+    hostUiFor: (Set<String>) -> source.hostapi.HostUi = { NoopHostUi() },
 ): SourceCatalog {
     val registry = SourceRegistry(db)
     val http = SourceHttpClient(httpClient, cookies, nowMs)
@@ -550,7 +552,7 @@ fun createSourceCatalog(
             override val network = network
             override val html = KsoupHostHtml()
             override val convert = CryptoHostConvert()
-            override val ui = NoopHostUi()
+            override val ui = hostUiFor(spec.domains)
             override val utils = HostUtilsImpl()
             override val storage = kvSafe
             override val novel = NovelHost()

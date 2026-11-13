@@ -32,7 +32,40 @@ import kotlinx.coroutines.withContext
 import java.awt.FileDialog
 import java.io.File
 import javax.swing.JFileChooser
+import javax.swing.JOptionPane
 import javax.swing.SwingUtilities
+import app.shared.CookieImportHostUi
+import app.shared.CookiePaste
+
+/**
+ * 桌面 Cookie 导入兜底（BE-C3 / ADR-009）：无内嵌浏览器时，让用户从 DevTools 粘贴
+ * Cookie 整串，并收集与之配对的浏览器 UA（缺 UA 的 cf_clearance 会被拒绝）。
+ * 与 pickLocalDirectory 同形：Swing 必须走 EDT，整体放 IO 线程；headless 返回 null 不崩。
+ */
+private suspend fun requestCookiePaste(domain: String): CookiePaste? = withContext(Dispatchers.IO) {
+    runCatching {
+        var raw: String? = null
+        var agent: String? = null
+        SwingUtilities.invokeAndWait {
+            raw = JOptionPane.showInputDialog(
+                null,
+                "本平台无内置浏览器。请从浏览器 DevTools 复制 $domain 的 Cookie 整串后粘贴：",
+                "导入 Cookie",
+                JOptionPane.PLAIN_MESSAGE,
+            )
+            if (!raw.isNullOrBlank()) {
+                agent = JOptionPane.showInputDialog(
+                    null,
+                    "粘贴与该 Cookie 配对的浏览器 User-Agent（cf_clearance 必填）：",
+                    "配对 User-Agent",
+                    JOptionPane.PLAIN_MESSAGE,
+                )
+            }
+        }
+        val text = raw?.takeIf { it.isNotBlank() } ?: return@runCatching null
+        CookiePaste(text, agent?.trim()?.takeIf { it.isNotEmpty() })
+    }.getOrNull()
+}
 
 /** 桌面入口（产品显示名只落配置层，此处标题即一例）。 */
 fun main() {
@@ -68,6 +101,18 @@ fun main() {
         appVersion = "1.0.0",
         loadScript = { path -> File(path).readText() },
         nowMs = { System.currentTimeMillis() },
+        // BE-C3：桌面按 ADR-009 走 Cookie 导入兜底；白名单取每个源自己声明的 domains。
+        hostUiFor = { domains ->
+            CookieImportHostUi(
+                cookies = cookies,
+                allowedDomains = domains,
+                requestPaste = ::requestCookiePaste,
+                nowMs = { System.currentTimeMillis() },
+                openExternal = { url ->
+                    runCatching { java.awt.Desktop.getDesktop().browse(java.net.URI(url)) }
+                },
+            )
+        },
     )
     val readerChapters = LocalRoutingChapterProvider(localChapters, bindings.chapters)
     // 在线书架（A2）：数据层已就绪，装配层只做映射。

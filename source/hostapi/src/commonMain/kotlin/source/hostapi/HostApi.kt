@@ -75,10 +75,32 @@ interface HostConvert {
     fun decodeBase64(text: String): ByteArray
 }
 
+/**
+ * BE-C3：宿主登录能力的结果。
+ * 冻结契约以带默认实现的方法扩展，不破坏既有 HostUi 实现（含测试内的匿名实现）。
+ */
+sealed interface HostLoginResult {
+    /** 平台未实现交互式登录（默认），宿主应提示用户改用 Cookie 导入。 */
+    data object Unsupported : HostLoginResult
+
+    /** 通过 Cookie 导入兜底写入 CookieJar 成功。 */
+    data class Imported(val count: Int, val format: String) : HostLoginResult
+
+    /** 取消 / 域名不在源白名单 / 输入非法：未写入任何 Cookie。 */
+    data class Cancelled(val reason: String) : HostLoginResult
+}
+
 /** UI：需 UI 上下文；桌面端降级（ADR-009）。 */
 interface HostUi {
     suspend fun showMessage(text: String)
     suspend fun launchUrl(url: String)
+
+    /**
+     * 请求登录态。默认拒绝：桌面按 ADR-009/010 由宿主覆盖为「Cookie 导入兜底」，
+     * Android / iOS 的 WebView 实现随平台壳落地。
+     * 实现方必须先按源声明的域名白名单复核 [url]，不得借登录链路引入任意 URL。
+     */
+    suspend fun requestLogin(url: String): HostLoginResult = HostLoginResult.Unsupported
 }
 
 /** Utils：uuid/随机数/日志（同步）。 */
