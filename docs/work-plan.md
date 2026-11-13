@@ -5,7 +5,8 @@
 | 文档状态 | **活跃（2026-11-13 起）**。本文是后续实施的唯一计划入口；`comic-e2e-plan.md` 已完成，降为验收记录 |
 | 范围 | M5（UI / 设计系统）、M6（平台能力）、M7（发布）与 P2 源生态 |
 | 前置 | P0 清障 + P1 漫画端到端数据链路已落地（主仓 `4b238cf` / `c06ef4f`）；M4 小说已合并 `867167e` |
-| 当前基线 | `desktopTest` **457 用例 / 0 失败 / 0 错误 / 0 跳过**；`:app:android:assembleDebug` 通过；源仓门禁与 `SourcesRepoContractTest`（52 源）真实跑通 |
+| 当前基线 | `desktopTest` **488 用例 / 0 失败 / 0 错误 / 0 跳过**（2026-11-13 夜）；`:app:android:assembleDebug` 通过；源仓门禁与 `SourcesRepoContractTest`（52 源）真实跑通 |
+| 最近交接 | **`handoff-2026-11-13.md`**：本轮已落地的核心能力、四处「已实现但没接上」的缺口、接手顺序与已知偶发问题 |
 | 纪律 | `AGENTS.md` 任务→技能路由；C1 主仓零真实站点；ADR-005 漫画/小说共用一条管线；ADR-006 默认不加 `expect/actual`；改桥/Cookie/白名单前先 `security-audit` |
 
 > 本文不维护版本号与变更摘要，只改正文。每阶段独立提交、可单独回滚。
@@ -16,11 +17,16 @@
 
 **已接通**：插件引擎长驻运行时 + 版本路由 + `rules/v1`；源安装/预览/二次确认/落盘入库；
 `SourceCatalog.search/detail/bindWork` 与按作品路由 `WorkSourceIndex`；Search/Detail 两个 MVI 屏；
-阅读器章节/正文/图片出口（共享 `CookieStore`/`HttpClient`）；本地 CBZ/图片目录/EPUB/PDF 导入（Desktop FileDialog + Android SAF）；
+阅读器章节/正文/图片出口（共享 `CookieStore`/`HttpClient`）；本地 CBZ/图片目录/EPUB/PDF/**TAR/CBT** 导入（Desktop FileDialog + Android SAF）；
 小说 M4 排版/书签/划线/笔记；两条 walkthrough 自动回归；主仓 CI。
 
+**数据层已落地但未接 UI/生产**（2026-11-13 夜，详见 `handoff-2026-11-13.md` §3）：
+下载编排 `DownloadManager`（队列/持久化/分片续传/优先级，5 用例）但 `createDownloadController` 无调用方；
+书架 `ShelfBindings` + `ShelfScreen` MVI 已重写、双端注入，但「加入书架 / 移出」无 UI 入口；
+源订阅 `SourceIndexParser`/`SourceRepoPlanner`/`SourceRepoSubscription`（14 用例）与 `SourceCatalog.planRepoUpdates` 已可用，但源管理页无「检查更新」入口。
+
 **未完成**（本规划要解决的）：
-Koin 未接线（VM 工厂仍手写）；`explore / shelf / settings / downloads` 四屏仍是 `TODO` 占位；
+上述四处生产接线；Koin 未接线（VM 工厂仍手写）；`explore / settings` 两屏仍是 `TODO` 占位；
 `HostUi` 默认拒绝（WebView 登录 M6）；VIDEO/AUDIO 渲染显式抛 CONTRACT；iOS Xcode 壳与三端截图基线；
 截图基线未补进 walkthrough；发版签名与源签名信任模型；两仓 `index schema` 双版本漂移；
 `rules/v1` 覆盖率 1/52；真实站点可用性零回归。
@@ -29,14 +35,19 @@ Koin 未接线（VM 工厂仍手写）；`explore / shelf / settings / downloads
 
 ## 2. 阶段任务（按优先级）
 
-### P2-A · 把 UI 占位屏接通（M5，收益最直接）
+### P2-A · 把 UI 占位屏接通（M5）
+
+> **优先级调整（2026-11-13 夜，用户口径）**：设计原型仍在重做，**视觉表现层全部后置**。
+> 当前先做「核心功能的生产接线」——即 `handoff-2026-11-13.md` §3 的四处缺口（下载编排、
+> 加入/移出书架、源订阅入口），它们不依赖设计稿，且决定用户能否真正用到已落地的能力。
+> 本节 A2–A4 中标注「数据层已完成」的部分属于该批接线；纯视觉还原等 A1 定稿。
 
 | 任务 | 改动点 | 验收门 | 回滚 |
 | --- | --- | --- | --- |
-| A1 设计资产状态确认 | `design/`（13 屏 M3 Expressive 原型 + tokens）当前**工作区缺失**：17 个已跟踪文件被删除且未提交。先确认恢复（`git restore design/`）或正式移除；未定前不按它排期 | 工作区不再有意外的 `D design/*`；`docs/README.md` 的 design 条目与实际一致 | 单条 `git restore` |
+| A1 设计原型定稿 | `design/`（13 屏 M3 Expressive 原型 + tokens）已恢复到工作区，但**原型仍在重新设计**。定稿前不按它排期，也不做视觉还原 | 原型定稿并明确版本；`docs/README.md` 的 design 条目与本表同步 | 无（不排期即无改动） |
 | A2 Explore 屏 | `feature/explore/Explore.kt`：按 `ExploreRoute.sourceKey` 调 `SourceCatalog` 的 explore/category 出口（缺出口则在 `SourceCatalog` 补，复用 `runtimeFor`），结果带 `sourceKey` 进 `DetailRoute` | 新 UI 测试覆盖「有源 / 无源 / 单源失败」三态；`NavRoutesTest` 不回归 | 独立提交，可单屏关闭 |
-| A3 Shelf 屏 | `feature/shelf/Shelf.kt`：接 `ShelfRepository.observeShelf` + 封面/分页，本地书分区与在线书同构；`bindWork` 在打开详情前调用 | 本地书与在线书都能从书架走到阅读器；`RepoHygieneTest` 绿 | 同上 |
-| A4 Settings / Downloads | `feature/settings/Settings.kt`（主题/阅读/网络/存储/关于）、`feature/downloads/Downloads.kt`（接 `DownloadController.tasks` 的优先级/暂停/续传） | 各自 `commonTest`/`desktopTest` 覆盖状态机；不影响阅读器 | 同上 |
+| A3 Shelf 屏（数据层已完成） | `ShelfScreen` 已重写（在线收藏 + 本地书同构分区、封面、导入、删除）并双端注入；**剩余**：加入书架 / 移出入口（见交接 §3.2、§3.3） | 搜索加入 → 书架可见 → 打开详情 → 移出生效；`ShelfBindingsTest` 绿 | 同上 |
+| A4 Downloads / Settings | `DownloadsScreen` 已改为消费 `tasks` 流并支持暂停/续传/取消；**剩余**：双端构造 `createDownloadController` 并接入（见交接 §3.1）。`feature/settings/Settings.kt` 仍是占位 | 下载页能看到真实任务、重启可续传；Settings 状态机测试 | 同上 |
 
 统一形态：按 `AGENTS.md` 定稿，MVI 是模式、`ViewModel`/`StateFlow`/`Channel<Effect>` 是机制，
 以 `feature/reader/ReaderViewModel` 为模板；**禁止同类页面混用裸 `StateHolder` 与 reducer**。
@@ -74,7 +85,7 @@ Koin 接入前沿用上一轮 Search/Detail 的手写 Factory 形态。
 
 ## 4. 风险与待拍板
 
-1. **A1 设计资产缺失**：`design/` 17 个已跟踪文件在工作区被删除且未提交，与上一轮「已入库」的结论冲突。必须先确认是恢复还是正式移除，否则 M5 屏失去规格来源。
+1. **A1 设计原型重做中**：`design/` 已恢复到工作区（18 文件 / 17 已跟踪），但用户说明原型仍在重新设计。**表现层任务全部后置**，不按现有原型排期；定稿后需同步刷新本条与 M5 任务表。
 2. **CI 首次运行**：`.github/workflows/ci.yml` 在 GitHub Actions 上需 Android SDK 37 与 Gradle wrapper 镜像可用；本地 `assembleDebug` 已通过，但云端环境未实测。
 3. **条件门禁仍会 SKIP**：`RealSourceE2ETest` / `AllSourcesCompatibilityTest` / `SourcesRepoContractTest` 缺外部目录时打印 SKIP 按通过计。CI 全绿 ≠ 真实站点全流程跑通；本轮本地已真实跑通 `SourcesRepoContractTest`（52 源）。
 4. **Koin 迁移面**：三个 VM 工厂 + 共享网络栈同时在多个模块，逐模块替换、每步回归，避免一次性切换导致三端编译差异。
