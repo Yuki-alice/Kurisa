@@ -28,5 +28,9 @@ jobs:
           distribution: temurin
           java-version: '21'
       - uses: gradle/actions/setup-gradle@v4
+      # 截图用例断言「页面不是单色」：Ubuntu runner 默认没有中日韩字体，
+      # 文字页会渲染成空白而误报。装 Noto CJK 后与本地/截图基线一致。
+      - name: Install CJK fonts for screenshot tests
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends fonts-noto-cjk
       - name: Run desktop tests and Android debug assemble
         run: ./gradlew desktopTest :app:android:assembleDebug --console=plain --no-daemon
