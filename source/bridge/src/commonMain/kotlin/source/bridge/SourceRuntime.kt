@@ -48,6 +48,11 @@ class SourceRuntime(
      */
     private val onTrace: (SourceCallTrace) -> Unit = {},
     /**
+     * 遥测消费出口（BE-B6；null = 不消费，默认行为零变）。
+     * 每次 trace 在触发 `onTrace` 的同时也喂给它；计数器快照由宿主实现喂入（见 `TelemetrySink`）。
+     */
+    private val telemetry: TelemetrySink? = null,
+    /**
      * 纯函数结果缓存（`DESIGN.md` §8：`onImageLoad` / `translate` 按 URL+章节键控）。
      * null = 不缓存（单测默认，行为零变）；生产由 `SourceRuntimeManager` 注入共享实例。
      * `LOGIN_EXPIRED` 重放路径不走缓存（重放的是副作用调用结果，见 `withPolicy`）。
@@ -262,19 +267,23 @@ class SourceRuntime(
      * 结构化并发取消与「宿主缺 native」原样抛出（测试据此跳过，不误判为源错误）。
      */
     private suspend fun withPolicy(path: String, block: suspend () -> String): String {
+        val emitTrace = { t: SourceCallTrace ->
+            onTrace(t)
+            telemetry?.onTrace(t)
+        }
         val needed = ContractPolicy.capabilityForPath(path)
         if (needed != null && !descriptor.has(needed)) {
             val rejection = SourcePluginException(
                 "能力未声明：$path（需 ${needed.serial}）",
                 SourceErrorKind.CONTRACT,
             )
-            onTrace(SourceCallTrace(descriptor.key, path, 0, false, SourceErrorKind.CONTRACT))
+            emitTrace(SourceCallTrace(descriptor.key, path, 0, false, SourceErrorKind.CONTRACT))
             throw rejection
         }
         val mark = TimeSource.Monotonic.markNow()
         fun done(ok: Boolean, kind: SourceErrorKind?): Long {
             val ms = mark.elapsedNow().inWholeMilliseconds
-            onTrace(SourceCallTrace(descriptor.key, path, ms, ok, kind))
+            emitTrace(SourceCallTrace(descriptor.key, path, ms, ok, kind))
             return ms
         }
         return try {

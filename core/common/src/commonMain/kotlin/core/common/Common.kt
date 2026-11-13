@@ -95,3 +95,88 @@ class Debouncer(
         job = null
     }
 }
+/**
+ * 日志条目（`InMemoryAppLog.entries()` 导出用；throwable 只记类型与消息，不记堆栈与参数）。
+ */
+data class LogEntry(
+    val level: String,
+    val tag: String,
+    val message: String,
+    val throwable: String?,
+    val atEpochMs: Long,
+)
+
+/**
+ * 内存日志后端（BE-B6：`NoopAppLog` 的可注入替代）。
+ *
+ * 环形缓冲（默认 200 条，超限丢最旧）；`entries()` 返回快照，可导出文本。
+ * 生产由平台后端替换（Napier/Kermit，M6），桌面调试与单测用此实现断言。
+ * 调用约定与 `DbKvStore` 一致：只在串行上下文调用，不做跨线程同步。
+ */
+class InMemoryAppLog(
+    private val capacity: Int = 200,
+    private val nowMs: () -> Long = { 0L },
+) : AppLog {
+    init {
+        require(capacity > 0) { "capacity must be > 0" }
+    }
+
+    private val buf = ArrayDeque<LogEntry>(capacity)
+
+    override fun d(tag: String, message: String) = add("D", tag, message, null)
+
+    override fun w(tag: String, message: String) = add("W", tag, message, null)
+
+    override fun e(tag: String, message: String, throwable: Throwable?) =
+        add("E", tag, message, throwable?.let { it::class.simpleName + ": " + it.message })
+
+    /** 快照（调用方只读，不影响缓冲）。 */
+    fun entries(): List<LogEntry> = buf.toList()
+
+    fun clear() = buf.clear()
+
+    private fun add(level: String, tag: String, message: String, throwable: String?) {
+        if (buf.size >= capacity) buf.removeFirst()
+        buf.addLast(LogEntry(level, tag, message, throwable, nowMs()))
+    }
+}
+
+/**
+ * 扇出日志（BE-B6：同时喂内存缓冲与平台后端）。
+ *
+ * 一个后端抛异常不影响其余后端（逐个投递），最后把首个异常重新抛出——
+ * 不吞异常，但也不让一个坏后端饿死其它后端。
+ */
+class MultiplexAppLog(private vararg val sinks: AppLog) : AppLog {
+    override fun d(tag: String, message: String) = each { it.d(tag, message) }
+
+    override fun w(tag: String, message: String) = each { it.w(tag, message) }
+
+    override fun e(tag: String, message: String, throwable: Throwable?) =
+        each { it.e(tag, message, throwable) }
+
+    private inline fun each(block: (AppLog) -> Unit) {
+        var first: Throwable? = null
+        for (s in sinks) {
+            try {
+                block(s)
+            } catch (t: Throwable) {
+                if (first == null) first = t
+            }
+        }
+        if (first != null) throw first
+    }
+}
+
+/** 标签前缀装饰（`log.withPrefix("net")` 让 tag 变为 `net/xxx`，三级别一致加前缀）。 */
+fun AppLog.withPrefix(prefix: String): AppLog {
+    val outer = this
+    return object : AppLog {
+        override fun d(tag: String, message: String) = outer.d(prefix + "/" + tag, message)
+
+        override fun w(tag: String, message: String) = outer.w(prefix + "/" + tag, message)
+
+        override fun e(tag: String, message: String, throwable: Throwable?) =
+            outer.e(prefix + "/" + tag, message, throwable)
+    }
+}

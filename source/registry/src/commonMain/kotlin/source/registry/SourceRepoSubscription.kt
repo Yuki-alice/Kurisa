@@ -7,11 +7,12 @@ import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import source.contract.ContentKind
 
 /**
  * 源仓库索引中的单条源条目（纯数据层，不联网）。
- * 兼容源仓 `index.json` 与 docs 契约两套 schema：`url`/`filename` 二选一，
- * `apiVersion`/`minApp` 等字段可选，缺省不抛错。
+ * 兼容源仓 index.json 与 docs 契约两套 schema（统一版 v2）：url/filename 二选一，
+ * apiVersion/minApp/sha256/kind/domains/format 等字段可选，缺省不抛错。
  */
 data class RepoSourceEntry(
     val key: String,
@@ -22,6 +23,12 @@ data class RepoSourceEntry(
     val apiVersion: Int? = null,
     val minApp: String? = null,
     val format: String = "js/v1",
+    /** sha256（统一 schema v2；缺失=未校验，安装器按未验证标记）。 */
+    val sha256: String? = null,
+    /** 内容类型（kind 数组；未知值丢弃）。 */
+    val kind: Set<ContentKind> = emptySet(),
+    /** 允许域名（网络白名单复核用；空=未声明）。 */
+    val domains: List<String> = emptyList(),
 )
 
 /** 源仓库索引。顶层 `version` 为索引格式版本（缺省 1）。 */
@@ -72,6 +79,13 @@ object SourceIndexParser {
             apiVersion = readInt(obj["apiVersion"]),
             minApp = readString(obj["minApp"]),
             format = readString(obj["format"]) ?: "js/v1",
+            sha256 = readString(obj["sha256"])?.takeIf { it.isNotBlank() },
+            kind = (obj["kind"] as? JsonArray)?.mapNotNull {
+                (it as? JsonPrimitive)?.content?.let(ContentKind::of)
+            }?.toSet().orEmpty(),
+            domains = (obj["domains"] as? JsonArray)?.mapNotNull {
+                (it as? JsonPrimitive)?.content?.takeIf { s -> s.isNotBlank() }
+            }.orEmpty(),
         )
     }
 

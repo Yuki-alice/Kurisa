@@ -1,0 +1,28 @@
+{
+  "format": "rules/v1",
+  "key": "example.static.novel",
+  "name": "示例静态源·小说（契约灯具，非真实站点）",
+  "version": "1.0.0",
+  "kind": ["novel"],
+  "domains": ["example.com"],
+  "baseUrl": "https://example.com/",
+  "search": {
+    "request": {"method": "GET", "url": "/s?q=@keyword&page=@page"},
+    "mode": "html",
+    "list": ".book-li",
+    "fields": {
+      "id": "a@href | fileName",
+      "title": "a@text | trim"
+    },
+    "pagination": {"maxPage": "1"}
+  },
+  "detail": {
+    "request": {"method": "GET", "url": "/work/@id"},
+    "mode": "html",
+    "title": "h1@text",
+    "chapters": {"list": "#chapters a", "id": "@href | fileName", "title": "@text | trim"}
+  },
+  "content": {
+    "text": {"select": "#content", "clean": true}
+  }
+}

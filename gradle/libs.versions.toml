@@ -98,6 +98,9 @@ lifecycle-runtime-compose = { module = "androidx.lifecycle:lifecycle-runtime-com
 # --- DI (Koin only) ---
 koin-core = { module = "io.insert-koin:koin-core", version.ref = "koin" }
 koin-compose = { module = "io.insert-koin:koin-compose", version.ref = "koin" }
+# 屏幕级 ViewModel 由 Koin 提供（BE-A5）：koin-compose-viewmodel 提供 koinViewModel，
+# 其 org.koin.core.module.dsl.viewModel/viewModelOf 由传递依赖 koin-core-viewmodel 带来。
+koin-viewmodel-compose = { module = "io.insert-koin:koin-compose-viewmodel", version.ref = "koin" }
 
 # --- Android app 壳（MainActivity setContent；版本待 M7 定） ---
 androidx-activity-compose = { module = "androidx.activity:activity-compose", version.ref = "androidx-activity" }

@@ -38,8 +38,14 @@ kotlin {
             implementation(libs.lifecycle.viewmodel)
             implementation(libs.lifecycle.viewmodel.compose)
             implementation(libs.lifecycle.runtime.compose)
+            implementation(libs.koin.core)
+            implementation(libs.koin.viewmodel.compose)
             implementation(project(":core:model"))
             implementation(project(":core:designsystem"))
+        }
+        commonTest.dependencies {
+            implementation(kotlin("test"))
+            implementation(libs.kotlinx.coroutines.test)
         }
     }
 }

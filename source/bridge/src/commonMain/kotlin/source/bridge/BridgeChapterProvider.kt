@@ -10,8 +10,10 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
+import kotlinx.coroutines.CancellationException
 import kotlinx.serialization.json.jsonPrimitive
 import source.contract.ContentKind
+import kotlin.time.Clock
 
 /**
  * 桥接章节源（源引擎 → 阅读器内核的归一化适配）。
@@ -24,13 +26,61 @@ import source.contract.ContentKind
  * 缺字段即抛 [SourceBridgeException]（源实现违约，不伪装成空章节——
  * 空目录与实现错误必须可区分，见 M1 评审）。
  */
+/**
+ * 章节列表缓存出口（BE-B2 端口；适配器在 :data:repository，由装配层注入）。
+ *
+ * 实现（data.repository.ChapterCacheRepository）把目录写透到 chapter 表：
+ * - saveChapters 全量替换（远端不再列出的章节视为下架，一并清理）；
+ * - loadChapters 无缓存返回 null（与空目录可区分，不伪装数据）。
+ */
+interface ChapterCachePort {
+    suspend fun saveChapters(
+        workId: String,
+        kind: ContentKind,
+        chapters: List<ChapterRef>,
+        updatedAtEpochMs: Long,
+    )
+
+    suspend fun loadChapters(workId: String): List<ChapterRef>?
+}
+
 class BridgeChapterProvider(
     private val calls: SourceCalls,
     private val kind: ContentKind,
+    /**
+     * 章节缓存（null = 未装配缓存，纯在线；由装配层注入仓储适配器）。
+     * 装配契约见协作 3：构造新增参数一律带默认值，旧调用点零改动。
+     */
+    private val chapterCache: ChapterCachePort? = null,
+    private val nowMs: () -> Long = { Clock.System.now().toEpochMilliseconds() },
+    /**
+     * 缓存写入失败的透出钩子（默认丢弃，写透失败不破坏一次成功的在线读取；
+     * 生产装配可接 AppLog，单测可断言触发）。
+     */
+    private val onChapterCacheError: (Throwable) -> Unit = {},
 ) : ChapterProvider {
     private val json = Json
 
     override suspend fun chapters(workId: String): List<ChapterRef> {
+        // 在线优先：成功即写透缓存；远端失败才回退缓存，保证离线可读不断章。
+        // 取消与宿主缺 native 原样抛出（结构化并发与测试跳过语义，不误判为源错误）。
+        val remote = try {
+            fetchRemoteChapters(workId)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: HostMissingException) {
+            throw e
+        } catch (e: Exception) {
+            val cached = runCatching { chapterCache?.loadChapters(workId) }.getOrNull()
+            if (cached != null) return cached
+            throw e
+        }
+        runCatching { chapterCache?.saveChapters(workId, kind, remote, nowMs()) }
+            .onFailure { onChapterCacheError(it) }
+        return remote
+    }
+
+    private suspend fun fetchRemoteChapters(workId: String): List<ChapterRef> {
         val raw = calls.loadWorkDetails(workId, kind)
         val obj = runCatching { json.parseToJsonElement(raw).jsonObject }.getOrElse {
             throw SourceBridgeException("目录解析失败：${it.message}")

@@ -38,6 +38,7 @@ kotlin {
             implementation(project(":source:contract"))
             implementation(project(":source:hostapi"))
             implementation(project(":data:db"))
+            implementation(project(":source:bridge"))
             implementation(project(":data:localimport"))
             implementation(project(":data:network"))
             implementation(libs.sqldelight.coroutines.extensions)

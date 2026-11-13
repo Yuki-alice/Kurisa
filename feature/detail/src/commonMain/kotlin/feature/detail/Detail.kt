@@ -29,6 +29,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -52,6 +53,9 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.serialization.Serializable
+import org.koin.compose.viewmodel.koinViewModel
+import org.koin.core.context.GlobalContext
+import org.koin.core.parameter.parametersOf
 
 /**
  * 作品详情（章节列表虚拟化、更新角标、下载粒度随 M5）。
@@ -90,16 +94,25 @@ data class DetailUiState(
 )
 
 /**
+ * 详情 ViewModel 的注入载荷（BE-A5：Koin 参数）。
+ *
+ * `titleHint` 是路由带下来的标题（详情请求回来前先顶住顶栏），`load` 是装配层装载器。
+ */
+class DetailDeps(
+    val titleHint: String,
+    val load: suspend () -> DetailData,
+)
+
+/**
  * 详情 ViewModel（MVI 同形：StateFlow 状态 + 一次性 Intent）。
  *
  * 装载器由 composition root 注入：本地作品走 `ChapterProvider.chapters`，
  * 在线作品走源 `loadInfo`（章节同源），页面本身不认识 Data 层。
  */
 class DetailViewModel(
-    private val titleHint: String,
-    private val load: suspend () -> DetailData,
+    private val deps: DetailDeps,
 ) : ViewModel() {
-    private val _state = MutableStateFlow(DetailUiState(title = titleHint))
+    private val _state = MutableStateFlow(DetailUiState(title = deps.titleHint))
     val state: StateFlow<DetailUiState> = _state.asStateFlow()
 
     init {
@@ -109,10 +122,10 @@ class DetailViewModel(
     fun refresh() {
         _state.update { it.copy(loading = true, error = null) }
         viewModelScope.launch {
-            runCatching { load() }
+            runCatching { deps.load() }
                 .onSuccess { data ->
                     _state.value = DetailUiState(
-                        title = data.title.ifBlank { titleHint },
+                        title = data.title.ifBlank { deps.titleHint },
                         description = data.description,
                         chapters = data.chapters,
                         loading = false,
@@ -129,17 +142,21 @@ class DetailViewModel(
     }
 }
 
-class DetailViewModelFactory(
-    private val titleHint: String,
-    private val load: suspend () -> DetailData,
-) : androidx.lifecycle.ViewModelProvider.Factory {
-    @Suppress("UNCHECKED_CAST")
-    override fun <T : ViewModel> create(
-        modelClass: kotlin.reflect.KClass<T>,
-        extras: androidx.lifecycle.viewmodel.CreationExtras,
-    ): T {
-        require(modelClass == DetailViewModel::class) { "仅支持 DetailViewModel" }
-        return DetailViewModel(titleHint, load) as T
+/**
+ * 从 Koin 容器取 [DetailViewModel]（BE-A5）。
+ *
+ * 与搜索屏同构：容器定义 `viewModel { DetailViewModel(params.get<DetailDeps>()) }`，
+ * 屏幕级载荷（标题 + 装载闭包）经 `parametersOf` 传入；scope 用 `koinViewModel`
+ * 默认的 `currentKoinScope()`（自带默认 Koin 上下文根 scope 兜底）。容器未启动时
+ * 退化为本地实例（预览 / 独立 UI 测试不崩）。
+ */
+@Composable
+private fun koinDetailViewModel(key: String, deps: DetailDeps): DetailViewModel {
+    val koinStarted = remember { GlobalContext.getOrNull() != null }
+    return if (!koinStarted) {
+        viewModel(key = key) { DetailViewModel(deps) }
+    } else {
+        koinViewModel<DetailViewModel>(key = key, parameters = { parametersOf(deps) })
     }
 }
 
@@ -156,12 +173,12 @@ fun DetailScreen(
     onDownloadChapter: ((chapterId: String, chapterTitle: String) -> Unit)? = null,
     load: suspend () -> DetailData,
 ) {
-    // 重组时闭包可能更新；VM 只构造一次，用 rememberUpdatedState 让最新闭包生效。
-    val currentLoad by rememberUpdatedState(load)
-    val vm: DetailViewModel = viewModel(
-        key = "detail:$workId:$sourceKey",
-        factory = DetailViewModelFactory(title) { currentLoad() },
-    )
+    // 重组时闭包可能更新；VM 只构造一次，用 State 间接让最新闭包生效（与旧实现同语义）。
+    val currentLoad = rememberUpdatedState(load)
+    val deps = remember(workId, sourceKey, currentLoad) {
+        DetailDeps(title) { currentLoad.value() }
+    }
+    val vm: DetailViewModel = koinDetailViewModel("detail:$workId:$sourceKey", deps)
     val state by vm.state.collectAsStateWithLifecycle()
     DetailContent(
         state = state,
