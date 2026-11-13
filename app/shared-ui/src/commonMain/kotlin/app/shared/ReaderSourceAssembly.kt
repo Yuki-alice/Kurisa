@@ -47,8 +47,33 @@ import source.contract.SourceCapability
 import source.contract.SourceScriptHeader
 import source.hostapi.HostApi
 import source.hostapi.HostStorage
+import source.registry.SourceIndexParser
 import source.registry.SourceInstaller
 import source.registry.SourceRegistry
+import source.registry.SourceRepoPlanner
+import source.registry.SourceRepoSubscription
+import source.registry.UpdateCandidate
+
+/**
+ * 源仓库更新建议（App 层纯展示行）。
+ *
+ * 与 feature 层的 `SourceUiItem` 同属 UI 行，但为避免 feature 反向依赖
+ * `:source:registry`，本行定义在 App 层，字段均为基础/可空类型。
+ * [downloadUrl] 取索引条目的 `url`，缺省回退 `filename`（二者皆无时为 null）。
+ */
+data class SourceUpdateUi(
+    val key: String,
+    val version: String,
+    val installedVersion: String?,
+    val reason: String,
+    val downloadUrl: String?,
+)
+
+/** 一次订阅刷新的 App 层结果：候选展示行 + 失败原因（成功时为 null）。 */
+data class RepoRefreshUi(
+    val candidates: List<SourceUpdateUi>,
+    val error: String?,
+)
 
 /**
  * 阅读器真实源装配（P0，composition root）。
@@ -416,8 +441,62 @@ class SourceCatalog internal constructor(
             lookup.get(key)?.let { parseStringList(it.domainsJson) }.orEmpty()
         }
 
+    /**
+     * 封面字节（书架缩略图）。
+     *
+     * 强制走 [SourceHttpClient]：首跳与逐跳重定向白名单、Cookie、配对 UA、Cloudflare
+     * 分类全部继承阅读链路，禁止 UI 直接联网；任何失败返回 null（封面缺失不阻断列表）。
+     * 未装配网络栈、或封面域名不在当前启用源白名单时返回 null（安全优先）。
+     */
+    suspend fun coverBytes(url: String): ByteArray? {
+        if (url.isBlank()) return null
+        val client = httpClient ?: return null
+        return runCatching {
+            SourceHttpClient(client, cookies, nowMs)
+                .getBytes(url, currentDomains())
+                .bytes
+        }.getOrNull()
+    }
+
     /** 源管理页快照（Record → UI 行，映射收口于此，feature 只收纯展示字段）。 */
     fun snapshotUi(): List<SourceUiItem> = snapshot().map { it.toUiItem() }
+
+    /**
+     * 源仓库更新计划的纯数据出口（不联网）。
+     *
+     * 索引原始 JSON 由调用方（宿主/源管理页）注入，本方法只做
+     * `SourceIndexParser.parse` → 已装列表取自 [snapshot] → `SourceRepoPlanner.plan`
+     * → 映射为 [SourceUpdateUi]，全程无 IO、不碰域名白名单。
+     *
+     * **fail-closed**：解析失败或计划计算抛异常时返回 `emptyList()` 而非抛出，
+     * 让源管理页直接展示「无更新」，避免坏索引/脏数据把 UI 带崩。
+     *
+     * @param appVersionOverride 覆盖构造时的装配版本做 minApp 过滤；null 用装配版本。
+     */
+    fun planRepoUpdates(rawIndexJson: String, appVersionOverride: String? = null): List<SourceUpdateUi> =
+        runCatching {
+            val index = SourceIndexParser.parse(rawIndexJson)
+            val installed = snapshot().map { it.key to it.version }
+            SourceRepoPlanner.plan(index, installed, appVersionOverride ?: appVersion)
+                .map { it.toUpdateUi() }
+        }.getOrElse { emptyList() }
+
+    /**
+     * 订阅刷新的 UI 出口：网络拉取由宿主以 [fetchIndex] 注入，本模块不自己联网、
+     * 不碰白名单。拉取/解析失败由 [SourceRepoSubscription.refresh] 收敛为
+     * `RepoRefreshResult.error`（此处透传为 [RepoRefreshUi.error]），候选映射为纯展示行；
+     * 协程取消（CancellationException）按结构化并发原样抛出，不吞。
+     */
+    suspend fun refreshRepoUpdates(fetchIndex: suspend () -> String): RepoRefreshUi {
+        val result = SourceRepoSubscription(fetchIndex).refresh(
+            installed = snapshot().map { it.key to it.version },
+            appVersion = appVersion,
+        )
+        return RepoRefreshUi(
+            candidates = result.candidates.map { it.toUpdateUi() },
+            error = result.error,
+        )
+    }
 
     /**
      * 规则测试面板后端入口（P3 工具链；Compose UI 消费本方法）。
@@ -525,6 +604,15 @@ internal fun SourceRecord.toUiItem(): SourceUiItem = SourceUiItem(
     kindsLabel = parseKinds(kindsJson).joinToString(" · ") { it.serial },
     domainsLabel = parseStringList(domainsJson).joinToString(", "),
     verifiedLabel = if (signatureOk) "已签名" else "未验证（旧仓库兼容）",
+)
+
+/** `UpdateCandidate`（source:registry）→ App 层展示行，映射收口于此。 */
+private fun UpdateCandidate.toUpdateUi(): SourceUpdateUi = SourceUpdateUi(
+    key = entry.key,
+    version = entry.version,
+    installedVersion = installedVersion,
+    reason = reason,
+    downloadUrl = entry.url ?: entry.filename,
 )
 
 fun createSourceCatalog(
