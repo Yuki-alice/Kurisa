@@ -9,6 +9,7 @@ import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import core.model.LocalBook
+import kotlinx.coroutines.flow.flowOf
 import org.junit.Rule
 import org.junit.Test
 import kotlin.test.assertEquals
@@ -35,8 +36,8 @@ class ShelfLocalBooksTest {
         var opened: String? = null
         rule.setContent {
             ShelfScreen(
-                onOpenDetail = {},
-                localBooks = listOf(book("local:A", "A书")),
+                onOpenDetail = { _, _ -> },
+                localBooks = flowOf(listOf(book("local:A", "A书"))),
                 onOpenLocalBook = { opened = it },
             )
         }
@@ -52,8 +53,8 @@ class ShelfLocalBooksTest {
         var received: List<Pair<String, ByteArray>>? = null
         rule.setContent {
             ShelfScreen(
-                onOpenDetail = {},
-                localBooks = emptyList(),
+                onOpenDetail = { _, _ -> },
+                localBooks = flowOf(emptyList()),
                 pickLocalFiles = { listOf("x.epub" to ByteArray(3)) },
                 onImportFiles = { received = it },
             )
@@ -72,8 +73,8 @@ class ShelfLocalBooksTest {
         var deleted: String? = null
         rule.setContent {
             ShelfScreen(
-                onOpenDetail = {},
-                localBooks = listOf(book("local:B", "B书")),
+                onOpenDetail = { _, _ -> },
+                localBooks = flowOf(listOf(book("local:B", "B书"))),
                 onDeleteLocalBook = { deleted = it },
             )
         }
@@ -87,7 +88,7 @@ class ShelfLocalBooksTest {
     @Test
     fun importEntryHiddenWithoutCallbacks() {
         rule.setContent {
-            ShelfScreen(onOpenDetail = {}) 
+            ShelfScreen(onOpenDetail = { _, _ -> })
         }
         rule.waitForIdle()
         rule.onAllNodesWithText("导入").assertCountEquals(0)

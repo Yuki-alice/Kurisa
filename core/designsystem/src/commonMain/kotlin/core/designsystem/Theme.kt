@@ -28,4 +28,7 @@ object Tokens {
     val spacingL = 16.dp
     val spacingXl = 24.dp
     val coverAspect = 3f / 4f
+    /** 列表封面缩略图（书架/下载等横向行使用）。 */
+    val coverWidth = 48.dp
+    val coverHeight = 64.dp
 }

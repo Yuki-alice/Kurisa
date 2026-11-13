@@ -7,6 +7,7 @@ import androidx.compose.ui.window.rememberWindowState
 import app.cash.sqldelight.db.QueryResult
 import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
 import app.shared.App
+import app.shared.createShelfBindings
 import app.shared.createSourceCatalog
 import data.db.ReaderDatabase
 import data.network.CookieStore
@@ -30,6 +31,7 @@ fun main() {
     val progress = createProgressRepository(database)
     val bookmarks = createBookmarkRepository(database)
     val localBooks = createLocalBookRepository(database)
+    val shelf = createShelfBindings(database) { System.currentTimeMillis() }
     val settings = createReaderSettingsStore(
         db = database,
         nowMs = { System.currentTimeMillis() },
@@ -66,6 +68,7 @@ fun main() {
                 bookmarkRepository = bookmarks,
                 localFs = localFs,
                 localBooks = localBooks,
+                shelf = shelf,
                 pickLocalFiles = {
                     withContext(Dispatchers.IO) {
                         val dialog = FileDialog(null as java.awt.Frame?, "导入本地书", FileDialog.LOAD)

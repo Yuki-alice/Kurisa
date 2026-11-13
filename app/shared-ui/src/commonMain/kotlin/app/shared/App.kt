@@ -13,6 +13,8 @@ import androidx.navigation3.runtime.rememberNavBackStack
 import androidx.navigation3.ui.NavDisplay
 import androidx.savedstate.serialization.SavedStateConfiguration
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.modules.SerializersModule
@@ -97,6 +99,8 @@ fun App(
     localFs: LocalSourceFileSystem? = null,
     /** 本地书仓库（平台壳传入 SQLDelight 实现；为空时跳过启动扫描）。 */
     localBooks: LocalBookRepository = NoopLocalBookRepository,
+    /** 书架装配（平台壳传入 SQLDelight 实现；null = 在线收藏分区不展示）。 */
+    shelf: ShelfBindings? = null,
     /** 本地书选择器（平台壳注入：桌面 FileDialog / Android SAF；iOS 暂缺传 null）。 */
     pickLocalFiles: (suspend () -> List<Pair<String, ByteArray>>)? = null,
     /** 源目录（平台壳装配后传入；null = 无源管理能力，列表空，开关无操作）。 */
@@ -123,9 +127,9 @@ fun App(
             }
         }
         // 本地库状态（书架同构展示用；导入/扫描后刷新）。
-        var localBookList by remember { mutableStateOf(emptyList<LocalBook>()) }
+        val localBookFlow = remember { MutableStateFlow(emptyList<LocalBook>()) }
         suspend fun refreshLocalBooks() {
-            localBookList = runCatching { localBooks.list() }.getOrDefault(emptyList())
+            localBookFlow.value = runCatching { localBooks.list() }.getOrDefault(emptyList())
         }
         suspend fun syncLocalLibrary() {
             val fs = localFs ?: return
@@ -141,6 +145,16 @@ fun App(
         LaunchedEffect(localFs, localBooks) {
             withContext(Dispatchers.Default) { syncLocalLibrary() }
         }
+        // 默认书架幂等保证（老库首次启动补行）；在线收藏流由 ViewModel 消费。
+        LaunchedEffect(shelf) {
+            runCatching { shelf?.ensureDefault() }
+        }
+        val onlineShelf = remember(shelf) {
+            shelf?.observeUi() ?: flowOf(emptyList())
+        }
+        val coverLoader: (suspend (String) -> ByteArray?)? = remember(sourceCatalog) {
+            sourceCatalog?.let { catalog -> { url: String -> catalog.coverBytes(url) } }
+        }
         NavDisplay(
             backStack = backStack,
             onBack = { backStack.removeLastOrNull() },
@@ -148,9 +162,14 @@ fun App(
                 when (key) {
                     is ShelfRoute -> NavEntry(key) {
                         ShelfScreen(
-                            onOpenDetail = { backStack.add(DetailRoute(it)) },
-                            localBooks = localBookList,
+                            onOpenDetail = { workId, sourceKey ->
+                                sourceCatalog?.bindWork(workId, sourceKey)
+                                backStack.add(DetailRoute(workId, sourceKey))
+                            },
+                            onlineWorks = onlineShelf,
+                            localBooks = localBookFlow,
                             pickLocalFiles = pickLocalFiles,
+                            coverLoader = coverLoader,
                             onOpenLocalBook = { workId ->
                                 scope.launch {
                                     val first = runCatching { readerChapters.chapters(workId) }

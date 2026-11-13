@@ -13,6 +13,7 @@ import kotlin.coroutines.Continuation
 import kotlin.coroutines.resume
 import app.cash.sqldelight.driver.android.AndroidSqliteDriver
 import app.shared.App
+import app.shared.createShelfBindings
 import app.shared.createSourceCatalog
 import data.db.ReaderDatabase
 import data.network.CookieStore
@@ -50,6 +51,7 @@ class MainActivity : ComponentActivity() {
         val progress = createProgressRepository(database)
         val bookmarks = createBookmarkRepository(database)
         val localBooks = createLocalBookRepository(database)
+        val shelf = createShelfBindings(database) { System.currentTimeMillis() }
         // 本地库（P2 阅读闭环：`local:` 前缀作品走本地源；filesDir/books 可直接放入 TXT/EPUB/CBZ/PDF/目录）。
         val booksDir = File(filesDir, "books").apply { mkdirs() }
         val localFs = LocalSourceFileSystem.fromDirectory(booksDir.absolutePath)
@@ -81,6 +83,7 @@ class MainActivity : ComponentActivity() {
                 bookmarkRepository = bookmarks,
                 localFs = localFs,
                 localBooks = localBooks,
+                shelf = shelf,
                 pickLocalFiles = {
                     val uris = suspendCancellableCoroutine<List<Uri>> { cont ->
                         importContinuation?.resume(emptyList())

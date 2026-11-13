@@ -37,7 +37,10 @@ interface ShelfRepository {
 /** 书架展示条目（契约 Work + 本地元数据，跨层组装体）。 */
 data class ShelfWork(
     val work: Work,
+    /** 宿主稳定 id（`workStableId(sourceKey, work.id)`，删除/进度定位用）。 */
     val workId: String,
+    /** 归属源 key（详情/阅读按作品路由必需，禁止回退首个 enabled 源）。 */
+    val sourceKey: String,
     val addedAtEpochMs: Long,
     val lastReadAtEpochMs: Long?,
 )
@@ -58,6 +61,7 @@ internal class ShelfRepositoryImpl(
                     ShelfWork(
                         work = row.toContractWork(),
                         workId = row.id,
+                        sourceKey = row.source_key,
                         addedAtEpochMs = item.added_at,
                         lastReadAtEpochMs = row.last_read_at,
                     )
