@@ -1,0 +1,30 @@
+{
+  "format": "rules/v1",
+  "key": "example.static.manga",
+  "name": "示例静态源·漫画（契约灯具，非真实站点）",
+  "version": "1.0.0",
+  "kind": ["manga"],
+  "domains": ["example.com"],
+  "baseUrl": "https://example.com/",
+  "search": {
+    "request": {"method": "GET", "url": "/s?q=@keyword&page=@page"},
+    "mode": "html",
+    "list": ".book-li",
+    "fields": {
+      "id": "a@href | fileName",
+      "title": "a@text | trim",
+      "cover": "img@src | absUrl"
+    },
+    "pagination": {"maxPage": "5"}
+  },
+  "detail": {
+    "request": {"method": "GET", "url": "/work/@id"},
+    "mode": "html",
+    "title": "h1@text",
+    "cover": ".cover img@src | absUrl",
+    "chapters": {"list": "#chapters a", "id": "@href | fileName", "title": "@text | trim"}
+  },
+  "content": {
+    "images": {"list": "#images img", "value": "@data-src|@src | absUrl"}
+  }
+}
