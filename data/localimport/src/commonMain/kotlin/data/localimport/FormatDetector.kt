@@ -3,7 +3,8 @@ package data.localimport
 /**
  * 本地书格式。对齐 Komikku `source-local/io/Format.kt` + `Archive.kt`：
  * DIRECTORY（漫画/章节目录）/ EPUB（优先于 Archive 判定）/ ZIP 系归档 /
- * RAR / 7Z / TAR（识别但暂不支持解包，见 [isSupportedArchive]）。
+ * TAR 系归档（见 [isSupportedArchive]，由纯 Kotlin ustar 解析器解包）/
+ * RAR / 7Z（识别但暂不支持解包）。
  */
 enum class LocalFormat { DIRECTORY, EPUB, TXT, CBZ, ZIP, PDF, IMAGE_DIR, RAR, SEVEN_ZIP, TAR, UNKNOWN }
 
@@ -76,9 +77,10 @@ object FormatDetector {
         return ext
     }
 
-    /** 当前可解包的归档：zip 系（korlibs-io ZipVfs 纯 Kotlin 三端一致）。 */
+    /** 当前可解包的归档：zip 系（korlibs-io ZipVfs）+ TAR（ustar 纯 Kotlin）；RAR/7z 仍不支持。 */
     fun isSupportedArchive(format: LocalFormat): Boolean =
-        format == LocalFormat.ZIP || format == LocalFormat.CBZ || format == LocalFormat.EPUB
+        format == LocalFormat.ZIP || format == LocalFormat.CBZ || format == LocalFormat.EPUB ||
+            format == LocalFormat.TAR
 
     /** 图片扩展名（对齐 Komikku `ImageUtil.isImage` 的展示面）。 */
     fun isImageName(name: String): Boolean {

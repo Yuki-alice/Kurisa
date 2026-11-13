@@ -51,13 +51,14 @@ class FormatDetectorTest {
     }
 
     @Test
-    fun supportedArchivesAreZipFamily() {
+    fun supportedArchives() {
         assertEquals(true, FormatDetector.isSupportedArchive(LocalFormat.ZIP))
         assertEquals(true, FormatDetector.isSupportedArchive(LocalFormat.CBZ))
         assertEquals(true, FormatDetector.isSupportedArchive(LocalFormat.EPUB))
+        // TAR 由纯 Kotlin ustar 解析器支持（见 TarArchiveTest）。
+        assertEquals(true, FormatDetector.isSupportedArchive(LocalFormat.TAR))
         assertEquals(false, FormatDetector.isSupportedArchive(LocalFormat.RAR))
         assertEquals(false, FormatDetector.isSupportedArchive(LocalFormat.SEVEN_ZIP))
-        assertEquals(false, FormatDetector.isSupportedArchive(LocalFormat.TAR))
         assertEquals(false, FormatDetector.isSupportedArchive(LocalFormat.PDF))
     }
 

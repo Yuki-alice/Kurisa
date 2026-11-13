@@ -15,7 +15,7 @@ data class LocalImportResult(val imported: List<LocalBook>, val skipped: List<St
  * 约定（与 [`LocalRoutingChapterProvider`] / [`LocalLibrarySync`] 同构）：
  * - 每个文件落为 `books/<净书名>/<原文件名>`，书 id = `"local:<净书名>"`；
  * - 净书名 = 去扩展名的文件名经非法字符替换（保留 CJK/空格/点/横线/下划线）；
- * - 仅接受 TXT/EPUB/CBZ/ZIP/PDF（归档读取器仅支持 zip 系 + 纯文本；RAR/7z/TAR 拒绝）；
+ * - 仅接受 TXT/EPUB/CBZ/ZIP/PDF/TAR（归档读取器支持 zip 系 + TAR + 纯文本；仅 RAR/7z 拒绝）；
  * - 同名覆盖（幂等：重复导入同一文件结果一致）；
  * - `imported_at` 保留首次值（已存在行不刷新）。
  */
@@ -95,6 +95,7 @@ class LocalBookImporter(
             LocalFormat.CBZ,
             LocalFormat.ZIP,
             LocalFormat.PDF,
+            LocalFormat.TAR,
         )
     }
 }

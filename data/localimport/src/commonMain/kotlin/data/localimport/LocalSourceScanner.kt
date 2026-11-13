@@ -115,7 +115,7 @@ class LocalSourceScanner(
         return try {
             when (format) {
                 LocalFormat.DIRECTORY -> readComicInfo("$url/ComicInfo.xml")
-                LocalFormat.EPUB, LocalFormat.CBZ, LocalFormat.ZIP -> {
+                LocalFormat.EPUB, LocalFormat.CBZ, LocalFormat.ZIP, LocalFormat.TAR -> {
                     val reader = fs.openArchive(url)
                     val entry = reader.fileEntries().firstOrNull {
                         it.endsWith("ComicInfo.xml", ignoreCase = true)

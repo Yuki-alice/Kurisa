@@ -45,7 +45,7 @@ class LocalSourceFileSystem(
         node.delete()
     }
 
-    /** 打开归档（zip 系；RAR/7z/TAR 由调用方前置 [FormatDetector.isSupportedArchive] 拦截）。 */
+    /** 打开归档（zip 系 + TAR；RAR/7z 由调用方前置 [FormatDetector.isSupportedArchive] 拦截）。 */
     suspend fun openArchive(path: String): ArchiveReader = ArchiveReader.open(root[path])
 
     suspend fun readHeader(path: String, size: Int = 8): ByteArray {
