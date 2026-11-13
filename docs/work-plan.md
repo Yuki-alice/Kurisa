@@ -70,7 +70,8 @@ ADR-010 桌面 WebView helper 进程；发版签名、`applicationId` 占位替�
 
 ### 2.3 后端断点（按「让用户真正用得到」排序）
 
-> A 类四项已于 2026-11-13 夜接通（状态见 §2.4 注记），下表保留取证与仍未解的断点。
+> A 类四项已接通，B 类能力缺失与 C 类架构收口在合并后已逐项处理；下表保留源码取证，
+> 最终状态见 §2.4 注记与 §4.1 明确未完成清单。
 
 | 类 | 断点 | 证据 |
 | --- | --- | --- |
@@ -116,19 +117,17 @@ ADR-010 桌面 WebView helper 进程；发版签名、`applicationId` 占位替�
 **第一批 = `BE-A1`…`BE-A5`**，不依赖设计稿，是「先完成核心功能」的本批。Koin 放在本批收尾，
 理由是 B 批还要新增页面与仓储，先有 DI 提供方就不必先写手工厂再返工。B/C 批按安全与依赖排序，可分多次会话推进。
 
-> **A 批当前状态（已接通，2026-11-13 夜）**：`BE-A1` 下载编排进生产（双端平台壳构造 `createDownloadController`，
-> 详情页「下载本章」入队、下载页消费 tasks 与暂停/续传/取消）；`BE-A2` 搜索/详情加入书架与书架移出；
-> `BE-A3` 源管理页「检查更新」（索引由宿主注入、**只读本地文件**，不发起任意 URL 请求）；
-> `BE-A4` `SourceCatalog.explore` 出口 + 三态聚合 + 最小发现页入口。
-> **另补最小导航壳**：`App.kt` 顶层四页签（书架 / 搜索 / 探索 / 下载）+ 顶栏「源管理 / 设置」，
-> 详情与阅读器仍全屏沉浸。此前 9 条路由全部注册但**无任何入口可到达**，A 批能力用户实际摸不到；
-> 该壳是临时形态，原型定稿后整体换样。
-> 安全口径：下载复用 `KtorRangeFetcher` 既有的白名单逐跳复核与 `cf_clearance`/配对 UA，
-> 订阅链路 fail-closed 不引入新网络出口。回归见 `BatchAWiringTest` / `ExploreAggregationTest`。
-> **第一批剩余**：`BE-A5`（Koin 收口）——共享网络栈已由 `AppContainer` 接管，
-> 只剩 Search / Detail 两个 VM 工厂待换 `viewModelOf`；做完即第一批闭环。
-> 上述 A1–A4 能力已于 2026-11-14 凌晨在远端重做的 UI / 装配基线上重放并回归
-> （在线书架、加入/移出、检查更新、Explore、下载编排、最小导航壳均按新接口重新接线）。
+> **后端专项最终状态（2026-11-14 双 Agent 合并后）**：`BE-A1`…`BE-A5`、`BE-B1/B2/B3/B5/B6/B7/B8`、
+> `BE-C3/C4/C5/C6` 全部落地并完成装配接线；`BE-B4` 备份 / 恢复按用户指定不实现。
+> B 批五处「数据层已实装但没接上」的断点由 `BackendWiring` 统一收口：
+> `BridgeChapterProvider.chapterCache` 注入、`TelemetryRecorder` + `emitCall` 分段归因、
+> 平台 `AppLog`、`DbUpdateSource` + 壳侧触发、SettingsScreen 真实 store / 版本号。
+> A 批的 Cookie 加密持久化与配对 UA 重启恢复、下载分片并发与乱序续传、
+> `verifyMigrations` 打开、VIDEO / AUDIO 类型化 payload 同批合并。
+> 仍待办只集中在表现层与平台 / 发布（逐项见 §4.1）：M5 视觉还原、iOS 壳、平台 WebView 登录、
+> 桌面 helper 进程、发版签名 / 三端截图 / 真机、真实站点全流程回归。
+> 验收：全仓 `desktopTest` **608 用例 / 0 失败 / 0 错误 / 0 跳过**；`assembleDebug`、
+> `verifyCommonMainReaderDatabaseMigration`、源仓 `npm test`、`SourcesRepoContractTest` 全绿。
 
 ---
 
