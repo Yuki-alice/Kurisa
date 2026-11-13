@@ -46,7 +46,8 @@
 真实漫画库后扫描）与 `NetworkComicWalkthroughTest.kt`（MockEngine + `example.com` 合成站点，
 CDN 返回的也是真实漫画页）。二者逐页截图到 `docs/screenshots/comic-*.png`，
 并断言「整图颜色数 ≥ 800（阅读器 ≥ 1500）」——色块占位图必然失败，真图必然通过。
-截图测试需要显示器，CI/无头环境用 `xvfb-run -a ./gradlew desktopTest`。
+截图用例断言「页面不是单色」，无头环境不缺显示器但**缺中文字体**——CI 已装 `fonts-noto-cjk`
+（见 `.github/workflows/ci.yml`）；本机没有 CJK 字体时同样会误报空白。
 
 > 素材是真实的：`docs/sample-library/` 放的是 Pepper & Carrot（David Revoy，CC-BY 4.0）
 > 已发表作品的原页。早期版本用 Java2D 画色块当漫画页，测试能过但截图证明不了渲染，
