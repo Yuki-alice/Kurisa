@@ -106,7 +106,7 @@
 
 - 规则测试面板：后端三步诊断已就绪（`RulesEngine.diagnose/diagnoseDetail/diagnoseContent`，失败走 `{error,code}` 通道）；**Compose UI 已接线**（`RuleTestRoute` + `RuleTestScreen` 三步展示 + `parseRuleTestResult` 映射单测 + `NavRoutesTest` 9 路由锁门，源管理页「规则测试」入口；面板字段即后端返回体，见 `RulesEngineTest.diagnoseExposesThreeSteps`）。
 - 分段计时：引擎/网络/解析三段计数与耗时底座已就绪（`Telemetry.kt` + `SourceRuntime.onTrace` 调用链 trace，只记路径/耗时/分类）；UI 日志消费待 M5。
-- 多源按作品路由：提供方缝已就绪（`RegistryChapterProvider.workSourceKey`，命中作品源否则回退，单测锁定）；导航侧 `ReaderRoute.sourceKey` 接线待 M5（Detail/Reader 屏均为占位实现）。
+- 多源按作品路由：提供方缝已就绪（`RegistryChapterProvider.workSourceKey`，命中作品源否则回退，单测锁定）；导航侧 `ReaderRoute.sourceKey` 已于本轮 B4 接线（`WorkSourceIndex` + `SourceCatalog.bindWork`，NavRoutesTest 锁门）。以下 P3 正文为历史规划记录，实施状态一律以 §0 与 `docs/comic-e2e-plan.md` 为准。
 - 开发期热重载：机制就绪（`installSource` → `manager.invalidate` → 下次调用重装配，无需重启；`SourceCatalogTest.installPersistsAndActivatesImmediately` 锁定）；文件监听式自动重载待开发期工具链。
 - 懒激活：机制就绪（`RegistryChapterProvider` 首次阅读时才 `acquire`；无源/禁用源零引擎接触，见 `ReaderSourceAssemblyTest.noSourceDegradesToNoop/disabledSourceExcludedFromProvider`）。
 - 评估（不实施）：WASM / 独立进程隔离，作为 ADR-002 的远期复议项。

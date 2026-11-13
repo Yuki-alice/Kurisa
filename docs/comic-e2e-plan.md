@@ -26,7 +26,7 @@
 | 阅读器渲染与截图证据 | `feature/reader/src/desktopTest/kotlin/feature/reader/ReaderScreenshotTest.kt:228`、`docs/screenshots/` | 分页 / 双页 / 条漫 / PDF 四类 PNG 实证 |
 | 插件引擎长驻 + 版本路由 + 规则源 | `source/bridge/src/commonMain/kotlin/source/bridge/QuickJsEngine.kt:99`、`VersionedEngines.kt:20`、`SourceRuntimeManager.kt:138` | apiVersion 2/3 走垫片、4 走 strictV4；`rules/v1` 不起 JS |
 | 源安装全链路 | `feature/sources/src/commonMain/kotlin/feature/sources/Sources.kt:147`、`Sources.kt:354`、`source/registry/src/commonMain/kotlin/source/registry/SourceInstaller.kt:55`、`app/shared-ui/src/commonMain/kotlin/app/shared/ReaderSourceAssembly.kt:323` | 粘贴 → 头块/静态扫描/签名 → 预览 → 二次确认 → 落盘 → 写库 → 即装即用 |
-| 搜索 / 详情 / 章节引擎能力 | `source/bridge/src/commonMain/kotlin/source/bridge/SourceRuntime.kt:161`、`SourceRuntime.kt:194`、`SourceRuntime.kt:199` | 引擎层完备，缺 UI 出口 |
+| 搜索 / 详情 / 章节引擎能力 | `source/bridge/src/commonMain/kotlin/source/bridge/SourceRuntime.kt:161`、`SourceRuntime.kt:194`、`SourceRuntime.kt:199` | 引擎层完备；UI 出口已由本轮 B5 接通（`SourceCatalog.search/detail` + Search/Detail MVI） |
 | 网络白名单 + Cookie/UA 配对 | `data/network/src/commonMain/kotlin/data/network/UrlPolicy.kt:21`、`CookieStore.kt:47`、`SourceHttpClient.kt:117` | `cf_clearance` 与 UA 绑定是红线，不得拆开 |
 | `onImageLoad` 重写链 | `source/bridge/src/commonMain/kotlin/source/bridge/BridgeChapterProvider.kt:60`、`SourceRuntime.kt:104`、`feature/reader/src/commonMain/kotlin/feature/reader/ReaderViewModel.kt:537`、`ReaderViewModel.kt:659` | 重写 URL / 头 / 重试次数 → 统一图片出口 |
 | 测试基线 | 2026-11-12 实测 `desktopTest` + `testAndroidHostTest` + iOS 模拟器编译 + Desktop 编译全绿 | 报告 835 项、0 fail / 0 error；其中 49 处 `SKIP`（46 处 androidHostTest 缺 quickjs native、3 处需外部 refs）；**2026-11-13 复核 453/0/0/0**：全仓 `desktopTest` 453 用例 / 0 失败 / 0 错误 / 0 跳过，BUILD SUCCESSFUL（本轮新增用例前基线，新增后数字上升） |
@@ -50,7 +50,7 @@
 
 ## 2. 范围与不做什么
 
-**做**：本地漫画（CBZ/ZIP、图片目录、EPUB 图片页、PDF）与插件网络漫画各一条从入口到出图的完整体验；两条 walkthrough 固化成自动回归；把 Koin 作为同批的解堵手段（ViewModel 工厂 + 共享 `CookieStore`/`HttpClient` 收口到 `:app:shared-ui`）。
+**做**：本地漫画（CBZ/ZIP、图片目录、EPUB 图片页、PDF）与插件网络漫画各一条从入口到出图的完整体验；两条 walkthrough 固化成自动回归；共享 `CookieStore`/`HttpClient` 已由 `:app:shared-ui` 注入收口（B3）。ViewModel 工厂仍为手写 Factory，**Koin 未接线**，留作后续项。
 
 **不做**：小说 M4 已落地，本轮不新增小说能力；引擎重构与契约扩展、iOS Xcode 壳、MD3E 官方主题、源仓库订阅、WebView 过盾、下载落库与 Ketch、真实站点接入。
 
