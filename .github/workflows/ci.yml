@@ -32,5 +32,9 @@ jobs:
       # 文字页会渲染成空白而误报。装 Noto CJK 后与本地/截图基线一致。
       - name: Install CJK fonts for screenshot tests
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends fonts-noto-cjk
+      # BE-B8：verifyMigrations 已打开，把迁移链校验挂进 CI，
+      # 防止 .sqm 与 .sq 定义漂移（快照见 data/db/src/commonMain/sqldelight/databases/）。
+      - name: Verify SQLDelight migrations
+        run: ./gradlew :data:db:verifyCommonMainReaderDatabaseMigration --console=plain --no-daemon
       - name: Run desktop tests and Android debug assemble
         run: ./gradlew desktopTest :app:android:assembleDebug --console=plain --no-daemon

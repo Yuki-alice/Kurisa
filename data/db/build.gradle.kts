@@ -62,9 +62,11 @@ sqldelight {
         create("ReaderDatabase") {
             packageName.set("data.db")
             schemaOutputDirectory.set(file("src/commonMain/sqldelight/databases"))
-            // M2：关闭自动 verify（无 v1 快照，首次迁移用 MigrationAndOfflineTest 手工验证；
-            // v2 快照提交后重新打开）。
-            verifyMigrations.set(false)
+            // BE-B8：databases/ 补 2–6 号 schema 快照，打开迁移校验（2→6 全链，含本轮 5.sqm）。
+            // 1.sqm 是 ALTER TABLE ADD COLUMN，追加列与 .sq 定义的 ordinalPosition 不一致，
+            // 且 SQLDelight 会比较 CREATE 定义文本，v1 起点无法纳入自动校验；
+            // v1→v2 仍由 MigrationAndOfflineTest 的 migrateV1ToV2/rollbackV2ToV1 手工验证。
+            verifyMigrations.set(true)
         }
     }
 }

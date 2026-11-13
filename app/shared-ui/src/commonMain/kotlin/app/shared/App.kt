@@ -7,8 +7,11 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -89,6 +92,7 @@ import feature.sources.SourceUiItem
 import feature.sources.SourcesRoute
 import feature.sources.SourcesScreen
 import feature.sources.parseRuleTestResult
+import source.hostapi.HostLoginResult
 
 /**
  * 全 App 路由多态模块（ADR-008：iOS 等非 JVM 平台无反射，route key 必须显式注册；
@@ -155,7 +159,34 @@ fun App(
     /** 应用级依赖容器（S2）：共享 CookieStore/HttpClient/ImageFetcher；null = 无共享栈。 */
     container: AppContainer? = null,
 ) {
+    // BE-C3：用户主动导入 Cookie。桌面按 ADR-009 无内嵌浏览器，这是主要登录态入口；
+    // 与 HostUi 兜底共用 CookieImporter，域名白名单取当前启用源的声明。
+    var showCookieImport by remember { mutableStateOf(false) }
     AppTheme {
+        if (showCookieImport) {
+            CookieImportDialog(
+                domains = readerDomains,
+                onDismiss = { showCookieImport = false },
+                onSubmit = { domain, raw, ua ->
+                    val store = container?.cookies
+                    if (store == null) {
+                        "未装配共享网络栈，无法导入"
+                    } else {
+                        when (
+                            val result = CookieImporter(
+                                store,
+                                { readerDomains },
+                                { kotlin.time.Clock.System.now().toEpochMilliseconds() },
+                            ).import(domain, CookiePaste(raw, ua))
+                        ) {
+                            is HostLoginResult.Imported -> null
+                            is HostLoginResult.Cancelled -> result.reason
+                            HostLoginResult.Unsupported -> "当前平台不支持导入"
+                        }
+                    }
+                },
+            )
+        }
         val backStack = rememberNavBackStack(
             SavedStateConfiguration { serializersModule = appSerializersModule },
             ShelfRoute,
@@ -254,6 +285,7 @@ fun App(
                 ) {
                     TextButton(onClick = { backStack.add(SourcesRoute) }) { Text("源管理") }
                     TextButton(onClick = { backStack.add(SettingsRoute) }) { Text("设置") }
+                    TextButton(onClick = { showCookieImport = true }) { Text("导入 Cookie") }
                 }
             }
             Box(Modifier.weight(1f)) {
@@ -662,3 +694,58 @@ internal fun DownloadTask.toUi(): DownloadTaskUi = DownloadTaskUi(
     canPause = status == DownloadStatus.QUEUED || status == DownloadStatus.RUNNING,
     canResume = status == DownloadStatus.PAUSED || status == DownloadStatus.FAILED,
 )
+
+/**
+ * 最小可用的 Cookie 导入入口（BE-C3，视觉待 M5 定稿后整体换样）。
+ * 只做「让后端能力可触达」：域名 + Cookie 整串 + 配对 UA 三项，
+ * 实际校验与落盘全部交给 [CookieImporter]，这里不重复实现规则。
+ */
+@Composable
+private fun CookieImportDialog(
+    domains: Set<String>,
+    onDismiss: () -> Unit,
+    /** 返回 null = 成功并关闭；非 null = 错误提示，保持对话框。 */
+    onSubmit: (domain: String, raw: String, userAgent: String?) -> String?,
+) {
+    var domain by remember { mutableStateOf(domains.firstOrNull()?.removePrefix(".").orEmpty()) }
+    var raw by remember { mutableStateOf("") }
+    var ua by remember { mutableStateOf("") }
+    var error by remember { mutableStateOf<String?>(null) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("导入站点 Cookie") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(Tokens.spacingS)) {
+                Text(
+                    "仅允许当前启用源声明的域名：" +
+                        domains.joinToString(", ").ifEmpty { "（暂无启用源）" },
+                )
+                OutlinedTextField(
+                    value = domain,
+                    onValueChange = { domain = it },
+                    label = { Text("域名") },
+                    singleLine = true,
+                )
+                OutlinedTextField(
+                    value = raw,
+                    onValueChange = { raw = it },
+                    label = { Text("Cookie 整串") },
+                )
+                OutlinedTextField(
+                    value = ua,
+                    onValueChange = { ua = it },
+                    label = { Text("配对 User-Agent（cf_clearance 必填）") },
+                    singleLine = true,
+                )
+                error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = {
+                val message = onSubmit(domain, raw, ua.trim().takeIf { it.isNotEmpty() })
+                if (message == null) onDismiss() else error = message
+            }) { Text("导入") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
+    )
+}

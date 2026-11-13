@@ -19,6 +19,8 @@ kotlin {
             implementation(project(":data:download"))
             implementation(project(":core:model"))
             implementation(project(":core:reader"))
+            // BE-C3：桌面壳构造 CookieImportHostUi 时要解析 HostUi 契约类型。
+            implementation(project(":source:hostapi"))
             implementation(libs.sqldelight.sqlite.driver)
             implementation(libs.ktor.client.core)
             implementation(compose.desktop.currentOs)

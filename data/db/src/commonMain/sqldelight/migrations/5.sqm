@@ -1,0 +1,20 @@
+-- BE-B1：cookie 表重建为「加密值 + 配对 UA + 完整 RFC 6265 主键」。
+-- 安全说明：v5 的 cookie.value 是明文列，且生产链路从未写入过（CookieStore 一直是纯内存）。
+-- 这里刻意不做 INSERT ... SELECT —— 明文不得搬进新库，旧行一律丢弃；
+-- 升级后用户按既有流程重新导入 / 登录，与升级前「重启即丢」的行为一致。
+CREATE TABLE cookie_v6 (
+  domain TEXT NOT NULL,
+  name TEXT NOT NULL,
+  path TEXT NOT NULL DEFAULT '/',
+  value_enc TEXT NOT NULL,
+  expires_at INTEGER,
+  paired_user_agent TEXT,
+  source TEXT NOT NULL DEFAULT 'SEED',
+  invalid_reason TEXT,
+  obtained_at INTEGER NOT NULL DEFAULT 0,
+  http_only INTEGER NOT NULL DEFAULT 0,
+  secure INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY(domain, name, path)
+);
+DROP TABLE cookie;
+ALTER TABLE cookie_v6 RENAME TO cookie;

@@ -34,7 +34,7 @@ class CallbackDownloadSink(
     private val writePart: suspend (String, Int, ByteArray) -> Unit,
     private val clear: suspend (String) -> Unit,
 ) : DownloadSink {
-    override suspend fun completedParts(taskId: String): Int = listParts(taskId).size
+    override suspend fun completedParts(taskId: String): Set<Int> = listParts(taskId).toSet()
     override suspend fun completedBytes(taskId: String): Long = readBytes(taskId)
     override suspend fun append(taskId: String, partIndex: Int, bytes: ByteArray) =
         writePart(taskId, partIndex, bytes)
@@ -73,6 +73,8 @@ fun createDownloadController(
     sink: DownloadSink,
     resolveUrls: suspend (DownloadTask) -> List<String>,
     domains: () -> Set<String>,
+    /** BE-B7：任务内分片并发度，生产默认 4；单测走 DownloadManager 默认 1 保证确定性。 */
+    concurrency: Int = 4,
     scope: CoroutineScope? = null,
 ): DownloadController = DownloadManager(
     store = SqlDelightDownloadStore(createDownloadTaskRepository(db)),
@@ -80,5 +82,6 @@ fun createDownloadController(
     sink = sink,
     resolveUrls = resolveUrls,
     domains = domains,
+    concurrency = concurrency,
     scope = scope,
 )

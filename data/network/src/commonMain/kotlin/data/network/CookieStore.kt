@@ -1,25 +1,40 @@
 package data.network
 
 import core.model.CookieSource
+import core.model.SecretCipher
 import core.model.StoredCookie
 
 /**
  * Cookie 仓库（M0 CookieStore 的产品化，语义冻结）。
  *
  * 匹配规则（RFC 6265 简化）：域后缀匹配 + 路径前缀匹配 + 过期过滤。
- * 真实落盘为 `cookie` 表（见 :data:db）；此处为内存语义，三端一致可单测。
+ * 真实落盘为 `cookie` 表（见 :data:db）；BE-B1 起可选注入 [persistence] + [cipher]，
+ * value 只以密文落盘，重启后恢复；未注入时保持纯内存语义（测试与未装配宿主）。
  *
  * 架构红线：`cf_clearance` 与 UA 绑定存储（pairedUserAgent），不得改为裸 Cookie 复用。
  * 失效策略：Cloudflare 重新挑战只作废 clearance 类，不动登录 session。
+ * 公开 API 形状冻结：所有方法的签名与语义不得因持久化改造而改变。
  */
-class CookieStore {
+class CookieStore(
+    private val persistence: CookiePersistence? = null,
+    private val cipher: SecretCipher? = null,
+) {
     private val items = mutableListOf<StoredCookie>()
+
+    init {
+        // fail-closed：没有加密器就绝不落盘，避免明文 Cookie 进 DB。
+        require(persistence == null || cipher != null) {
+            "CookieStore: persistence requires a SecretCipher (plaintext storage is forbidden)"
+        }
+        if (persistence != null && cipher != null) restore()
+    }
 
     fun put(cookie: StoredCookie) {
         items.removeAll {
             it.domain.equals(cookie.domain, true) && it.name == cookie.name && it.path == cookie.path
         }
         items += cookie
+        persist(cookie)
     }
 
     fun putAll(list: List<StoredCookie>) = list.forEach(::put)
@@ -57,7 +72,9 @@ class CookieStore {
             val sameSite = c.domain.removePrefix(".").equals(domain.removePrefix("."), true)
             val inScope = only == null || c.name in only
             if (sameSite && inScope && c.invalidReason == null) {
-                items[i] = c.copy(invalidReason = reason)
+                val updated = c.copy(invalidReason = reason)
+                items[i] = updated
+                persist(updated)
                 n++
             }
         }
@@ -67,10 +84,47 @@ class CookieStore {
     fun remove(host: String): Int {
         val before = items.size
         items.removeAll { it.domain.removePrefix(".").equals(host.removePrefix("."), true) }
+        persistence?.deleteHost(host)
         return before - items.size
     }
 
-    fun clear() = items.clear()
+    fun clear() {
+        items.clear()
+        persistence?.clear()
+    }
+
+    /**
+     * 清理已过期 / 已标记失效的 Cookie，并精确删除落盘记录。
+     * 匹配逻辑本来就会过滤这些条目，不清理会让 `cookie` 表无限增长；
+     * 由平台壳在启动时调用一次即可，返回清理条数。
+     */
+    fun purgeExpired(nowMs: Long): Int {
+        val expired = items.filter { c ->
+            c.invalidReason != null || (c.expiresAtEpochMs?.let { it <= nowMs } == true)
+        }
+        if (expired.isEmpty()) return 0
+        val keys = expired.map { Triple(it.domain, it.name, it.path) }.toSet()
+        items.removeAll { c -> Triple(c.domain, c.name, c.path) in keys }
+        persistence?.let { p -> expired.forEach { c -> p.delete(c.domain, c.name, c.path) } }
+        return expired.size
+    }
+
+    private fun persist(c: StoredCookie) {
+        val p = persistence ?: return
+        val cip = cipher ?: return
+        p.upsert(c.toPersisted(cip.encrypt(c.value)))
+    }
+
+    private fun restore() {
+        val p = persistence ?: return
+        val cip = cipher ?: return
+        items.clear()
+        p.loadAll().forEach { record ->
+            // 密钥轮换 / 密文损坏：按失效丢弃，绝不把密文当明文回填。
+            val value = cip.decrypt(record.valueEnc) ?: return@forEach
+            items += record.toStored(value)
+        }
+    }
 
     companion object {
         val CF_COOKIES = setOf("cf_clearance", "__cf_bm")
