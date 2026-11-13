@@ -1,54 +1,140 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://kurisa.example/schemas/source-index.json",
-  "title": "Kurisa 源仓库 index.json（M1 冻结版 v1）",
-  "description": "沿用 Venera 仓库形状并扩展：url/filename 二选一，签名字段可选（缺失标记未验证）。",
+  "title": "Kurisa 源仓库 index.json（统一版 v2）",
+  "description": "合一：主仓契约（顶层 apiVersion）与源仓旧形状（顶层 version + 条目级 apiVersion/minApp）均合法；url/filename 二选一；签名字段可选（缺失标记未验证）。Kotlin 侧 SourceIndexParser 对两种顶层字段都兼容，缺失条目跳过。",
   "type": "object",
-  "required": ["apiVersion", "sources"],
+  "anyOf": [
+    {
+      "required": [
+        "apiVersion"
+      ]
+    },
+    {
+      "required": [
+        "version"
+      ]
+    }
+  ],
   "properties": {
-    "apiVersion": { "type": "integer", "minimum": 1 },
+    "apiVersion": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "version": {
+      "type": "integer",
+      "minimum": 1
+    },
     "sources": {
       "type": "array",
       "items": {
         "type": "object",
-        "required": ["name", "key", "version", "kind", "domains", "sha256"],
+        "required": [
+          "name",
+          "key",
+          "version"
+        ],
         "properties": {
-          "name": { "type": "string", "minLength": 1 },
-          "key": { "type": "string", "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+$" },
-          "url": { "type": "string", "format": "uri" },
-          "filename": { "type": "string", "minLength": 1 },
-          "version": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$" },
-          "description": { "type": "string" },
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "key": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+$"
+          },
+          "url": {
+            "type": "string",
+            "format": "uri"
+          },
+          "filename": {
+            "type": "string",
+            "minLength": 1
+          },
+          "version": {
+            "type": "string",
+            "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"
+          },
+          "description": {
+            "type": "string"
+          },
           "kind": {
             "type": "array",
             "minItems": 1,
-            "items": { "enum": ["manga", "novel"] }
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "description": "内容类型；manga/novel 为当前实现，video/audio 为 v4 预留"
           },
           "domains": {
             "type": "array",
             "minItems": 1,
-            "items": { "type": "string", "minLength": 1 }
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
           },
           "capabilities": {
             "type": "array",
             "description": "运行时能力位；缺省时由宿主 describe() 探测并按 apiVersion 上界收窄",
             "items": {
-              "enum": ["search", "explore", "category", "comic", "novel", "account", "favorites", "settings", "translation", "imageLoad", "novelChapter", "htmlHelper", "cryptoAes"]
+              "enum": [
+                "search",
+                "explore",
+                "category",
+                "comic",
+                "novel",
+                "account",
+                "favorites",
+                "settings",
+                "translation",
+                "imageLoad",
+                "novelChapter",
+                "htmlHelper",
+                "cryptoAes"
+              ]
             }
           },
-          "sha256": { "type": "string", "pattern": "^[0-9a-fA-F]{64}$" },
+          "sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-fA-F]{64}$"
+          },
           "format": {
             "type": "string",
-            "description": "源形态（SOURCE-PACKAGE.md）：js/v1 缺省，rules/v1 走 Kotlin 规则执行器；未知 format 旧客户端 fail-closed",
-            "enum": ["js/v1", "rules/v1"],
+            "description": "源形态；js/v1 缺省，rules/v1 走 Kotlin 规则执行器；未知 format 旧客户端 fail-closed",
+            "enum": [
+              "js/v1",
+              "rules/v1"
+            ],
             "default": "js/v1"
           },
           "signature": {
             "type": "string",
-            "description": "base64 ed25519 签名；缺失时宿主标记未验证"
+            "description": "base64 ed25519 分离签名；缺失时宿主标记未验证"
+          },
+          "apiVersion": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "源仓旧形状兼容字段：条目级 apiVersion"
+          },
+          "minApp": {
+            "type": "string",
+            "description": "宿主最低版本（semver）；高于当前宿主时该条目被跳过"
           }
         },
-        "oneOf": [{ "required": ["url"] }, { "required": ["filename"] }]
+        "oneOf": [
+          {
+            "required": [
+              "url"
+            ]
+          },
+          {
+            "required": [
+              "filename"
+            ]
+          }
+        ]
       }
     }
   }
