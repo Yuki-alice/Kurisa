@@ -4,8 +4,8 @@
 保留它们只是为了追溯当时的决策过程；采用 `git mv` 无损迁移，历史可用 `git log --follow` 查看。
 
 归档理由与逐文件说明见 `../../README.md` 第 3 节；替代文档为
-`../../comic-e2e-plan.md`（漫画全流程实施）与 `../../plugin-system/DESIGN.md`（插件系统目标态）。
-`../../plugin-system/REFACTOR-PLAN.md` 记录的重构已完工，仅作追溯。
+`../../work-plan.md`（唯一活计划位）与 `../../plugin-system/DESIGN.md`；漫画全流程验收记录见 `../../comic-e2e-plan.md`（已完成）。
+`../2026-11-13/REFACTOR-PLAN.md` 记录的重构已完工，仅作追溯。
 
 | 文件 | 主要问题 |
 | --- | --- |

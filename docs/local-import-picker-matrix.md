@@ -1,16 +1,18 @@
 # 本地书导入选择器 · 依赖可解析性矩阵（M4 P2-1 前置）
 
+> 状态（2026-11-13）：结论已定 —— FileKit 0.17.0 common 元数据不可用，依赖已撤；Desktop 用 FileDialog、Android 用 SAF。本文件保留为选型依据，不再作为待办。
+
 > 依据硬约束：引入新第三方依赖前必须先做依赖可解析性矩阵并说明理由。
 > 本轮只做矩阵与方案，不引入依赖、不写导入 UI（入口需书架/M5 接入点）。
 > 联网调研时间：2026-11-13；直连抓取受限，以下事实来自 Maven Central 索引页与官方文档摘要（等级 B），标有“待验证”的需接入后实测。
 
-## 1. 结论
+## 1. 结论（2026-11-13 定稿）
 
-- 首选 **FileKit**（`io.github.vinceglb:filekit-compose` + `filekit-core`，最新 0.17.0）：
-  Compose Multiplatform 一套 API，Android / iOS / JVM（含桌面三 OS）原生对话框，
-  支持文件单选/多选 + 目录选择 + 扩展名过滤，正好覆盖“选书（txt/epub/cbz/zip/pdf/目录）→ 拷贝 `books/`”链路。
-- **暂不引入**：导入 UI 的展示位在书架（M5 存根），现在引入 picker 也无处挂载；
-  待书架列表与 `ReaderRoute` 入口就绪后，按 §4 接入（预计 1 个版本目录条目 + 1 个 feature 内调用点）。
+- **不引入 FileKit**（`io.github.vinceglb:filekit-compose` 0.17.0）：实测 common 元数据不可用，
+  `expect` 成员在 `commonMain` 不可见，依赖已撤；排障细节见 §4 与 `gradle/libs.versions.toml` 注释。
+- **现行实现**：Desktop 用 `java.awt.FileDialog`、Android 用 SAF（`OpenMultipleDocuments`），
+  平台壳注入 `pickLocalFiles` 到 `App`，书架「本地书」分区提供导入/删除入口，双端已落地。
+- 本文保留 §2 可解析性矩阵与 §4 排障记录作追溯，**不再是待办或选型草案**。
 
 ## 2. 可解析性矩阵
 

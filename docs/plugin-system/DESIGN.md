@@ -1,9 +1,12 @@
 # 插件系统设计（目标态 v2）
 
 > 状态：**本轮评审结论，取代旧版 `docs/plugin-engine.md`（已归档至 `docs/_archive/2026-11-12/`）**。
+> 实施状态（2026-11-13）：S0/P0/P1/P2/P3 已全部完工（长驻运行时、版本路由、`rules/v1`、遥测与规则测试面板）；
+> 本文 §0 的「当前瓶颈 / 尚未建立」等表述是 2026-11-12 评审时点基线，不是当前现状。
+> 当前现状以代码为准，后续工作见 `docs/work-plan.md`。
 > 设计输入来自源码事实与社区横向调研，不是对旧文档的续写。
 > 权威基线：`docs/architecture.md`（ADR-002/003、§4.6/§4.7）、
-> `docs/contract/source.d.ts` 与 `source-v4.d.ts`。重构落地顺序见 `REFACTOR-PLAN.md`。
+> `docs/contract/source.d.ts` 与 `source-v4.d.ts`。重构已完工，实施顺序记录见 `../_archive/2026-11-13/REFACTOR-PLAN.md`（仅追溯）。
 > 源包一体模板见 `SOURCE-PACKAGE.md`，Host SDK 冻结签名见 `HOST-SDK.md`（本文件 §5 为摘要，细节以该文件为准）。
 > 日期：2026-11-12。
 

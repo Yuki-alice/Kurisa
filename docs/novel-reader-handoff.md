@@ -1,14 +1,14 @@
 # 小说阅读器模块编写 · 交接文档
 
-> 交接时间：2026-11-13。用途：把「Kurisa M4 小说阅读器完整编写」交给另一个 agent 接续。
+> 交接时间：2026-11-13。用途：M4 已完成模块的历史交接记录与已知坑索引，不再用于任务移交。
 > 本文只描述事实与待办，不是架构规范；架构以 `docs/architecture.md` 为准，契约以 `docs/contract/` 为准。
-> 配套提示词：`docs/novel-reader-agent-prompt.md`（可直接复制给接手 agent）。
+> 当时的配套提示词 `docs/_archive/2026-11-13/novel-reader-agent-prompt.md` 已归档，仅作追溯，不再用于任务移交。
 
 ## 0. 交接摘要
 
 - 任务：完成 M4「小说与本地导入」——在线小说章节可分页阅读、本地 TXT/EPUB 与在线书同构、进度/书签可靠、图片受控加载、三端一致。
-- 当前状态：**Phase 1/2 已完成并反复全量验证通过，M4 已于 2026-11-13 合并进 main（提交 867167e）**；后续 P2 切片（书签/划线 4 种输入/笔记/搜索批量/富文本全集/按书设置/本地导入端到端 + 删除/排版五参数/渲染基线/外链迁移）全部落地，全仓 `desktopTest` **453 用例 / 0 失败 / 0 错误 / 0 跳过，BUILD SUCCESSFUL** + `:app:android:assembleDebug` 成功。
-- 接手第一步：跑全量 `desktopTest` + `:app:android:assembleDebug` 确认 453/0/0/0 基线仍绿，修任何失败（基线证据：`docs/screenshots/reader-novel-paged.png`、`reader-novel-rich.png`）。
+- 当前状态：**Phase 1/2 已完成并反复全量验证通过，M4 已于 2026-11-13 合并进 main（提交 867167e）**；后续 P2 切片（书签/划线 4 种输入/笔记/搜索批量/富文本全集/按书设置/本地导入端到端 + 删除/排版五参数/渲染基线/外链迁移）全部落地，当次全仓 `desktopTest` **453 用例 / 0 失败 / 0 错误 / 0 跳过（M4 当时基线）**、BUILD SUCCESSFUL + `:app:android:assembleDebug` 成功；当前基线 457/0/0/0 见 `docs/README.md`。
+- 当前全仓基线：457/0/0/0（2026-11-13，见 `docs/README.md` 测试门禁口径）；本节仅为历史验证记录。
 - 所有改动**已随 M4 合并进 main（提交 867167e）**（交接时工作区状态见 §3）；文档地图已登记，工作区日志在 `.workbuddy/memory/2026-11-13.md`。
 - 不要重写已完成部分，不要引入新第三方依赖或新 expect/actual。
 
@@ -45,14 +45,14 @@
 | 依赖 | `GbkCodec` 由 `internal` 改为 public（纯 Kotlin 表，三端一致）；`data/localimport/build.gradle.kts` 新增 `implementation(project(":data:network"))`；无新第三方依赖、无新 expect/actual |
 | 文内图片受控出口 | `ReaderScreen` → `ReaderScreenVm` → `ReaderContent` → `NovelReader` 传递 `images: ImageFetcher?` 与 `domains`；`NovelImage` 只放行 https 与本地 `!/`，经 `ImageFetcher` 加载，本层不传 headers；相对路径/http/file/data 一律占位 |
 | 新增测试 | `TextImportTest.kt`（TXT/EPUB/provider 接线）、`LocalChapterProviderTest` 更新断言、`NovelImagePolicyTest.kt`、`ReaderScreenshotTest.novelReaderRendersStructuredText()`（生成 `reader-novel-paged.png` 证据） |
-| 文档 | `novel-reader-plan.md` 追加 §6 Phase 2 进度 |
+| 文档 | `docs/_archive/2026-11-13/novel-reader-plan.md` 追加 §6 Phase 2 进度 |
 
 ## 3. 工作区状态
 
 `git status --short`（交接时）：修改 18 个文件、新增 16 个文件，未提交。主要路径：
 
 - 修改：`core/model/DomainModels.kt`、`core/reader/ReaderStateMachine.kt`、`data/db/{DatabaseFactory.kt,Progress.sq,SchemaConsistencyTest.kt,MigrationAndOfflineTest.kt}`、`data/localimport/{build.gradle.kts,LocalChapterProvider.kt,LocalChapterProviderTest.kt}`、`data/network/GbkCodec.kt`、`data/repository/{Repositories.kt,ReaderSettingsRepository.kt}`、`feature/reader/{Reader.kt,ReaderContract.kt,ReaderViewModel.kt,ReaderScreenshotTest.kt}`、`docs/README.md`
-- 新增：`core/model/{NovelDocument.kt,NovelContentParser.kt,NovelContentParserTest.kt}`、`core/reader/{NovelPaginator.kt,NovelTypography.kt,NovelPaginatorTest.kt}`、`data/db/.../migrations/3.sqm`、`data/localimport/{TxtReader.kt,EpubTextReader.kt,TextImportTest.kt}`、`feature/reader/{NovelReader.kt,NovelImagePolicyTest.kt,ReaderViewModelNovelTest.kt}`、`docs/{novel-reader-research.md,novel-reader-plan.md}`
+- 新增：`core/model/{NovelDocument.kt,NovelContentParser.kt,NovelContentParserTest.kt}`、`core/reader/{NovelPaginator.kt,NovelTypography.kt,NovelPaginatorTest.kt}`、`data/db/.../migrations/3.sqm`、`data/localimport/{TxtReader.kt,EpubTextReader.kt,TextImportTest.kt}`、`feature/reader/{NovelReader.kt,NovelImagePolicyTest.kt,ReaderViewModelNovelTest.kt}`、`docs/{novel-reader-research.md,novel-reader-plan.md}`（其中 `novel-reader-plan.md` 已归档至 `docs/_archive/2026-11-13/`）
 
 > 2026-11-13 续写后：未提交改动累计约 76 个文件（`git status --short` 实测；含上述全部 + 后续 20+ 轮 P2/P3 切片：书签/划线/搜索/富文本/按书设置/导入 UI 与删除/排版/渲染基线/外链迁移及全部单测与文档）。提交前逐项复核，勿带 `build/` 产物。
 
@@ -203,6 +203,6 @@ cd /f/Kurisa   # Windows Git Bash；或在项目根用 -p 指定
 - [x] 本地导入端到端（445/0；FileKit 不可用已撤依赖；手势拖拽区间/仿真翻页留后续）
 - [x] 外链迁移 LinkAnnotation（445/0；行为不变；手势拖拽区间/仿真翻页留后续）
 - [x] 完成本地导入 UI / 书架同构展示（445/0；iOS 选择器待 macOS 验证）
-- [x] 更新 `docs/novel-reader-plan.md` §6 与本文档的验证状态
+- [x] 更新 `docs/_archive/2026-11-13/novel-reader-plan.md` §6 与本文档的验证状态
 - [ ] 追加 `.workbuddy/memory/2026-11-13.md` 工作日志
 - [ ] 提交前复核 `git status`，确认无构建产物/临时文件入库

@@ -2,14 +2,15 @@
 
 | 项目 | 内容 |
 | --- | --- |
-| 文档状态 | **执行中（P0/P1 实施中）**（首个版本尚未发布；后续直接改正文，不维护版本号与变更摘要） |
+| 文档状态 | **已完成（2026-11-13）**；本文件是漫画全流程的验收记录与断点取证，**不再是活计划位**，后续实施依据见 `docs/work-plan.md` |
 | 范围 | 漫画：本地文件导入 + JS/规则插件网络源。小说 M4 已落地（2026-11-13 合并 867167e，交接文档见第 2 节地图），本计划聚焦漫画两条 walkthrough |
 | 目标 | 两条可复现的端到端 walkthrough：从用户入口一路走到阅读器出图，并固化成回归门禁 |
-| 定位 | 漫画全流程的**唯一活计划位**；其余文档中的阶段清单不再作为实施依据 |
+| 定位 | 漫画全流程的**已完成验收记录**（断点取证 + 两条 walkthrough 回归）；后续阶段任务以 `docs/work-plan.md` 为依据 |
 | 取证 | 2026-11-12 只读源码 + 实测构建/测试，结论均附 `file:line` |
 | 日期 | 2026-11-12 |
 
-> 取证结论：插件引擎、安装器、网络出口、阅读器渲染**都已完工**；缺的是把这些能力接成一条用户走得通的路。
+> 取证结论（2026-11-12 时点）：插件引擎、安装器、网络出口、阅读器渲染**都已完工**；缺的是把这些能力接成一条用户走得通的路。
+> 该缺口已于 2026-11-13 由 P0/P1 补齐（见 §1.2 断点表与 §4 阶段表），本文保留原始取证记录，不再作为实施依据。
 > 本文不重构引擎，不扩契约，不做平台特例。
 
 ---
@@ -111,7 +112,7 @@
 
 **已裁决**：`appVersion` 统一到 `1.0.0`（全仓 4 处默认 + `PluginRuntimeSpec.appVersion`，与源仓 index.json `minApp=1.0.0` 对齐）；`manga-example.js` 头块 `@capabilities` 已修为 `search,comic`；选目录 UI Desktop（FileDialog）+ Android（SAF）已落地，iOS DocumentPicker 仍缺；组合器按 `local:` 前缀分流 + 路由 `sourceKey` 已定稿并落地。
 
-**残余风险（后续项）**：Koin 未接线、ViewModel 工厂仍是手写 Factory；`HostUi` / `VIDEO-AUDIO` 播放器未接；iOS 壳与 DocumentPicker 缺（需 macOS）；两条 walkthrough 的截图基线（`comic-local-cbz.png` / `comic-network-source.png`）尚未新增；源仓 schema 双版本（`js/v1` 与 `rules/v1`）漂移需持续对齐。
+**残余风险（后续项）**：Koin 未接线、ViewModel 工厂仍是手写 Factory；`HostUi` / `VIDEO-AUDIO` 播放器未接；iOS 壳与 DocumentPicker 缺（需 macOS）；两条 walkthrough 的截图基线（`comic-local-cbz.png` / `comic-network-source.png`）尚未新增；源仓索引 schema 双版本（主仓 `docs/contract/index-schema.json` 与 `Kurisa-Sources/index.schema.json`）漂移需持续对齐（当前不阻断 52 源加载）。
 
 ---
 
@@ -120,6 +121,6 @@
 本轮同步执行（归档采用 `git mv`，不删除任何内容；明细见 `docs/README.md`）：
 
 - 归档：`reader-handoff.md`（环境基线为 Linux/JDK25、待办已完成、结论自相矛盾）、`komikku-reading-parity.md`（B/C 差距矩阵与执行顺序大面积过时，A 部分调研留档可追溯）。
-- 降为历史基线：`plugin-system/REFACTOR-PLAN.md`（§0 已记完工，§1 差距矩阵是重构前基线）。
+- 降为历史基线：`docs/_archive/2026-11-13/REFACTOR-PLAN.md`（§0 已记完工，§1 差距矩阵是重构前基线）。
 - 保留但加状态注记：`komikku-reader-replication.md`（视觉/UX 规格，实施以本文为准）、`real-source-e2e.md`（修正指向不存在的 `HANDOFF.md` 的引用）。
 - 修正 `docs/README.md` 与归档区 README 中已失效的归档理由与「reader-handoff 有未提交修改」陈述。

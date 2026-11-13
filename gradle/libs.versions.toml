@@ -14,7 +14,7 @@ coroutines = "1.11.0"
 datetime = "0.8.0"
 ksoup = "0.2.6"
 xmlutil = "1.0.2"
-# filekit 暂缓：0.17.0 common 元数据不可用（expect 成员在 commonMain 不可见），见 local-import-picker-matrix.md §4
+# filekit 已撤依赖（实测不可用，双端改用平台原生选择器）：0.17.0 common 元数据不可用（expect 成员在 commonMain 不可见），见 local-import-picker-matrix.md §4
 korlibsEncoding = "6.0.0"
 sqldelight = "2.4.1"
 coil3 = "3.6.3"

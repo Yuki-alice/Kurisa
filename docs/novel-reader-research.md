@@ -2,6 +2,8 @@
 
 > 联网调研时间：2026-11-12。范围：采用 Kotlin + Jetpack Compose / Compose Multiplatform 的开源小说（文字）阅读软件，及其阅读器实现思路；结合本项目现状给出 M4「小说与本地导入」的可执行方案。
 > 事实来源分三类：**A** 官方仓库 README / 官方 API 文档；**B** 源码级第三方分析（DeepWiki / Zread / 项目分析站）；**C** 社区文章、统计站（仅作线索，不单独作结论）。本文对关键结论标明来源等级。
+> **状态注记（2026-11-13）**：本文是 2026-11-12 的调研快照，文中「尚未 / 待 M5」均为调研时点口径；M4 已落地、
+> `ReaderRoute.sourceKey` 已由 B4 接线，当前现状以代码与 `docs/work-plan.md` 为准。
 
 ---
 
@@ -64,7 +66,7 @@
 - `ReaderContract.State.article: String?` 丢掉了 `format`；`pageCountOf(Text)=1` 导致小说没有虚拟页，`PageChanged` / `pageIndex` 对小说无意义；`Reader.kt:316` 小说时直接隐藏页码。
 - `data/localimport/FormatDetector` 已识别 `.txt`，但 `LocalChapterProvider.kt:59-65` 对纯文本 EPUB 明确抛「纯文本 EPUB 随 M4 小说阅读器支持」，且所有本地分支只产 `Images`；无 TXT 解析器。
 - 测试：`ReaderViewModelTest` 全部用 `Images` 载荷；`ReaderScreenshotTest` 4 张截图全是漫画/PDF；无小说分页/渲染用例。`ZoomRenderTest`/`ZoomLongStripTest` 为 M0 spike 历史证据，仓库内已无文件（现为 `SubsamplingTest` 精神续作）。
-- `ReaderRoute` 尚未带 `sourceKey`（多源按作品路由，文档标为 M5）；Koin / 深链接 / `MaterialExpressiveTheme` 亦待 M5。
+- 调研时 `ReaderRoute` 尚未带 `sourceKey`（多源按作品路由，当时标为 M5）；**2026-11-13 已由 B4 接线**（`WorkSourceIndex` + `bindWork`）。Koin / 深链接 / `MaterialExpressiveTheme` 仍见 `docs/work-plan.md`。
 
 ### 3.3 必须遵守的硬约束（`AGENTS.md`、`architecture.md`）
 

@@ -216,9 +216,9 @@ Zipline 输入为 Kotlin/JS 编译产物、桥为 `ZiplineService`、不提供�
   - **L1（本 ADR 的 Android/iOS 路径）已是行业主流**：Mihon 的 `CloudflareInterceptor` 用隐藏 WebView 过盾 + `AndroidCookieJar` 同步，检测判据同为 `cf-mitigated`；其 host 锁、12s 超时、isolated world、Sec-CH-UA 同步四项工程细节优于本项目现状，需对齐。
   - **L2（请求交由 WebView 的 `fetch()` 发出）已被验证可解 TLS 指纹问题**：keiyoushi `WebViewFetchInterceptor`（PR #11886）与 Litho 的 WebView 网关是两套独立实现，后者给出同网络下 `fetch()` 200 / `URLSession` 403 的对照。因图片可直接由原生加载器发出，L2 只需覆盖 JSON API，成本可控。
   - **L3（改 TLS 栈）平台覆盖不全**：Android 可用 `org.chromium.net:cronet-embedded`（Google Maven 实测有 `143.7445.0`，JA3 与 Chrome 同源）；iOS 系统栈不可改，只能走 L2；JVM 桌面三条路全堵（`ktor-client-curl` 无 `-jvm` 变体、`ktor-impersonate` 未发布、curl-impersonate 需自编 `.so`）。
-  - 完整证据与链接：`docs/community-solutions.md`。
+  - 完整证据与链接：`docs/_archive/2026-11-13/community-solutions.md`（已归档，仅追溯；结论以 `docs/cookie-cloudflare.md` 为准）。
 - **验证**：`./gradlew :shared:accountSpike --args="<source.js> [--live]"`，输出空 CookieJar / 注入 Cookie 的对照表；`--live` 追加真实请求以确认 Cookie 进入请求头。
-- **落地细节**：Cloudflare 三类拦截（托管挑战 / WAF 阻断 / 限流）的区分、Cookie 与 UA 的绑定存储、粘贴解析的 5 种格式、失效检测策略，见 `docs/cookie-cloudflare.md`；代码在 `m0-spike/.../CookieStore.kt`，24 项断言由 `./gradlew :shared:cookieSpike` 执行。分级降级策略（L1 WebView 过盾 → L2 WebView fetch → L3 换 TLS 栈）的社区方案对照见 `docs/community-solutions.md`。
+- **落地细节**：Cloudflare 三类拦截（托管挑战 / WAF 阻断 / 限流）的区分、Cookie 与 UA 的绑定存储、粘贴解析的 5 种格式、失效检测策略，见 `docs/cookie-cloudflare.md`；代码在 `m0-spike/.../CookieStore.kt`，24 项断言由 `./gradlew :shared:cookieSpike` 执行。分级降级策略（L1 WebView 过盾 → L2 WebView fetch → L3 换 TLS 栈）的社区方案对照见 `docs/_archive/2026-11-13/community-solutions.md`（仅追溯）。
 
 ### ADR-010 · 桌面 WebView 改为「系统内核 + 独立 helper 进程」
 
@@ -253,7 +253,7 @@ Zipline 输入为 Kotlin/JS 编译产物、桥为 `ZiplineService`、不提供�
   | 现成 Java/Kotlin webview 封装 | 上游无 Cookie API，拿不到 HttpOnly 的 `cf_clearance`，等于没解决问题 |
   | 本地 HTTP/WebSocket 端口通信 | Windows 防火墙弹窗；端口冲突；多一层鉴权面 |
   | 只保留 Cookie 导入 | 用户拿不到 `cf_clearance` 的场景（mycomic 等云盾站）在桌面彻底不可用 |
-- **验证**：`desktop-webview-host/build-linux.sh` + `xvfb-run -a ./gradlew :shared:webviewHostSpike [--args="<url>"]`；12 项断言（含「JS 看不到 HttpOnly / 原生读到 / 自动配对 UA」）与真实站点（mangadex）截图，详见 `docs/m0-webview-host-linux.md`。
+- **验证**：`desktop-webview-host/build-linux.sh` + `xvfb-run -a ./gradlew :shared:webviewHostSpike [--args="<url>"]`；12 项断言（含「JS 看不到 HttpOnly / 原生读到 / 自动配对 UA」）与真实站点（mangadex）截图，详见 `docs/_archive/2026-11-13/m0-webview-host-linux.md`（已归档，仅历史环境实测）。
 - **遗留**：Windows / macOS 实现、代理注入、发行版依赖探测、打包与签名、三平台 CI。
 
 ---
@@ -370,8 +370,8 @@ reader/
 
 ## 4. 扩展源系统（核心）
 
-> 宿主侧插件引擎的**目标态设计**见 `docs/plugin-system/DESIGN.md`，重构顺序见
-> `docs/plugin-system/REFACTOR-PLAN.md`（`docs/plugin-engine.md` 已归档，仅描述 v1 实现）；
+> 宿主侧插件引擎的**目标态设计**见 `docs/plugin-system/DESIGN.md`，重构已完工（S0/P0/P1/P2/P3），实施顺序记录见
+> `docs/_archive/2026-11-13/REFACTOR-PLAN.md`（仅追溯）（`docs/plugin-engine.md` 已归档，仅描述 v1 实现）；
 > JS 侧声明以 `docs/contract/source.d.ts` 为准。
 
 ### 4.1 设计目标与兼容策略
@@ -454,7 +454,7 @@ SourceRuntime.call(path, args)
 > （quickjs-kt 无法长驻、`quickJs {}` 阅后即焚）已被证伪：上游 1.0.18 提供
 > `QuickJs.create(dispatcher)`、字节码缓存与类型化桥，与本文 ADR-003（第 99 行）及
 > §4.6.3（第 569 行）一致。**目标态以 `docs/plugin-system/DESIGN.md` 为准**，
-> 落地顺序见 `docs/plugin-system/REFACTOR-PLAN.md`；P0 完成前以下仍是当前代码行为。
+> 重构已全部完工，**以下 v1 单发模型描述仅为历史记录，不是当前代码行为**；当前实现为长驻模型（`QuickJsEngine` / `SourceRuntimeManager`），实施记录见 `docs/_archive/2026-11-13/REFACTOR-PLAN.md`，后续工作见 `docs/work-plan.md`。
 
 引擎采用单发模型（quickjs-kt 的 `quickJs {}` 阅后即焚）：缓存的是「脚本 + 描述符 +
 宿主配置」，不是常驻 JS context；跨调用状态一律经 `loadData/saveData` 落宿主 KV。

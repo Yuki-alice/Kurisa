@@ -366,8 +366,8 @@ SQLDelight 增删改查一致性、ZoomImage 真实渲染、PDF 渲染、Navigat
 
 仍未做（M1/M6）：Windows（WebView2）/ macOS（WKWebView）实现、代理注入、
 发行版依赖探测与打包签名、三平台 CI、Mihon 四项对齐（host 锁跨进程、12s 超时、
-isolated world、Sec-CH-UA 同步）。详见 `docs/m0-webview-host-linux.md §6` 与
-`docs/community-solutions.md §1`。
+isolated world、Sec-CH-UA 同步）。详见 `docs/_archive/2026-11-13/m0-webview-host-linux.md §6` 与
+`docs/_archive/2026-11-13/community-solutions.md §1`（均已归档，仅追溯）。
 
 ---
 
