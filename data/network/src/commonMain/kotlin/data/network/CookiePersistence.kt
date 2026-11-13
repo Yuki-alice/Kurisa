@@ -31,6 +31,8 @@ data class PersistedCookie(
 interface CookiePersistence {
     fun loadAll(): List<PersistedCookie>
     fun upsert(record: PersistedCookie)
+    /** 精确删除单条记录，供 [CookieStore.purgeExpired] 清理过期 / 失效项。 */
+    fun delete(domain: String, name: String, path: String)
     fun deleteHost(host: String)
     fun clear()
 }

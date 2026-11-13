@@ -84,4 +84,14 @@ class DbCookiePersistenceTest {
         )
         assertEquals("UA-PAIRED", restored.pairedUserAgentFor("https://example.net/a", 1_760_000_000_001L))
     }
+
+    @Test
+    fun deleteRemovesOnlyTheTargetPath() {
+        val persistence = DbCookiePersistence(openDb())
+        persistence.upsert(record("example.net", "k", "enc-a", null).copy(path = "/"))
+        persistence.upsert(record("example.net", "k", "enc-b", null).copy(path = "/sub"))
+
+        persistence.delete("example.net", "k", "/")
+        assertEquals(listOf("/sub"), persistence.loadAll().map { it.path })
+    }
 }

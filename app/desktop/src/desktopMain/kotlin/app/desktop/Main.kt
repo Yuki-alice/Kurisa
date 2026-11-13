@@ -86,6 +86,8 @@ fun main() {
         persistence = DbCookiePersistence(database),
         cipher = FileSecretCipher(File(appDir, "cookie.key")),
     )
+    // 清掉上次运行遗留的过期 / 失效记录，避免 cookie 表无限增长。
+    cookies.purgeExpired(System.currentTimeMillis())
     val http = defaultHttpClient()
     // 本地库（P2 阅读闭环：`local:` 前缀作品走本地源；目录不存在即空库，可直接放入 TXT/EPUB/CBZ/PDF/目录）。
     val booksDir = File(appDir, "books").apply { mkdirs() }

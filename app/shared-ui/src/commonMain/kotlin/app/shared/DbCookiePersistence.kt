@@ -45,6 +45,10 @@ class DbCookiePersistence(private val db: ReaderDatabase) : CookiePersistence {
         )
     }
 
+    override fun delete(domain: String, name: String, path: String) {
+        db.cookieQueries.deleteCookie(domain, name, path)
+    }
+
     override fun deleteHost(host: String) {
         db.cookieQueries.deleteCookiesOfHost(host)
     }

@@ -72,6 +72,8 @@ class MainActivity : ComponentActivity() {
             persistence = DbCookiePersistence(database),
             cipher = KeystoreSecretCipher(),
         )
+        // 清掉上次运行遗留的过期 / 失效记录，避免 cookie 表无限增长。
+        cookies.purgeExpired(System.currentTimeMillis())
         val http = defaultHttpClient()
         val container = AppContainer(cookies, http)
         val bindings = createSourceCatalog(

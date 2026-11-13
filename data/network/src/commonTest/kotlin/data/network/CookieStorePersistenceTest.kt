@@ -24,6 +24,10 @@ class CookieStorePersistenceTest {
             rows[Triple(record.domain, record.name, record.path)] = record
         }
 
+        override fun delete(domain: String, name: String, path: String) {
+            rows.remove(Triple(domain, name, path))
+        }
+
         override fun deleteHost(host: String) {
             rows.entries.removeAll { (_, row) ->
                 row.domain.removePrefix(".").equals(host.removePrefix("."), true)
@@ -142,5 +146,26 @@ class CookieStorePersistenceTest {
         assertTrue(store.headerFor("https://example.net/", now)?.contains("k=v") == true)
         store.clear()
         assertNull(store.headerFor("https://example.net/", now))
+    }
+
+    @Test
+    fun purgeExpiredRemovesFromMemoryAndDisk() {
+        val disk = MemoryPersistence()
+        val cipher = ReversibleCipher()
+        val store = CookieStore(disk, cipher)
+        store.put(seedCookie("example.net", "expired", "e", now).copy(expiresAtEpochMs = now - 1))
+        store.put(seedCookie("example.net", "invalid", "i", now).copy(invalidReason = "re-challenged"))
+        store.put(seedCookie("example.net", "fresh", "f", now).copy(expiresAtEpochMs = now + 10_000))
+        assertEquals(3, disk.rows.size)
+
+        assertEquals(2, store.purgeExpired(now))
+        assertEquals(1, disk.rows.size)
+        assertEquals("fresh", store.all().single().name)
+
+        // 重启后只剩有效项，过期 / 失效记录已从表中精确删除。
+        val restored = CookieStore(disk, cipher)
+        assertEquals(1, restored.all().size)
+        assertEquals("fresh", restored.all().single().name)
+        assertEquals(0, restored.purgeExpired(now))
     }
 }

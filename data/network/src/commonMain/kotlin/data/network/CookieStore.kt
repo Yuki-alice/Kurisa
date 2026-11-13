@@ -93,6 +93,22 @@ class CookieStore(
         persistence?.clear()
     }
 
+    /**
+     * 清理已过期 / 已标记失效的 Cookie，并精确删除落盘记录。
+     * 匹配逻辑本来就会过滤这些条目，不清理会让 `cookie` 表无限增长；
+     * 由平台壳在启动时调用一次即可，返回清理条数。
+     */
+    fun purgeExpired(nowMs: Long): Int {
+        val expired = items.filter { c ->
+            c.invalidReason != null || (c.expiresAtEpochMs?.let { it <= nowMs } == true)
+        }
+        if (expired.isEmpty()) return 0
+        val keys = expired.map { Triple(it.domain, it.name, it.path) }.toSet()
+        items.removeAll { c -> Triple(c.domain, c.name, c.path) in keys }
+        persistence?.let { p -> expired.forEach { c -> p.delete(c.domain, c.name, c.path) } }
+        return expired.size
+    }
+
     private fun persist(c: StoredCookie) {
         val p = persistence ?: return
         val cip = cipher ?: return

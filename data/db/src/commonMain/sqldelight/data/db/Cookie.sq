@@ -23,6 +23,9 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 selectAllCookies:
 SELECT * FROM cookie;
 
+deleteCookie:
+DELETE FROM cookie WHERE domain = ? AND name = ? AND path = ?;
+
 deleteCookiesOfHost:
 DELETE FROM cookie WHERE lower(ltrim(domain, '.')) = lower(?);
 
