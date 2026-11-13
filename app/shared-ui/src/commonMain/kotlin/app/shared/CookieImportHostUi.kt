@@ -1,6 +1,5 @@
 package app.shared
 
-import data.network.CookieImportParser
 import data.network.CookieStore
 import data.network.UrlPolicy
 import source.hostapi.HostLoginResult
@@ -42,15 +41,7 @@ class CookieImportHostUi(
         }
         val domain = UrlPolicy.hostOf(url)
         val paste = requestPaste(domain) ?: return HostLoginResult.Cancelled("user-cancelled")
-        val parsed = CookieImportParser.parse(paste.raw, domain, nowMs(), paste.userAgent)
-        if (parsed.cookies.isEmpty()) {
-            return HostLoginResult.Cancelled("no-valid-cookie")
-        }
-        val hasClearance = parsed.cookies.any { it.name in CookieStore.CF_COOKIES }
-        if (hasClearance && paste.userAgent.isNullOrBlank()) {
-            return HostLoginResult.Cancelled("paired-user-agent-required")
-        }
-        cookies.putAll(parsed.cookies)
-        return HostLoginResult.Imported(parsed.cookies.size, parsed.format)
+        // 与 UI 主动导入共用同一套白名单 / UA 配对规则。
+        return CookieImporter(cookies, { allowedDomains }, nowMs).import(domain, paste)
     }
 }
