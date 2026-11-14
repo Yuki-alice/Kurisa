@@ -65,7 +65,7 @@
               "type": "string",
               "minLength": 1
             },
-            "description": "内容类型；manga/novel 为当前实现，video/audio 为 v4 预留"
+            "description": "内容类型；manga/novel/video/audio 均有类型化 payload（video/audio 的播放器 UI 尚未实现）"
           },
           "domains": {
             "type": "array",
@@ -92,7 +92,9 @@
                 "imageLoad",
                 "novelChapter",
                 "htmlHelper",
-                "cryptoAes"
+                "cryptoAes",
+                "video",
+                "audio"
               ]
             }
           },

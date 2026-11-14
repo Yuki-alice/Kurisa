@@ -1,5 +1,6 @@
 package source.bridge
 
+import kotlinx.serialization.json.Json
 import source.contract.ContractJson
 import source.contract.ContractPolicy
 import source.contract.SourceScriptHeader
@@ -121,5 +122,32 @@ class SourcesRepoContractTest {
             "源仓库安装级门禁失败（${problems.size} 项）：\n" + problems.take(20).joinToString("\n"),
         )
         println("源仓库门禁通过：${files.size} 个源（js/v1 ${files.count { it.name.endsWith(".js") }} + rules/v1 ${files.count { it.name.endsWith(".rules.json") }}）、${index.sources.size} 条索引")
+    }
+
+    /**
+     * 两仓 schema 必须是同一份：源仓 `index.schema.json` == 主仓 `docs/contract/index-schema.json`。
+     *
+     * 按 JSON 结构比较（忽略缩进/键序），防止「主仓改了契约、源仓没跟」的静默漂移。
+     * 契约路径由 `:source:bridge` 的测试任务注入（默认 `docs/contract/index-schema.json`）。
+     */
+    @Test
+    fun sourcesRepoSchemaMatchesMainContract() {
+        val dir = findDir() ?: return
+        val contractPath = System.getProperty("kurisa.contractSchema")
+        if (contractPath.isNullOrBlank()) {
+            println("SKIP（未设置 -Dkurisa.contractSchema）：两仓 schema 一致性未校验")
+            return
+        }
+        val contract = File(contractPath)
+        assertTrue(contract.isFile, "主仓契约 schema 不存在：$contract")
+        val theirs = File(dir, "index.schema.json")
+        assertTrue(theirs.isFile, "源仓缺少 index.schema.json：$theirs")
+        val expected = Json.parseToJsonElement(contract.readText())
+        val actual = Json.parseToJsonElement(theirs.readText())
+        assertTrue(
+            expected == actual,
+            "两仓 index schema 漂移：$theirs ≠ $contract（源仓应为主仓契约的副本）",
+        )
+        println("两仓 schema 一致：统一契约 v2")
     }
 }
