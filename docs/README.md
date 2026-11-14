@@ -14,7 +14,7 @@
 | `plugin-system/DESIGN.md` | 插件系统设计（目标态）：运行时生命周期、Host SDK、声明式规则层、安全与性能目标 |
 | `plugin-system/HOST-SDK.md`、`plugin-system/SOURCE-PACKAGE.md` | Host SDK 冻结签名与源包规范；当前实现为 `js/v1` + `rules/v1` 双形态分派，`defineSource` 一体包仍是目标态（见 SOURCE-PACKAGE 开头实施说明） |
 | `contract/source.d.ts`、`contract/source-v4.d.ts` | JS 侧类型声明（v2/v3 冻结、v4 增补），契约形状依据 |
-| `contract/index-schema.json` | 源仓库索引 schema。与 `Kurisa-Sources/index.schema.json` 存在双版本漂移，待 P2-C1 统一（当前不阻断加载） |
+| `contract/index-schema.json` | 源仓库索引 schema（统一契约 v2）。**与 `Kurisa-Sources/index.schema.json` 为同一份**，由 `SourcesRepoContractTest.sourcesRepoSchemaMatchesMainContract` 校验不漂移 |
 
 ## 2. 参考与历史资料（保留，非规范）
 
@@ -36,11 +36,11 @@
 
 ### 测试门禁口径
 
-- 当前基线：全仓 `desktopTest` **608 用例 / 0 失败 / 0 错误 / 0 跳过**（2026-11-14 双 Agent 合并后本地全量实测，118 个测试类），`:app:android:assembleDebug` 与 `verifyCommonMainReaderDatabaseMigration` 通过。
+- 当前基线：全仓 `desktopTest` **609 用例 / 0 失败 / 0 错误 / 0 跳过**（2026-11-14 双 Agent 合并后本地全量实测，118 个测试类），`:app:android:assembleDebug` 与 `verifyCommonMainReaderDatabaseMigration` 通过。
 - 迁移校验：`data/db/build.gradle.kts` 的 `verifyMigrations` 已打开，2–6 号快照、`1.sqm` 未纳入自动校验的原因与快照再生脚本见 `data/db/MIGRATIONS.md`；新增迁移需带 `--rerun-tasks` 复验。
   本轮新增 31 条：`DownloadManagerTest` 5、`TarArchiveTest` 6、`ShelfViewModelTest` 3、`ShelfBindingsTest` 3、`SourceRepoSubscriptionTest` 9、`SourceRepoUpdatesTest` 5。
 - 两条 walkthrough 已有自动回归：`app/shared-ui/src/desktopTest/kotlin/app/shared/ComicWalkthroughTest.kt`（网络源）与 `data/localimport/src/commonTest/kotlin/data/localimport/LocalComicWalkthroughTest.kt`（本地 CBZ），均为 `example.*` 合成数据 / 内存 Vfs，**仍不等于真实站点跑通**。截图基线待补。
-- 条件门禁：`RealSourceE2ETest` / `AllSourcesCompatibilityTest` 需 `-Dkurisa.refsDir`，`SourcesRepoContractTest` 需 `-Dkurisa.sourcesRepoDir` 或环境变量 `KURISA_SOURCES_REPO`；缺目录时打印 `SKIP` 并按通过计，**CI 全绿不等于全流程跑过**。本次带源仓目录实跑 `SourcesRepoContractTest`（2 源 / 2 索引，非 SKIP），源仓 `npm test` 通过；历史文档「52 源」基线在本机 refs（34 个 venera 脚本）无法复现，不虚报。
+- 条件门禁：`RealSourceE2ETest` / `AllSourcesCompatibilityTest` 需 `-Dkurisa.refsDir`，`SourcesRepoContractTest` 需 `-Dkurisa.sourcesRepoDir` 或环境变量 `KURISA_SOURCES_REPO`；缺目录时打印 `SKIP` 并按通过计，**CI 全绿不等于全流程跑过**。本次带源仓目录实跑 `SourcesRepoContractTest`（**52 源 / 52 条索引**，非 SKIP）与 `sourcesRepoSchemaMatchesMainContract`（两仓 schema 一致），源仓 `npm test` 52 源 0 错误。注意 `.workbuddy/refs` 的 34 个 venera 脚本是 `RealSourceE2ETest` 的本地 refs 目录，与源仓 52 源基线是两回事。
 - 主仓 CI 见 `.github/workflows/ci.yml`（`desktopTest` + `:app:android:assembleDebug`）；源仓门禁见 `Kurisa-Sources/.github/workflows/validate.yml`（`npm test`）。
 
 漫画两条 walkthrough 已于 2026-11-13 固化为**无条件执行**的 desktopTest（不需要外部 refs）：
