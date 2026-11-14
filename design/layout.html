@@ -1,0 +1,784 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>响应式布局骨架 v5 · v4 网格布局不变 + 5 种书架卡片样式</title>
+<style>
+/* ==========================================================================
+   响应式布局骨架 v5 —— 沿用 v4 的网格布局，只增书架卡片样式
+
+   设计决策
+   ----------------
+   1. 导航形态（5 个目的地始终一致：首页 / 书架 / 历史 / 浏览 / 更多）：
+        Compact   <600   → flexible navigation bar（5 个垂直 tab）
+        Medium    ≥600   → collapsed navigation rail（纵向 item + 顶部 menu + FAB）
+        Large     ≥1200  → expanded navigation rail（240px，横向 item）
+      Compact 顶栏是 M3 small top app bar：内容滚动时 container 从 surface
+      渐变到 surface-container（on-scroll color change），不使用分隔线。
+      ≥840 只调边距与列宽，不换导航。没有双栏、没有第三栏。
+   2. 信息区（≥600）：左侧 rail 落在浅底上，右侧是一块白色圆角大面板；
+      面板顶部横向滚动 filter chips，下方是书架多列卡片。
+      列数按「信息 pane 实际可用宽度」reflow：rail 展开占掉 160px，
+      pane 变窄 → 列数随之减少，而不是把卡片压窄。
+   3. 本轮只改「卡片样式」，不改卡片展示的布局：所有网格样式共用 v4
+      的同一个网格（target 190 / 2–8 列，卡片尺寸与位置不变），只换卡片
+      内部的内容组织。唯一例外是列表，按本轮要求用 1–3 栏。
+      顶部加了一个视图选择菜单，用于在这些卡片样式之间切换。
+      5 种卡片样式：
+        舒适网格 comfortable  封面 → 线性进度条 → 标题 → 作者
+        紧凑网格 compact      封面，文字叠在底部 scrim 上
+        列表     list         左封面 + 右标题/作者/进度，按 pane 排 1–3 栏
+        封面墙   wall         纯封面 + 未读角标（推荐）
+        头条卡   featured     首项强调样式，仍占一个普通网格单元（推荐）
+      阅读进度一律线性；wavy 只留给下载/同步。
+   4. 层次靠 tone 而非线条：navigation bar 无 divider（官方 specs 本就没有）；
+      深色下导航容器抬到 surface-container-high、信息面板降到
+      surface-container-lowest，与 app 底色形成三层 tone 差，导航区与信息区可区分。
+   5. 规范依据：
+      - navigation-bar/specs：flexible bar 取代 baseline；容器 surface container，无 divider
+      - small-top-app-bar：64dp、surface → surface-container 的 on-scroll 变色
+      - navigation-rail/specs：collapsed rail 取代 baseline rail；expanded rail
+        取代 navigation drawer；3–7 个目的地 + 可选 FAB
+      - 颜色：active indicator secondary container；纵向 item 激活标签 = secondary
+        （2025 更新）；横向 item = on secondary container；状态层 hover 8% / pressed 10%
+      - 落地提醒：官方 navigation rail 的 Web / Web: Expressive 实现为 Unavailable，
+        KMP Web 端需按此结构自行实现。
+   ========================================================================== */
+
+:root {
+  --font: "Google Sans", "Roboto Flex", -apple-system, BlinkMacSystemFont,
+          "Segoe UI", Roboto, "PingFang SC", "Microsoft YaHei", sans-serif;
+
+  /* static baseline scheme — 布局阶段不引入动态取色 */
+  --surface: #fdf7ff;
+  --surface-container-lowest: #ffffff;
+  --surface-container-low: #f7f2fa;
+  --surface-container: #f3edf7;
+  --surface-container-high: #ece6f0;
+  --on-surface: #1d1b20;
+  --on-surface-variant: #49454f;
+  --primary: #6750a4;
+  --on-primary: #ffffff;
+  --primary-container: #eaddff;
+  --on-primary-container: #21005d;
+  --secondary: #625b71;
+  --secondary-container: #e8def8;
+  --on-secondary-container: #1d192b;
+  --outline-variant: #cac4d0;
+
+  --shape-s: 8px; --shape-m: 12px; --shape-l: 20px; --shape-xl: 28px;
+  --shape-full: 999px;
+  --s1: 4px; --s2: 8px; --s3: 12px; --s4: 16px; --s6: 24px; --s8: 32px;
+  /* rail 目标宽度：JS 用它反推信息 pane 宽度，避免读 transition 中间态 */
+  --rail-w: 80px; --rail-expanded-w: 240px;
+}
+/* 布局骨架默认浅色（与参考图一致）；深色由控制条显式切换，不跟随系统 */
+.app.dark {
+  --surface: #141218;
+  --surface-container-lowest: #0b0910;   /* 信息面板：比 app 底色更深 */
+  --surface-container-low: #1a1720;
+  --surface-container: #211f26;
+  --surface-container-high: #302c38;     /* 导航容器：比 app 底色明显更亮 */
+  --on-surface: #e6e0e9; --on-surface-variant: #cac4d0;
+  --primary: #d0bcff; --on-primary: #381e72;
+  --primary-container: #4f378b; --on-primary-container: #eaddff;
+  --secondary: #ccc2dc; --secondary-container: #4a4458;
+  --on-secondary-container: #e8def8; --outline-variant: #49454f;
+}
+/* 深色下 tone-based surface 的层级差很小，导航容器必须自己抬一档，
+   否则导航区、app 底色、信息面板会糊在一起 */
+.app.dark .nav-bar { background: var(--surface-container-high); }
+.app.dark .nav-rail { background: var(--surface-container-high); }
+
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body { height: 100vh; display: flex; flex-direction: column; font-family: var(--font); background: #eeece8; color: #2c2c2a; -webkit-font-smoothing: antialiased; }
+button { font: inherit; color: inherit; border: 0; background: none; cursor: pointer; }
+.icon { width: 24px; height: 24px; flex: none; }
+.icon.sm { width: 18px; height: 18px; }
+
+/* ---------- 原型控制条（不属于产品 UI） ---------- */
+.controls {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 12px;
+  padding: 10px 16px; background: #f6f5f2; border-bottom: 1px solid #e3e1dc; font-size: 12px;
+}
+.controls .tag { font-weight: 600; color: #534ab7; }
+.controls .rule { color: #6b6a66; line-height: 1.5; }
+.segmented { display: flex; gap: 2px; padding: 3px; background: #e9e7e2; border-radius: 999px; }
+.segmented button { padding: 6px 12px; border-radius: 999px; font-size: 11px; color: #6b6a66; }
+.segmented button.on { background: #fff; color: #534ab7; font-weight: 600; }
+.toggle {
+  padding: 6px 12px; border-radius: 999px; border: 1px solid #e3e1dc;
+  background: #fff; font-size: 11px; color: #6b6a66;
+}
+.toggle.on { border-color: #534ab7; color: #534ab7; background: #eeedfe; font-weight: 600; }
+.readout { margin-left: auto; font-variant-numeric: tabular-nums; color: #534ab7; font-weight: 600; }
+
+/* ---------- 视口容器 ---------- */
+.stage { flex: 1; min-height: 0; padding: 20px; display: flex; justify-content: center; }
+.viewport {
+  /* 高度由 stage 的 flex stretch 决定，任何控制条换行都不会把底部 bar 顶出屏幕 */
+  width: 100%; max-width: 100%; height: 100%; min-height: 480px;
+  display: flex; flex-direction: column;
+  border-radius: 24px; overflow: hidden;
+  box-shadow: 0 20px 60px #1e1b2e26;
+  transition: width 280ms cubic-bezier(.2, 0, 0, 1);
+}
+
+/* ---------- App shell ---------- */
+.app {
+  container: shell / inline-size;
+  /* 用 flex 填充而非 height:100%，视口高度弹性时 shell 仍严格等高 */
+  flex: 1; min-height: 0; width: 100%;
+  display: flex; flex-direction: column;
+  background: var(--surface); color: var(--on-surface);
+}
+.app-body { flex: 1; min-height: 0; display: flex; }
+.app-main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+
+/* ---------- Small top app bar（Compact） ---------- */
+.topbar {
+  flex: none; height: 64px; display: flex; align-items: center; gap: var(--s2);
+  padding: 0 var(--s4); background: transparent;
+  transition: background-color 220ms cubic-bezier(.2, 0, 0, 1);
+}
+.topbar h1 { margin: 0; font-size: 22px; font-weight: 500; letter-spacing: -.01em; }
+.topbar .spacer { flex: 1; }
+.icon-btn { width: 40px; height: 40px; border-radius: 50%; display: grid; place-items: center; color: var(--on-surface-variant); position: relative; }
+.icon-btn::before { content: ""; position: absolute; inset: 0; border-radius: inherit; background: currentColor; opacity: 0; }
+.icon-btn:hover::before { opacity: .08; }
+.icon-btn:active::before { opacity: .10; }
+@container shell (max-width: 599px) {
+  /* on-scroll：container 由 surface 渐变到 surface-container，不用分隔线 */
+  .topbar.scrolled { background: var(--surface-container); }
+}
+
+/* ---------- Content ---------- */
+.content { flex: 1; min-height: 0; min-width: 0; overflow-y: auto; overflow-x: hidden; padding: 0 var(--s4) var(--s8); }
+.page { display: none; max-width: 100%; }
+.page.active { display: block; }
+.eyebrow { font-size: 12px; font-weight: 700; letter-spacing: .06em; color: var(--primary); margin: 12px 0 8px; }
+.section-head { display: flex; align-items: center; justify-content: space-between; margin: 24px 0 12px; }
+.section-head h2 { margin: 0; font-size: 20px; font-weight: 500; }
+.section-head .hint { font-size: 12px; color: var(--on-surface-variant); }
+.note { font-size: 12px; line-height: 1.6; color: var(--on-surface-variant); margin: 8px 0 0; }
+
+/* 面板顶部：横向 filter chips + 视图切换器（padding 交给 .toolbar） */
+.filter-strip { display: flex; gap: var(--s2); max-width: 100%; overflow-x: auto; scrollbar-width: none; padding: 0; }
+.filter-strip::-webkit-scrollbar { display: none; }
+.chip {
+  height: 32px; padding: 0 14px; border-radius: var(--shape-full);
+  border: 1px solid var(--outline-variant); color: var(--on-surface-variant);
+  display: inline-flex; align-items: center; gap: 6px; font-size: 13px; flex: none; white-space: nowrap;
+}
+.chip.on { background: var(--secondary-container); color: var(--on-secondary-container); border-color: transparent; font-weight: 600; }
+.chip .icon { width: 18px; height: 18px; }
+.toggle:disabled { cursor: not-allowed; }
+
+/* ==========================================================================
+   书架卡片样式（5 种）。同一套网格里换卡片内部组织，不改卡片的
+   列数 / 尺寸 / 位置；网格一律沿用 v4 的 2–8 列，列表另按 1–3 栏。
+   ========================================================================== */
+.grid { display: grid; gap: var(--s2); grid-template-columns: repeat(var(--cols, 2), minmax(0, 1fr)); align-items: start; }
+.bk { position: relative; min-width: 0; }
+.bk > .cover { width: 100%; }
+.bk-eyebrow { font-size: 11px; font-weight: 700; letter-spacing: .06em; opacity: .8; }
+.bk-t { font-size: 13px; font-weight: 600; line-height: 1.3; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bk-sub, .bk-pg { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bk-sub { font-size: 11px; color: var(--on-surface-variant); }
+.bk-pg { font-size: 10px; color: var(--on-surface-variant); font-variant-numeric: tabular-nums; }
+.bk-badge {
+  position: absolute; top: 6px; right: 6px; z-index: 3;
+  min-width: 20px; height: 20px; padding: 0 5px; border-radius: 999px;
+  background: var(--primary); color: var(--on-primary);
+  font-size: 11px; font-weight: 700; display: grid; place-items: center;
+}
+
+/* 1) 舒适网格：封面 → 线性进度条 → 标题 → 作者 */
+.view-comfortable .bk {
+  display: flex; flex-direction: column; gap: 6px; padding: 8px;
+  border-radius: var(--shape-m); background: var(--surface-container-low);
+}
+.view-comfortable .bk > .cover { border-radius: var(--shape-s); }
+.view-comfortable .bk-info { min-width: 0; }
+.view-comfortable .bk .progress { margin: 0; }
+.view-comfortable .bk .ct { display: none; }   /* 文字交给下方信息区，避免和封面占位字重复 */
+
+/* 2) 紧凑网格 / 4) 封面墙 / 5) 头条的普通项：只有封面，文字叠在图上。
+   图片上的文字必须有 scrim 保证对比度。 */
+.view-compact .bk, .view-wall .bk, .view-featured .bk:not(:first-child) {
+  border-radius: var(--shape-m); overflow: hidden;
+}
+.view-compact .bk > .cover, .view-wall .bk > .cover,
+.view-featured .bk:not(:first-child) > .cover { border-radius: var(--shape-m); }
+.view-compact .bk > .cover::after,
+.view-featured .bk:not(:first-child) > .cover::after {
+  height: 48%; background: linear-gradient(transparent, #0b0a12d9);
+}
+.view-wall .bk .ct { display: none; }   /* 封面墙：纯图，无 UI 文字 */
+
+/* 3) 列表：左封面 + 右标题/作者/进度；每行本身按 pane 宽度排 1–3 栏 */
+.view-list .bk {
+  display: flex; gap: var(--s3); min-height: 96px; padding: 8px;
+  border-radius: var(--shape-m); background: var(--surface-container-low);
+}
+.view-list .bk > .cover { width: 64px; flex: none; border-radius: var(--shape-s); }
+.view-list .bk .ct { display: none; }
+.view-list .bk-info { flex: 1; min-width: 0; display: flex; flex-direction: column; justify-content: center; gap: 2px; }
+.view-list .bk .progress { margin-top: 6px; }
+
+/* 5) 头条卡：首项仍是同尺寸封面，只在底部 scrim 上叠更多信息。
+   卡片尺寸 / 位置 / 列数与其它网格样式完全一致。 */
+.view-featured .bk:first-child > .cover { border-radius: var(--shape-m); }
+.view-featured .bk:first-child .ct { display: none; }
+.view-featured .bk:first-child .bk-overlay {
+  position: absolute; left: 0; right: 0; bottom: 0; z-index: 2; padding: var(--s3);
+  background: linear-gradient(transparent, #0b0a12e6); color: #fff;
+  display: flex; flex-direction: column; gap: 4px;
+}
+.view-featured .bk:first-child .bk-overlay .bk-t { font-size: 14px; }
+.view-featured .bk:first-child .bk-overlay .bk-pg { color: #fff; opacity: .8; }
+.view-featured .bk:first-child .bk-overlay .progress { background: #ffffff55; margin: 0; }
+.view-featured .bk:first-child .bk-overlay .progress > i { background: #fff; }
+
+/* ---------- 视图切换器：产品内让用户在 5 种视图里选 ---------- */
+.toolbar { display: flex; align-items: flex-start; gap: var(--s2); padding: var(--s2) 0 var(--s3); position: relative; }
+.filter-strip { flex: 1; min-width: 0; }
+.view-picker { flex: none; position: relative; }
+.view-picker[hidden] { display: none; }
+.view-trigger {
+  height: 32px; padding: 0 12px; border-radius: var(--shape-full);
+  border: 1px solid var(--outline-variant); color: var(--on-surface-variant);
+  display: inline-flex; align-items: center; gap: 6px; font-size: 12px; white-space: nowrap;
+}
+.view-trigger:hover { background: var(--surface-container-low); }
+.view-trigger .caret { transform: rotate(90deg); }
+.view-menu {
+  position: absolute; right: 0; top: calc(100% + 8px); z-index: 20; width: 246px;
+  padding: var(--s2); border-radius: var(--shape-m); border: 1px solid var(--outline-variant);
+  background: var(--surface-container-lowest); box-shadow: 0 10px 30px #1e1b2e33;
+}
+.view-menu[hidden] { display: none; }
+.view-menu button {
+  width: 100%; display: flex; align-items: center; gap: 10px;
+  padding: 8px 10px; border-radius: var(--shape-s); text-align: left; font-size: 12px;
+}
+.view-menu button:hover { background: color-mix(in srgb, currentColor 8%, transparent); }
+.view-menu button.on { background: var(--secondary-container); color: var(--on-secondary-container); }
+.view-menu .vm-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.view-menu .vm-t { font-weight: 600; }
+.view-menu .vm-d { font-size: 11px; opacity: .75; }
+.view-menu .vm-check { margin-left: auto; }
+
+.cover {
+  aspect-ratio: 2 / 3; border-radius: var(--shape-s); overflow: hidden; position: relative;
+  background: linear-gradient(140deg, var(--c1), var(--c2));
+}
+.cover::before { content: ""; position: absolute; top: -22%; right: -30%; width: 86%; aspect-ratio: 1; border-radius: 50%; background: #ffffff38; }
+.cover::after { content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 32%; background: #0b0a1240; }
+.cover .ct { position: absolute; z-index: 1; left: 10px; bottom: 12px; right: 8px; color: #fff; font-size: 13px; font-weight: 700; line-height: 1.25; }
+.cover .ct small { display: block; font-size: 8px; font-weight: 400; opacity: .7; letter-spacing: .08em; margin-top: 3px; }
+
+/* hero（首页大卡） */
+.hero { border-radius: var(--shape-l); padding: var(--s4); background: var(--primary-container); color: var(--on-primary-container); display: flex; gap: var(--s4); }
+.hero .cover { width: 96px; flex: none; }
+.hero .body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+.hero h3 { margin: 0; font-size: 22px; font-weight: 700; letter-spacing: -.02em; }
+.hero .sub { font-size: 13px; opacity: .82; }
+.hero .actions { display: flex; gap: 8px; margin-top: auto; flex-wrap: wrap; }
+.btn { height: 40px; padding: 0 20px; border-radius: var(--shape-full); display: inline-flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 600; }
+.btn.filled { background: var(--primary); color: var(--on-primary); }
+.btn.outline { border: 1px solid currentColor; }
+.progress { height: 4px; border-radius: 999px; background: var(--secondary-container); }
+.progress > i { display: block; height: 100%; border-radius: 999px; background: var(--primary); }
+
+.rail-scroll { display: flex; gap: var(--s2); max-width: 100%; overflow-x: auto; scrollbar-width: none; padding-bottom: 4px; }
+.rail-scroll::-webkit-scrollbar { display: none; }
+.rail-scroll .cover { width: 116px; flex: none; border-radius: var(--shape-xl); }
+
+.list { border-radius: var(--shape-l); background: var(--surface-container-low); overflow: hidden; }
+.list-item { display: flex; align-items: center; gap: var(--s3); min-height: 64px; padding: 10px var(--s4); }
+.list-item + .list-item { border-top: 1px solid var(--outline-variant); }
+.list-item .lead { width: 40px; height: 40px; flex: none; border-radius: 50%; background: var(--secondary-container); color: var(--on-secondary-container); display: grid; place-items: center; }
+.list-item .lead.cover { border-radius: var(--shape-s); }
+.list-item .body { flex: 1; min-width: 0; }
+.list-item .body .t { font-size: 15px; font-weight: 500; }
+.list-item .body .s { font-size: 12px; color: var(--on-surface-variant); margin-top: 2px; }
+.group-label { padding: 16px var(--s4) 6px; font-size: 12px; font-weight: 700; color: var(--primary); }
+.search-field { height: 56px; border-radius: var(--shape-full); background: var(--surface-container-high); display: flex; align-items: center; gap: var(--s3); padding: 0 var(--s4); color: var(--on-surface-variant); margin-bottom: var(--s3); }
+.search-field input { flex: 1; min-width: 0; border: 0; outline: 0; background: none; font: inherit; color: var(--on-surface); }
+
+/* ---------- Compact: flexible navigation bar ---------- */
+/* M3 navigation bar 没有 divider：靠容器 tone 与内容区区分，不画线 */
+.nav-bar { flex: none; display: flex; height: 72px; background: var(--surface-container); padding: 4px 0 8px; }
+.nav-bar-item { flex: 1; position: relative; min-width: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; color: var(--on-surface-variant); font-size: 12px; }
+.nav-bar-item .pill { position: absolute; top: 4px; left: 50%; transform: translateX(-50%) scaleX(.6); width: 64px; height: 32px; border-radius: var(--shape-full); background: var(--secondary-container); opacity: 0; transition: opacity 250ms, transform 250ms cubic-bezier(.2, 0, 0, 1); }
+.nav-bar-item .icon, .nav-bar-item .label { position: relative; z-index: 1; }
+.nav-bar-item.active .pill { opacity: 1; transform: translateX(-50%) scaleX(1); }
+.nav-bar-item.active { color: var(--on-secondary-container); font-weight: 600; }
+.nav-bar-item::before { content: ""; position: absolute; inset: 0; background: currentColor; opacity: 0; }
+.nav-bar-item:hover::before { opacity: .08; }
+.nav-bar-item:active::before { opacity: .10; }
+.badge { position: absolute; top: 4px; left: calc(50% + 12px); z-index: 2; min-width: 16px; height: 16px; padding: 0 4px; border-radius: 999px; background: #b3261e; color: #fff; font-size: 10px; display: grid; place-items: center; }
+
+/* ---------- Medium+: navigation rail ---------- */
+.nav-rail { display: none; width: var(--rail-w); flex: none; flex-direction: column; gap: var(--s1); padding: var(--s3) var(--s2); background: transparent; transition: width 280ms cubic-bezier(.2, 0, 0, 1), padding 280ms cubic-bezier(.2, 0, 0, 1); }
+.rail-menu { width: 56px; height: 56px; margin: 0 auto var(--s3); border-radius: 50%; display: grid; place-items: center; color: var(--on-surface-variant); }
+.rail-menu:hover { background: color-mix(in srgb, currentColor 8%, transparent); }
+.rail-fab { width: 56px; height: 56px; margin: 0 auto var(--s3); border-radius: var(--shape-l); background: var(--primary-container); color: var(--on-primary-container); display: flex; align-items: center; justify-content: center; gap: 10px; }
+.rail-fab .fab-label { display: none; font-size: 14px; font-weight: 600; }
+.rail-item { width: 100%; position: relative; padding: var(--s2) 0 var(--s3); display: flex; flex-direction: column; align-items: center; gap: var(--s1); color: var(--on-surface-variant); font-size: 12px; }
+.rail-item .pill { position: absolute; top: 4px; left: 50%; transform: translateX(-50%); width: 56px; height: 32px; border-radius: var(--shape-full); background: var(--secondary-container); opacity: 0; transition: opacity 250ms; }
+.rail-item .icon, .rail-item .label { position: relative; z-index: 1; }
+.rail-item.active .pill { opacity: 1; }
+.rail-item.active .icon { color: var(--on-secondary-container); }
+/* May 2025: active label on vertical items changed to secondary */
+.rail-item.active .label { color: var(--secondary); font-weight: 600; }
+.rail-item::before { content: ""; position: absolute; inset: 0; background: currentColor; opacity: 0; }
+.rail-item:hover::before { opacity: .08; }
+.rail-item:active::before { opacity: .10; }
+.rail-item .badge { top: 4px; left: calc(50% + 10px); }
+
+/* expanded rail：横向 item，整行胶囊指示器 */
+.nav-rail.expanded { width: var(--rail-expanded-w); padding: var(--s3) var(--s4); }
+.nav-rail.expanded .rail-menu { margin: 0 0 var(--s2); width: 48px; }
+.nav-rail.expanded .rail-fab { width: 100%; border-radius: var(--shape-full); justify-content: flex-start; padding: 0 20px; margin-bottom: var(--s4); }
+.nav-rail.expanded .rail-fab .fab-label { display: inline; }
+.nav-rail.expanded .rail-item { flex-direction: row; justify-content: flex-start; gap: var(--s4); height: 56px; padding: 0 var(--s4); }
+.nav-rail.expanded .rail-item .pill { top: 4px; left: 0; transform: none; width: 100%; height: 48px; border-radius: var(--shape-full); }
+.nav-rail.expanded .rail-item .label { font-size: 14px; }
+/* horizontal items use on-secondary-container for the active label */
+.nav-rail.expanded .rail-item.active .label { color: var(--on-secondary-container); }
+.nav-rail.expanded .rail-item .badge { top: 12px; left: 28px; }
+
+/* ==========================================================================
+   600dp：切换导航形态 + 信息区改为「浅底 rail + 白色圆角面板 + 多列大卡」
+   列数不在这里写死，由 JS 按信息 pane 实际宽度计算（见 updateCols）
+   ========================================================================== */
+@container shell (min-width: 600px) {
+  .app { background: var(--surface-container); }
+  .nav-bar { display: none; }
+  .nav-rail { display: flex; }
+  .topbar { height: 56px; padding-inline: var(--s6); background: transparent; }
+  .content {
+    margin: 0 var(--s4) var(--s4) 0; padding: var(--s6);
+    border-radius: var(--shape-xl); background: var(--surface-container-lowest);
+  }
+  .toolbar { padding: 0 0 var(--s4); }
+  .rail-scroll .cover { width: 140px; }
+}
+
+/* ≥840 只调边距与列宽，不换导航、不增加栏 */
+@container shell (min-width: 840px) {
+  .topbar { padding-inline: var(--s8); }
+  .content { padding: var(--s8); margin-right: var(--s6); }
+  .grid { gap: var(--s3); }
+  .hero { padding: var(--s6); }
+  .hero .cover { width: 120px; }
+  .rail-scroll .cover { width: 168px; }
+}
+
+@media (prefers-reduced-motion: reduce) { * { transition-duration: .001ms !important; } }
+</style>
+</head>
+<body>
+
+<div class="controls">
+  <span class="tag">响应式布局骨架 v5</span>
+  <span class="rule">布局沿用 v4（5 tab / collapsed / expanded rail / 同一套网格）　·　本轮只换书架卡片样式，点右上「视图」挑选</span>
+  <div class="segmented" id="vpPicker">
+    <button data-vp="auto" class="on">自适应</button>
+    <button data-vp="400">手机 400</button>
+    <button data-vp="760">平板 760</button>
+    <button data-vp="1200">桌面 1200</button>
+  </div>
+  <button class="toggle" id="railToggle">展开侧栏</button>
+  <button class="toggle" id="themeToggle">深色</button>
+  <span class="readout" id="readout"></span>
+</div>
+
+<div class="stage">
+  <div class="viewport" id="viewport">
+    <div class="app" id="app">
+
+      <svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs>
+        <symbol id="i-home" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M3.5 10.5 12 3.5l8.5 7v9a1 1 0 0 1-1 1h-15a1 1 0 0 1-1-1z"/><path d="M9.5 20.5v-6h5v6"/></g></symbol>
+        <symbol id="i-library" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M4 4h5v16H4zM10 4h4v16h-4z"/><path d="m16.5 5.2 3.6 15.1-3.9.9-3.6-15.1z"/></g></symbol>
+        <symbol id="i-history" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 12a8.5 8.5 0 1 0 2.5-6M3.5 4.5V9H8"/><path d="M12 7.5V12l3 2"/></g></symbol>
+        <symbol id="i-browse" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="8.5"/><path d="M3.6 12h16.8M12 3.5c2.4 2.3 3.6 5.2 3.6 8.5S14.4 18.2 12 20.5c-2.4-2.3-3.6-5.2-3.6-8.5S9.6 5.8 12 3.5z"/></g></symbol>
+        <symbol id="i-more" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="5" cy="12" r="1.3"/><circle cx="12" cy="12" r="1.3"/><circle cx="19" cy="12" r="1.3"/></g></symbol>
+        <symbol id="i-search" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.6 15.6 21 21"/></g></symbol>
+        <symbol id="i-add" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 4v16M4 12h16"/></g></symbol>
+        <symbol id="i-play" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M7 4.5v15l12-7.5z"/></g></symbol>
+        <symbol id="i-chevron" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m9 6 6 6-6 6"/></g></symbol>
+        <symbol id="i-download" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12m-5-5 5 5 5-5M4 20h16"/></g></symbol>
+        <symbol id="i-settings" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="3.2"/><path d="M12 2.5v2.2M12 19.3v2.2M21.5 12h-2.2M4.7 12H2.5M18.7 5.3l-1.6 1.6M6.9 17.1l-1.6 1.6M18.7 18.7l-1.6-1.6M6.9 6.9 5.3 5.3"/></g></symbol>
+        <symbol id="i-book" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M12 6c-2.4-1.6-5-2-8-2v14c3 0 5.6.4 8 2 2.4-1.6 5-2 8-2V4c-3 0-5.6.4-8 2zM12 6v14"/></g></symbol>
+        <symbol id="i-menu" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h16"/></g></symbol>
+        <symbol id="i-filter" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M3.5 5h17l-6.8 8v5.5l-3.4 2v-7.5z"/></g></symbol>
+        <symbol id="i-view-grid" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3.5" y="3.5" width="7" height="7" rx="1.5"/><rect x="13.5" y="3.5" width="7" height="7" rx="1.5"/><rect x="3.5" y="13.5" width="7" height="7" rx="1.5"/><rect x="13.5" y="13.5" width="7" height="7" rx="1.5"/></g></symbol>
+        <symbol id="i-view-compact" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3.5" y="3.5" width="7" height="9" rx="1.5"/><rect x="13.5" y="3.5" width="7" height="9" rx="1.5"/><path d="M3.5 15.5h7M13.5 15.5h7" stroke-linecap="round"/></g></symbol>
+        <symbol id="i-view-list" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3.5" y="4" width="5" height="6" rx="1"/><rect x="3.5" y="14" width="5" height="6" rx="1"/><path d="M11 6h9M11 9h6M11 16h9M11 19h6" stroke-linecap="round"/></g></symbol>
+        <symbol id="i-view-wall" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.6"><rect x="3.5" y="3.5" width="4.5" height="6" rx="1"/><rect x="9.75" y="3.5" width="4.5" height="6" rx="1"/><rect x="16" y="3.5" width="4.5" height="6" rx="1"/><rect x="3.5" y="11" width="4.5" height="6" rx="1"/><rect x="9.75" y="11" width="4.5" height="6" rx="1"/><rect x="16" y="11" width="4.5" height="6" rx="1"/></g></symbol>
+        <symbol id="i-view-featured" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3.5" y="3.5" width="17" height="8" rx="1.5"/><rect x="3.5" y="14" width="8" height="6.5" rx="1.5"/><rect x="13.5" y="14" width="7" height="6.5" rx="1.5"/></g></symbol>
+        <symbol id="i-check" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12 4.5 4.5L19 7"/></g></symbol>
+      </defs></svg>
+
+      <div class="app-body">
+        <nav class="nav-rail" id="rail" aria-label="主导航"></nav>
+
+        <div class="app-main">
+          <header class="topbar">
+            <h1 id="pageTitle">书架</h1>
+            <span class="spacer"></span>
+            <button class="icon-btn" aria-label="搜索"><svg class="icon"><use href="#i-search"/></svg></button>
+            <button class="icon-btn" aria-label="添加"><svg class="icon"><use href="#i-add"/></svg></button>
+          </header>
+
+          <main class="content">
+            <div class="toolbar">
+              <div class="filter-strip" id="filterStrip"></div>
+              <div class="view-picker" id="viewPicker" hidden>
+                <button class="view-trigger" id="viewTrigger" aria-label="选择书架视图">
+                  <svg class="icon sm" id="viewIcon"><use href="#i-view-grid"/></svg>
+                  <span id="viewLabel">舒适网格</span>
+                  <svg class="icon sm caret"><use href="#i-chevron"/></svg>
+                </button>
+                <div class="view-menu" id="viewMenu" hidden></div>
+              </div>
+            </div>
+
+            <!-- 首页 -->
+            <section class="page active" data-page="home">
+              <p class="eyebrow">继续阅读</p>
+              <div class="hero">
+                <div class="cover" style="--c1:hsl(265 60% 47%);--c2:hsl(313 76% 27%)">
+                  <span class="ct">星屑纪事<small>STARDUST CHRONICLE</small></span>
+                </div>
+                <div class="body">
+                  <h3>星屑纪事</h3>
+                  <div class="sub">漫画 · 第 96 话 / 共 128 话 · 2 小时前更新</div>
+                  <div class="progress"><i style="width:75%"></i></div>
+                  <div class="actions">
+                    <button class="btn filled"><svg class="icon sm"><use href="#i-play"/></svg>继续阅读</button>
+                    <button class="btn outline">详情</button>
+                  </div>
+                </div>
+              </div>
+              <div class="section-head"><h2>为你推荐</h2><span class="hint">Suggestions</span></div>
+              <div class="rail-scroll" id="homeRail"></div>
+              <div class="section-head"><h2>最近更新</h2><span class="hint">12 部</span></div>
+              <div class="list">
+                <div class="list-item"><div class="lead cover" style="--c1:hsl(196 48% 38%);--c2:hsl(240 40% 22%)"></div><div class="body"><div class="t">雾港来信 · 第 133 章</div><div class="s">昨天 · 灯塔文库</div></div><svg class="icon sm"><use href="#i-chevron"/></svg></div>
+                <div class="list-item"><div class="lead cover" style="--c1:hsl(32 72% 50%);--c2:hsl(8 60% 30%)"></div><div class="body"><div class="t">蜃楼之城 · 第 89 章</div><div class="s">5 小时前 · 灯塔文库</div></div><svg class="icon sm"><use href="#i-chevron"/></svg></div>
+                <div class="list-item"><div class="lead cover" style="--c1:hsl(172 44% 36%);--c2:hsl(210 40% 22%)"></div><div class="body"><div class="t">潮汐图书馆 · 第 171 章</div><div class="s">30 分钟前 · 灯塔文库</div></div><svg class="icon sm"><use href="#i-chevron"/></svg></div>
+              </div>
+            </section>
+
+            <!-- 书架 -->
+            <section class="page" data-page="library">
+              <p class="eyebrow">书架 · FEED</p>
+              <div class="section-head"><h2>我的书库</h2><span class="hint" id="bookCount"></span></div>
+              <div class="grid" id="bookGrid"></div>
+            </section>
+
+            <!-- 历史 -->
+            <section class="page" data-page="history">
+              <p class="eyebrow">阅读历史</p>
+              <div class="group-label">今天</div>
+              <div class="list">
+                <div class="list-item"><div class="lead cover" style="--c1:hsl(265 60% 47%);--c2:hsl(313 76% 27%)"></div><div class="body"><div class="t">星屑纪事 · 第 96 话</div><div class="s">22:04 · 阅读 18 分钟</div></div><svg class="icon sm"><use href="#i-chevron"/></svg></div>
+                <div class="list-item"><div class="lead cover" style="--c1:hsl(172 44% 36%);--c2:hsl(210 40% 22%)"></div><div class="body"><div class="t">潮汐图书馆 · 第 170 章</div><div class="s">20:31 · 阅读 24 分钟</div></div><svg class="icon sm"><use href="#i-chevron"/></svg></div>
+              </div>
+              <div class="group-label">昨天</div>
+              <div class="list">
+                <div class="list-item"><div class="lead cover" style="--c1:hsl(196 48% 38%);--c2:hsl(240 40% 22%)"></div><div class="body"><div class="t">雾港来信 · 第 132 章</div><div class="s">21:10 · 阅读 31 分钟</div></div><svg class="icon sm"><use href="#i-chevron"/></svg></div>
+                <div class="list-item"><div class="lead cover" style="--c1:hsl(340 55% 56%);--c2:hsl(286 42% 34%)"></div><div class="body"><div class="t">白昼之月 · 第 12 话</div><div class="s">19:42 · 阅读 9 分钟</div></div><svg class="icon sm"><use href="#i-chevron"/></svg></div>
+              </div>
+              <div class="group-label">更早</div>
+              <div class="list">
+                <div class="list-item"><div class="lead cover" style="--c1:hsl(12 58% 40%);--c2:hsl(30 60% 24%)"></div><div class="body"><div class="t">长夜将尽 · 第 298 章</div><div class="s">11 月 9 日 · 已读完</div></div><svg class="icon sm"><use href="#i-chevron"/></svg></div>
+              </div>
+            </section>
+
+            <!-- 浏览 -->
+            <section class="page" data-page="browse">
+              <p class="eyebrow">浏览来源</p>
+              <div class="search-field"><svg class="icon"><use href="#i-search"/></svg><input placeholder="搜索来源、扩展、标签…"></div>
+              <div class="section-head"><h2>已启用来源</h2><span class="hint">4 个</span></div>
+              <div class="list">
+                <div class="list-item"><div class="lead"><svg class="icon sm"><use href="#i-book"/></svg></div><div class="body"><div class="t">极光源</div><div class="s">漫画 · 中文 · 12,480 部</div></div><span class="chip on">已启用</span></div>
+                <div class="list-item"><div class="lead"><svg class="icon sm"><use href="#i-book"/></svg></div><div class="body"><div class="t">灯塔文库</div><div class="s">小说 · 中文 · 8,204 部</div></div><span class="chip on">已启用</span></div>
+                <div class="list-item"><div class="lead"><svg class="icon sm"><use href="#i-book"/></svg></div><div class="body"><div class="t">夜行社</div><div class="s">漫画 · 多语言 · 3,912 部</div></div><span class="chip on">已启用</span></div>
+                <div class="list-item"><div class="lead"><svg class="icon sm"><use href="#i-book"/></svg></div><div class="body"><div class="t">北岸文丛</div><div class="s">小说 · 中文 · 6,301 部</div></div><span class="chip on">已启用</span></div>
+              </div>
+            </section>
+
+            <!-- 更多 -->
+            <section class="page" data-page="more">
+              <p class="eyebrow">更多 · 设置</p>
+              <div class="group-label">内容</div>
+              <div class="list">
+                <div class="list-item"><div class="lead"><svg class="icon sm"><use href="#i-download"/></svg></div><div class="body"><div class="t">下载管理</div><div class="s">1.8 GB · 214 章</div></div><svg class="icon sm"><use href="#i-chevron"/></svg></div>
+                <div class="list-item"><div class="lead"><svg class="icon sm"><use href="#i-settings"/></svg></div><div class="body"><div class="t">阅读器设置</div><div class="s">字号、行距、翻页方向</div></div><svg class="icon sm"><use href="#i-chevron"/></svg></div>
+              </div>
+              <div class="group-label">偏好</div>
+              <div class="list">
+                <div class="list-item"><div class="lead"><svg class="icon sm"><use href="#i-history"/></svg></div><div class="body"><div class="t">跨端进度同步</div><div class="s">Android / iOS / Desktop / Web 共用同一状态模型</div></div><span class="chip on">已开启</span></div>
+                <div class="list-item"><div class="lead"><svg class="icon sm"><use href="#i-settings"/></svg></div><div class="body"><div class="t">主题</div><div class="s">跟随系统 · 浅色 / 深色</div></div><span class="chip">跟随系统</span></div>
+              </div>
+              <p class="note">设置页同样保持单栏。是否为某页引入 list-detail，应由该页的内容密度与任务决定，而不是由宽度阈值自动触发。</p>
+            </section>
+
+          </main>
+        </div>
+      </div>
+
+      <nav class="nav-bar" id="bar" aria-label="主导航"></nav>
+    </div>
+  </div>
+</div>
+
+<script>
+const NAV = [
+  { id:'home',    label:'首页', icon:'home' },
+  { id:'library', label:'书架', icon:'library', badge:'3' },
+  { id:'history', label:'历史', icon:'history' },
+  { id:'browse',  label:'浏览', icon:'browse' },
+  { id:'more',    label:'更多', icon:'more' },
+];
+const TITLES = { home:'首页', library:'书架', history:'历史', browse:'浏览', more:'更多' };
+const FILTERS = {
+  home:    ['全部','漫画','小说','未读','已下载'],
+  library: ['全部','漫画','小说','追更中','已完结','已下载'],
+  history: ['今天','昨天','更早','全部'],
+  browse:  ['全部来源','极光源','灯塔文库','夜行社','北岸文丛'],
+  more:    ['内容','偏好','同步','关于'],
+};
+const BOOKS = [
+  { t:'星屑纪事',   kind:'漫画', author:'星野澪', src:'极光源',   ch:96,  total:128, unread:3, c1:'hsl(265 60% 47%)', c2:'hsl(313 76% 27%)' },
+  { t:'雾港来信',   kind:'小说', author:'沈砚',   src:'灯塔文库', ch:132, total:214, unread:0, c1:'hsl(196 48% 38%)', c2:'hsl(240 40% 22%)' },
+  { t:'青空之下',   kind:'漫画', author:'小野夏', src:'夜行社',   ch:64,  total:64,  unread:0, c1:'hsl(205 70% 52%)', c2:'hsl(230 55% 32%)' },
+  { t:'蜃楼之城',   kind:'小说', author:'顾长风', src:'灯塔文库', ch:88,  total:386, unread:5, c1:'hsl(32 72% 50%)',  c2:'hsl(8 60% 30%)' },
+  { t:'雨夜列车',   kind:'漫画', author:'黑川彻', src:'极光源',   ch:41,  total:92,  unread:2, c1:'hsl(286 42% 34%)', c2:'hsl(260 40% 20%)' },
+  { t:'白昼之月',   kind:'漫画', author:'林杳',   src:'夜行社',   ch:12,  total:57,  unread:1, c1:'hsl(340 55% 56%)', c2:'hsl(300 42% 34%)' },
+  { t:'潮汐图书馆', kind:'小说', author:'苏晚',   src:'北岸文丛', ch:170, total:172, unread:2, c1:'hsl(172 44% 36%)', c2:'hsl(210 40% 22%)' },
+  { t:'长夜将尽',   kind:'小说', author:'陈默',   src:'灯塔文库', ch:298, total:298, unread:0, c1:'hsl(12 58% 40%)',  c2:'hsl(30 60% 24%)' },
+  { t:'玻璃海岸',   kind:'漫画', author:'海野蓝', src:'极光源',   ch:9,   total:44,  unread:4, c1:'hsl(158 52% 44%)', c2:'hsl(190 48% 26%)' },
+  { t:'山海邮局',   kind:'小说', author:'阿蘅',   src:'北岸文丛', ch:60,  total:126, unread:0, c1:'hsl(96 46% 40%)',  c2:'hsl(130 40% 24%)' },
+  { t:'雾中灯塔',   kind:'小说', author:'沈砚',   src:'灯塔文库', ch:0,   total:88,  unread:0, c1:'hsl(222 38% 42%)', c2:'hsl(250 34% 24%)' },
+  { t:'春日残响',   kind:'漫画', author:'小野夏', src:'夜行社',   ch:20,  total:36,  unread:1, c1:'hsl(18 66% 58%)',  c2:'hsl(340 50% 34%)' },
+];
+
+/* 卡片样式 ≠ 卡片布局：所有网格样式共用 v4 的网格（target 190 / 2–8 列），
+   列数、卡片尺寸、位置都不随样式变化；只有列表按本轮要求用 1–3 栏。 */
+const VIEWS = {
+  comfortable: { label:'舒适网格', desc:'封面 + 进度条 + 标题',      icon:'view-grid',     target:190, min:2, max:8 },
+  compact:     { label:'紧凑网格', desc:'文字叠在封面底部',          icon:'view-compact',  target:190, min:2, max:8 },
+  list:        { label:'列表',     desc:'左图右文 · 响应式 1–3 栏',  icon:'view-list',     target:270, min:1, max:3 },
+  wall:        { label:'封面墙',   desc:'纯封面 + 未读角标 · 推荐',  icon:'view-wall',     target:190, min:2, max:8 },
+  featured:    { label:'头条卡',   desc:'首项强调样式 · 推荐',       icon:'view-featured', target:190, min:2, max:8 },
+};
+let view = 'comfortable';
+
+const ic = n => `<svg class="icon"><use href="#i-${n}"/></svg>`;
+const coverHTML = b =>
+  `<div class="cover" style="--c1:${b.c1};--c2:${b.c2}"><span class="ct">${b.t}<small>${b.kind} · ${b.author}</small></span></div>`;
+const pct = b => Math.round(b.ch / Math.max(1, b.total) * 100);
+const progressHTML = b => `<div class="progress"><i style="width:${pct(b)}%"></i></div>`;  // 阅读进度一律线性
+const unit = b => b.kind === '漫画' ? '话' : '章';
+
+const app = document.getElementById('app');
+const rail = document.getElementById('rail');
+const contentEl = document.querySelector('.content');
+const topbarEl = document.querySelector('.topbar');
+const gridEl = document.getElementById('bookGrid');
+let railOverride = null;   // null = 按宽度自动；true/false = 用户手动覆盖
+let cols = 2;              // 书架当前列数，clamp 2–8
+
+function renderNav() {
+  document.getElementById('bar').innerHTML = NAV.map(n => `
+    <button class="nav-bar-item" data-go="${n.id}" aria-label="${n.label}">
+      <span class="pill"></span>${ic(n.icon)}<span class="label">${n.label}</span>
+      ${n.badge ? `<span class="badge">${n.badge}</span>` : ''}
+    </button>`).join('');
+  rail.innerHTML = `
+    <button class="rail-menu" id="railMenu" aria-label="展开 / 收起侧栏">${ic('menu')}</button>
+    <button class="rail-fab" aria-label="添加">${ic('add')}<span class="fab-label">添加作品</span></button>` +
+    NAV.map(n => `
+    <button class="rail-item" data-go="${n.id}" aria-label="${n.label}">
+      <span class="pill"></span>${ic(n.icon)}<span class="label">${n.label}</span>
+      ${n.badge ? `<span class="badge">${n.badge}</span>` : ''}
+    </button>`).join('');
+  document.querySelectorAll('[data-go]').forEach(b => b.onclick = () => go(b.dataset.go));
+  document.getElementById('railMenu').onclick = () => {
+    railOverride = !rail.classList.contains('expanded');
+    refresh();   // rail 宽度变化会连带重算书架列数
+  };
+}
+
+function renderFilters(id) {
+  document.getElementById('filterStrip').innerHTML = FILTERS[id].map((f, i) =>
+    `<button class="chip ${i === 0 ? 'on' : ''}">${i === 0 ? ic('filter') : ''}${f}</button>`).join('');
+  document.querySelectorAll('#filterStrip .chip').forEach(c => c.onclick = () => {
+    document.querySelectorAll('#filterStrip .chip').forEach(x => {
+      x.classList.remove('on');
+      const svg = x.querySelector('svg'); if (svg) svg.remove();
+    });
+    c.classList.add('on');
+    if (!c.querySelector('svg')) c.insertAdjacentHTML('afterbegin', ic('filter'));
+  });
+}
+
+function cardHTML(b, i) {
+  const style = `--c1:${b.c1};--c2:${b.c2}`;
+  const prog = progressHTML(b);
+  const badge = b.unread ? `<span class="bk-badge">${b.unread}</span>` : '';
+  const meta = `<div class="bk-sub">${b.author} · ${b.src}</div>
+    <div class="bk-pg">${b.ch} / ${b.total} ${unit(b)}${b.unread ? ' · ' + b.unread + ' 未读' : ''}</div>`;
+  if (view === 'list')
+    return `<article class="bk" style="${style}">${coverHTML(b)}<div class="bk-info"><div class="bk-t">${b.t}</div>${meta}${prog}</div>${badge}</article>`;
+  if (view === 'featured' && i === 0)
+    return `<article class="bk" style="${style}">${coverHTML(b)}<div class="bk-overlay"><div class="bk-eyebrow">继续阅读</div><div class="bk-t">${b.t}</div>${prog}<div class="bk-pg">${b.ch} / ${b.total} ${unit(b)}</div></div></article>`;
+  if (view === 'comfortable')
+    return `<article class="bk" style="${style}">${coverHTML(b)}${prog}<div class="bk-info"><div class="bk-t">${b.t}</div>${meta}</div>${badge}</article>`;
+  // compact / wall / featured 的普通项：只有封面 + 角标
+  return `<article class="bk" style="${style}">${coverHTML(b)}${badge}</article>`;
+}
+function renderBooks() {
+  gridEl.className = 'grid view-' + view;
+  gridEl.innerHTML = BOOKS.map(cardHTML).join('');
+  document.getElementById('homeRail').innerHTML = BOOKS.slice(3, 10).map(coverHTML).join('');
+  document.getElementById('bookCount').textContent = BOOKS.length + ' 部作品';
+}
+
+/* 视图选择菜单：产品内的多视图入口 */
+const viewPicker = document.getElementById('viewPicker');
+const viewMenu = document.getElementById('viewMenu');
+function renderViewMenu() {
+  viewMenu.innerHTML = Object.entries(VIEWS).map(([k, v]) => `
+    <button data-view="${k}" class="${k === view ? 'on' : ''}">
+      ${ic(v.icon)}<span class="vm-text"><span class="vm-t">${v.label}</span><span class="vm-d">${v.desc}</span></span>
+      ${k === view ? ic('check') : ''}
+    </button>`).join('');
+  viewMenu.querySelectorAll('[data-view]').forEach(b => b.onclick = () => setView(b.dataset.view));
+}
+function setView(k) {
+  view = k;
+  document.getElementById('viewLabel').textContent = VIEWS[k].label;
+  document.querySelector('#viewIcon use').setAttribute('href', '#i-' + VIEWS[k].icon);
+  renderViewMenu();
+  renderBooks();
+  viewMenu.hidden = true;
+  updateCols();
+  readout();
+}
+document.getElementById('viewTrigger').onclick = e => {
+  e.stopPropagation();
+  viewMenu.hidden = !viewMenu.hidden;
+};
+document.addEventListener('click', e => { if (!viewPicker.contains(e.target)) viewMenu.hidden = true; });
+
+function go(id) {
+  document.querySelectorAll('[data-go]').forEach(b => b.classList.toggle('active', b.dataset.go === id));
+  document.querySelectorAll('.page').forEach(p => p.classList.toggle('active', p.dataset.page === id));
+  document.getElementById('pageTitle').textContent = TITLES[id];
+  renderFilters(id);
+  viewPicker.hidden = id !== 'library';   // 视图切换只在书架页出现
+  viewMenu.hidden = true;
+  contentEl.scrollTop = 0;
+  topbarEl.classList.remove('scrolled');   // 换页回到顶部，顶栏恢复 surface
+}
+
+function expandedAt(w) { return railOverride !== null ? railOverride : w >= 1200; }
+function applyRail(w) {
+  const expanded = expandedAt(w);
+  rail.classList.toggle('expanded', expanded);
+  const btn = document.getElementById('railToggle');
+  btn.textContent = expanded ? '收起侧栏' : '展开侧栏';
+  btn.classList.toggle('on', expanded);
+}
+
+const viewport = document.getElementById('viewport');
+
+/* Feed reflow：沿用 v4 —— 列数由「信息 pane 实际可用宽度」决定，网格
+   clamp 2–8；切换卡片样式不改变列数。列表是唯一例外，按 1–3 栏。
+   expanded rail 占掉 160px，pane 变窄 → 列数跟着减少。 */
+function updateCols() {
+  const v = VIEWS[view];
+  const gap = parseFloat(getComputedStyle(gridEl).columnGap) || 8;
+  /* 列数只由「布局宽度」决定：app 宽度 − rail 目标宽度 − 面板 margin/padding。
+     不读 gridEl / app-main 的实际宽度，也不读 rail.offsetWidth —— 卡片高度变化
+     会让滚动条时有时无，rail transition 又有中间态，都会让切换样式时列数跳变。
+     rail 宽度从 CSS 变量取目标值，不硬编码在 JS。 */
+  const w = app.clientWidth;
+  const expanded = expandedAt(w);
+  const rootCS = getComputedStyle(document.documentElement);
+  const railW = w < 600 ? 0
+    : parseFloat(rootCS.getPropertyValue(expanded ? '--rail-expanded-w' : '--rail-w'));
+  const cs = getComputedStyle(contentEl);
+  const px = x => parseFloat(x) || 0;
+  const pane = w - railW - px(cs.marginLeft) - px(cs.marginRight)
+    - px(cs.paddingLeft) - px(cs.paddingRight);
+  const target = v.target + (expanded ? 12 : 0);
+  const n = Math.max(v.min, Math.min(v.max, Math.floor((pane + gap) / (target + gap))));
+  cols = n;
+  gridEl.style.setProperty('--cols', n);
+}
+function readout() {
+  const w = app.clientWidth;
+  const bp = w < 600 ? 'Compact' : w < 840 ? 'Medium' : w < 1200 ? 'Expanded' : 'Large';
+  const nav = w < 600 ? 'navigation bar (5 tabs)'
+    : (rail.classList.contains('expanded') ? 'expanded rail' : 'collapsed rail');
+  const u = view === 'list' ? '栏' : '列';
+  document.getElementById('readout').textContent = `${w}dp · ${bp} · ${nav} · ${VIEWS[view].label} ${cols} ${u}`;
+  // Compact 没有 rail，禁用手动展开，避免提供无效操作
+  const toggle = document.getElementById('railToggle');
+  toggle.disabled = w < 600;
+  toggle.style.opacity = w < 600 ? .45 : 1;
+  toggle.title = w < 600 ? 'Compact 使用 navigation bar，没有可展开的侧栏' : '';
+}
+function refresh() { applyRail(app.clientWidth); updateCols(); readout(); }
+function setViewport(mode) {
+  railOverride = null;   // 切换视口即回到「按宽度自动」，手动状态不跨档位残留
+  viewport.style.width = mode === 'auto' ? '100%' : mode + 'px';
+  document.querySelectorAll('#vpPicker button').forEach(b => b.classList.toggle('on', b.dataset.vp === mode));
+  requestAnimationFrame(refresh);
+}
+document.querySelectorAll('#vpPicker button').forEach(b => b.onclick = () => setViewport(b.dataset.vp));
+document.getElementById('railToggle').onclick = () => {
+  railOverride = !rail.classList.contains('expanded');
+  refresh();
+};
+window.addEventListener('resize', refresh);
+
+document.getElementById('themeToggle').onclick = e => {
+  const dark = app.classList.toggle('dark');
+  e.currentTarget.textContent = dark ? '浅色' : '深色';
+  e.currentTarget.classList.toggle('on', dark);
+};
+
+// small top app bar 的 on-scroll 变色：内容滚动超过 8dp 即切换 container tone
+contentEl.addEventListener('scroll', () => {
+  topbarEl.classList.toggle('scrolled', contentEl.scrollTop > 8);
+}, { passive: true });
+
+renderNav();
+renderViewMenu();
+renderBooks();
+// 书架是 Feed canonical layout 的落点，也是多视图的主屏
+go('library');
+setViewport('auto');
+// pane 宽度变化（视口缩放 / rail 展开收起）时重算列数。
+// rail 有 280ms width transition，ResizeObserver 会逐帧触发；用 rAF 合并到
+// 过渡结束后的稳定宽度再算，避免列数在动画过程中来回跳。
+let colsRAF = null;
+function scheduleCols() {
+  if (colsRAF) cancelAnimationFrame(colsRAF);
+  colsRAF = requestAnimationFrame(() => { colsRAF = null; updateCols(); readout(); });
+}
+new ResizeObserver(scheduleCols).observe(gridEl);
+</script>
+</body>
+</html>
